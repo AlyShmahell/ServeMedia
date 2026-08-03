@@ -1,0 +1,6 @@
+{{define "partials/backup_status.html"}}
+<div class="muted">
+  {{if .Status.Running}}Backup running…{{else}}Idle{{end}}
+  {{if not .Status.LastAt.IsZero}} — last: {{.Status.LastAt.Format "2006-01-02 15:04"}} {{if .Status.LastOK}}ok{{else}}error: {{.Status.LastMsg}}{{end}}{{end}}
+</div>
+{{end}}

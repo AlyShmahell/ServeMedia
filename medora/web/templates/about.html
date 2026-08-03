@@ -1,0 +1,36 @@
+{{define "about.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About — Medora</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content">
+  <h1>About</h1>
+  <div class="page-main-card">
+    <div class="about-grid">
+      <section class="about-tile">
+        <h2>Author</h2>
+        <p>{{.Author}}</p>
+        {{if .AuthorLinks}}
+        <ul class="about-links">
+          {{range .AuthorLinks}}
+          <li><a href="{{.Href}}" target="_blank" rel="noopener noreferrer">{{.Label}}</a></li>
+          {{end}}
+        </ul>
+        {{end}}
+      </section>
+      <section class="about-tile">
+        <h2>Version</h2>
+        <p>{{.Version}}</p>
+      </section>
+      <section class="about-tile">
+        <h2>Copyright</h2>
+        <p>{{.Copyright}}</p>
+      </section>
+      <section class="about-tile">
+        <h2>License</h2>
+        <pre class="about-license">{{.License}}</pre>
+      </section>
+    </div>
+  </div>
+</main></div></body></html>
+{{end}}

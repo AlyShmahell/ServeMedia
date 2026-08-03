@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<movie>
+  <title>Film Title.</title>
+  <originaltitle></originaltitle>
+  <sorttitle></sorttitle>
+  <year>2016</year>
+  <plot>Synthetic film for smoke tests.</plot>
+  <outline></outline>
+  <tagline></tagline>
+  <runtime>106</runtime>
+  <rating>8.4</rating>
+  <ratings></ratings>
+  <mpaa></mpaa>
+  <premiered></premiered>
+</movie>

@@ -1,0 +1,7 @@
+FROM docker.io/library/golang:1.23-bookworm
+WORKDIR /src
+ENV PATH="/usr/local/go/bin:${PATH}"
+COPY medora/ /src/
+RUN go mod tidy && go test ./...
+# Default CMD re-runs tests (image already verified at build)
+CMD ["go", "test", "./..."]

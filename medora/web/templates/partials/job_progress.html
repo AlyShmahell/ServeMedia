@@ -1,0 +1,25 @@
+{{define "partials/job_progress.html"}}
+<div class="fetch-panel job-progress{{if .Poll}} is-running{{end}}"
+  {{if and .Poll .Job}}
+  hx-get="/hx/jobs/{{.Job.ID}}/status"
+  hx-trigger="every 1s"
+  hx-swap="outerHTML"
+  {{end}}
+  style="--job-pct: {{if .Job}}{{.Job.ProgressPct}}{{else}}0{{end}}%">
+  <header class="modal-head">
+    <h2>{{if .Job}}{{if eq .Job.Kind "subtitles"}}Subtitles{{else}}Metadata{{end}}{{else}}Job{{end}}</h2>
+  </header>
+  {{if .Job}}
+  <div class="job-bar" role="progressbar" aria-valuenow="{{.Job.ProgressPct}}" aria-valuemin="0" aria-valuemax="100">
+    <span style="width:{{.Job.ProgressPct}}%"></span>
+  </div>
+  <p class="job-pct">{{.Job.ProgressPct}}%</p>
+  {{if .Job.Message.Valid}}
+  <pre class="job-log">{{.Job.Message.String}}</pre>
+  {{end}}
+  {{if or (eq .Job.Status "done") (eq .Job.Status "error")}}
+  <p class="muted job-footer">{{if eq .Job.Status "done"}}Finished.{{else}}Failed.{{end}}</p>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

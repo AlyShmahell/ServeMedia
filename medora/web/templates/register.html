@@ -1,0 +1,50 @@
+{{define "register.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create admin — Medora</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="auth">
+  <h1>Medora</h1>
+  <p class="muted">Create the admin account</p>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="post" action="/register" id="register-form">
+    <label>Username</label><input name="username" id="reg-username" required autocomplete="username">
+    <label>Password</label><input type="password" name="password" id="reg-password" required autocomplete="new-password">
+    <label>Confirm</label><input type="password" name="confirm" id="reg-confirm" required autocomplete="new-password">
+    <p class="auth-match-hint muted" id="reg-match-hint" aria-live="polite"></p>
+    <p style="margin-top:1rem"><button type="submit" id="reg-submit" disabled>Create admin</button></p>
+  </form>
+</main>
+<script>
+(function () {
+  var user = document.getElementById("reg-username");
+  var pass = document.getElementById("reg-password");
+  var confirm = document.getElementById("reg-confirm");
+  var hint = document.getElementById("reg-match-hint");
+  var submit = document.getElementById("reg-submit");
+  function sync() {
+    var u = (user.value || "").trim();
+    var p = pass.value || "";
+    var c = confirm.value || "";
+    var match = p.length > 0 && c.length > 0 && p === c;
+    confirm.classList.remove("match-ok", "match-error");
+    if (c.length === 0) {
+      hint.textContent = "";
+    } else if (match) {
+      confirm.classList.add("match-ok");
+      hint.textContent = "Passwords match";
+      hint.className = "auth-match-hint match-ok-text";
+    } else {
+      confirm.classList.add("match-error");
+      hint.textContent = "Passwords do not match";
+      hint.className = "auth-match-hint match-error-text";
+    }
+    submit.disabled = !(u.length > 0 && p.length > 0 && match);
+  }
+  user.addEventListener("input", sync);
+  pass.addEventListener("input", sync);
+  confirm.addEventListener("input", sync);
+  sync();
+})();
+</script>
+</body></html>
+{{end}}

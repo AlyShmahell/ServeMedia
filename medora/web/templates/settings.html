@@ -1,0 +1,20 @@
+{{define "settings.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings — Medora</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content">
+  <h1>Settings</h1>
+  <div class="page-main-card">
+    <ul>
+      {{if eq .User.Role "admin"}}
+      <li><a href="/settings/users">Users</a></li>
+      <li><a href="/settings/backup">Backup</a></li>
+      <li><a href="/settings/server">Server</a></li>
+      {{else}}
+      <li class="muted">Library management is on Home.</li>
+      {{end}}
+    </ul>
+  </div>
+</main></div></body></html>
+{{end}}

@@ -1,0 +1,65 @@
+# Medora test stack — Podman only (see docs/dev/workflow.md and ./tests/run)
+services:
+  unit:
+    build:
+      context: ..
+      dockerfile: tests/unit/Containerfile
+    # sources copied at build time (avoids rootless volume permission issues)
+
+  omdb-stub:
+    image: localhost/tests_omdb-stub:latest
+    build:
+      context: ./omdb-stub
+      dockerfile: Containerfile
+    expose:
+      - "8080"
+
+  medora:
+    build:
+      context: ../medora
+      dockerfile: Containerfile
+    env_file:
+      - ../medora/.env
+    environment:
+      MEDORA_HTTP_ADDR: ":7676"
+      MEDORA_STORE_PATH: /data/store
+      MEDORA_MEDIA_PATH: /media
+      # Deterministic movie Meta in smoke (avoids real OMDb daily quota).
+      OMDB_API_KEY: test
+      OMDB_BASE_URL: http://omdb-stub:8080/
+      MEDORA_OMDB_DAILY: "0"
+      MEDORA_OMDB_RPS: "20"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    depends_on:
+      - omdb-stub
+    volumes:
+      - medora-test-data:/data:Z
+      - ./fixtures/media:/media:Z
+      - ../AUTHOR:/legal/AUTHOR:ro,Z
+      - ../VERSION:/legal/VERSION:ro,Z
+      - ../COPYRIGHT:/legal/COPYRIGHT:ro,Z
+      - ../LICENSE:/legal/LICENSE:ro,Z
+    expose:
+      - "7676"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7676/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  smoke:
+    build:
+      context: ..
+      dockerfile: tests/smoke/Containerfile
+    depends_on:
+      medora:
+        condition: service_healthy
+    environment:
+      MEDORA_BASE_URL: http://medora:7676
+    volumes:
+      - ./smoke:/tests:ro
+
+volumes:
+  medora-test-data:

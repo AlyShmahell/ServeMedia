@@ -1,0 +1,15 @@
+{{define "login.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Medora</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="auth">
+  <h1>Medora</h1>
+  <p class="muted">Sign in</p>
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="post" action="/login">
+    <label>Username</label><input name="username" required autocomplete="username">
+    <label>Password</label><input type="password" name="password" required autocomplete="current-password">
+    <p style="margin-top:1rem"><button type="submit">Sign in</button></p>
+  </form>
+</main></body></html>
+{{end}}

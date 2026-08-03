@@ -1,0 +1,115 @@
+{{define "home.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home — Medora</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js"></script><script src="/static/app.js" defer></script></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content home-page">
+  <h1>Home</h1>
+  <section class="home-section home-section-libraries">
+    <div class="section-head">
+      <h2>Libraries</h2>
+      <button type="button" class="btn-icon" id="add-library-open" title="Add library" aria-label="Add library">+</button>
+    </div>
+    <div class="home-section-body" data-scroll-key="home-libraries">
+      <div class="library-grid">
+        {{range .LibraryCards}}
+        {{template "partials/library_card.html" .}}
+        {{else}}
+        <p class="muted">No libraries yet. Click + to add one.</p>
+        {{end}}
+      </div>
+    </div>
+  </section>
+  <div class="home-split">
+    <section class="home-section home-section-continue">
+      <h2>Continue watching</h2>
+      <div class="home-section-body" data-scroll-key="home-continue">
+        <div class="strip" id="continue" hx-get="/hx/home/continue" hx-trigger="load, every 30s" hx-swap="innerHTML">
+          {{template "partials/continue.html" .}}
+        </div>
+      </div>
+    </section>
+    <section class="home-section home-section-recent">
+      <h2>Recently added</h2>
+      <div class="home-section-body" data-scroll-key="home-recent">
+        <div class="grid">
+          {{range .Recent}}
+          <a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
+            <div class="poster-wrap">
+              <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
+              {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID $.MetaReady $.MetaDisabledReason)}}
+              <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
+            </div>
+            <div class="t">{{.Item.Title}}</div>
+          </a>
+          {{else}}<p class="muted">Nothing scanned yet.</p>{{end}}
+        </div>
+      </div>
+    </section>
+  </div>
+</main></div>
+
+{{template "partials/fetch_modal.html" .}}
+{{template "partials/scan_modal.html" .}}
+{{template "partials/entry_scan_modal.html" .}}
+
+<dialog id="add-library-dialog" class="modal">
+  <form method="post" action="/hx/libraries" class="modal-form">
+    <header class="modal-head">
+      <h2>Add library</h2>
+      <button type="button" class="btn-icon secondary" id="add-library-close" aria-label="Close">×</button>
+    </header>
+    <label>Name</label>
+    <input name="name" id="library-name" required autocomplete="off" placeholder="e.g. Movies">
+    <label>Type</label>
+    <select name="type">
+      <option value="movies">Movies</option>
+      <option value="tv">TV Shows</option>
+      <option value="anime">Anime</option>
+    </select>
+    <label>Folder</label>
+    <input type="hidden" name="path" id="library-path" required>
+    <p class="folder-selected muted">Selected: <code id="library-path-display">none</code></p>
+    <div id="media-browser"
+      hx-get="/hx/media/browse"
+      hx-trigger="none"
+      hx-swap="outerHTML"></div>
+    <footer class="modal-foot">
+      <button type="button" class="secondary" id="add-library-cancel">Cancel</button>
+      <button type="submit">Add library</button>
+    </footer>
+  </form>
+</dialog>
+<script>
+(function () {
+  var dlg = document.getElementById('add-library-dialog');
+  var browser = document.getElementById('media-browser');
+  var nameInput = document.getElementById('library-name');
+
+  function syncLibraryNameFromPath() {
+    var pathInput = document.getElementById('library-path');
+    if (!nameInput || !pathInput) return;
+    var path = String(pathInput.value || '').trim();
+    if (!path) return;
+    var parts = path.replace(/\/+$/, '').split('/');
+    var base = parts[parts.length - 1] || '';
+    if (base) nameInput.value = base;
+  }
+  window.syncLibraryNameFromPath = syncLibraryNameFromPath;
+
+  function openDlg() {
+    dlg.showModal();
+    syncLibraryNameFromPath();
+    if (browser && !browser.dataset.loaded) {
+      browser.dataset.loaded = '1';
+      htmx.ajax('GET', '/hx/media/browse', {target: '#media-browser', swap: 'outerHTML'});
+    }
+  }
+  function closeDlg() { dlg.close(); }
+  document.getElementById('add-library-open').addEventListener('click', openDlg);
+  document.getElementById('add-library-close').addEventListener('click', closeDlg);
+  document.getElementById('add-library-cancel').addEventListener('click', closeDlg);
+})();
+</script>
+</body></html>
+{{end}}

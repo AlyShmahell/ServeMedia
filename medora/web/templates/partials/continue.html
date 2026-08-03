@@ -1,0 +1,11 @@
+{{define "partials/continue.html"}}
+{{range .Continue}}
+<a class="card continue-card" href="{{.PlayURL}}">
+  <div class="poster-wrap">
+    <img class="poster" src="{{posterURL .PosterPath}}" alt="">
+    <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
+  </div>
+  <div class="t">{{.Title}}</div>
+</a>
+{{else}}<p class="muted">Nothing in progress.</p>{{end}}
+{{end}}

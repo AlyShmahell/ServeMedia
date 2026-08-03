@@ -1,0 +1,9 @@
+{{define "partials/card_actions.html"}}
+<div class="card-actions{{if .Static}} is-static{{end}}" onclick="event.preventDefault(); event.stopPropagation();">
+  <button type="button" class="card-action" title="Scan"
+    onclick="openEntryScanModal({{.ID}})">
+    <span class="card-action-icon" aria-hidden="true">↻</span>
+    <span class="card-action-label">Scan</span>
+  </button>
+</div>
+{{end}}

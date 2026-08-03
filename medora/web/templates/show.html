@@ -1,0 +1,72 @@
+{{define "show.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Item.Title}} — Medora</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content hero-meta show-page">
+  <p class="back-link"><a href="/libraries/{{.Item.LibraryID}}">← Back</a></p>
+  <div class="media-hero show-hero-card" data-scroll-key="show-hero">
+    <div class="poster-wrap media-hero-poster">
+      <div class="poster-play static">
+        <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
+      </div>
+      {{template "partials/card_actions.html" (mediaActions "show" .Item.ID .MetaReady .MetaDisabledReason)}}
+    </div>
+    <div class="media-meta">
+      <h1>{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>
+      {{with .NFO}}
+        {{if .Tagline}}<p class="tagline">{{.Tagline}}</p>{{end}}
+        {{if .Plot}}<p class="plot">{{.Plot}}</p>{{else if .Outline}}<p class="plot">{{.Outline}}</p>{{end}}
+        <dl class="nfo-dl">
+          {{if .OriginalTitle}}<div><dt>Original title</dt><dd>{{.OriginalTitle}}</dd></div>{{end}}
+          {{if .Runtime}}<div><dt>Runtime</dt><dd>{{.Runtime}} min</dd></div>{{end}}
+          {{if .DisplayRating}}<div><dt>Rating</dt><dd>{{.DisplayRating}}</dd></div>{{end}}
+          {{if .MPAA}}<div><dt>MPAA</dt><dd>{{.MPAA}}</dd></div>{{end}}
+          {{if .Genre}}<div><dt>Genre</dt><dd>{{join .Genre}}</dd></div>{{end}}
+          {{if .Studio}}<div><dt>Studio</dt><dd>{{join .Studio}}</dd></div>{{end}}
+          {{if .Country}}<div><dt>Country</dt><dd>{{join .Country}}</dd></div>{{end}}
+          {{if .Premiered}}<div><dt>Premiered</dt><dd>{{.Premiered}}</dd></div>{{end}}
+          {{if .Aired}}<div><dt>Aired</dt><dd>{{.Aired}}</dd></div>{{end}}
+          {{if .Director}}<div><dt>Director</dt><dd>{{join .Director}}</dd></div>{{end}}
+          {{if .Credits}}<div><dt>Writers</dt><dd>{{join .Credits}}</dd></div>{{end}}
+        </dl>
+        {{if .Actor}}
+        <h2>Cast</h2>
+        <ul class="cast-list">
+          {{range .Actor}}
+          <li>{{.Name}}{{if .Role}} <span class="muted">as {{.Role}}</span>{{end}}</li>
+          {{end}}
+        </ul>
+        {{end}}
+      {{else}}
+        {{if .Item.Plot.Valid}}<p class="plot">{{.Item.Plot.String}}</p>{{end}}
+      {{end}}
+    </div>
+  </div>
+  <div class="show-seasons-panel">
+    <h2>Seasons</h2>
+    <div class="show-seasons-body" data-scroll-key="show-seasons">
+      <div class="season-grid">
+        {{range .SeasonCards}}
+        <a class="season-card" href="/shows/{{$.Item.ID}}/seasons/{{.Season.SeasonNumber}}">
+          <div class="poster-wrap season-poster-wrap">
+            <img class="poster" src="{{if .Season.PosterPath.Valid}}{{posterURL .Season.PosterPath.String $.Item.MetaID.String}}{{else}}{{posterURL $.Item.PosterPath.String $.Item.MetaID.String}}{{end}}" alt="">
+            <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
+          </div>
+          <div class="season-card-body">
+            <h3>{{if .Season.Title.Valid}}{{.Season.Title.String}}{{else}}Season {{.Season.SeasonNumber}}{{end}}</h3>
+            <p class="muted">{{.EpisodeCount}} episode{{if ne .EpisodeCount 1}}s{{end}}</p>
+            {{if .Season.Plot.Valid}}<p class="plot">{{.Season.Plot.String}}</p>{{else}}<p class="muted">No synopsis</p>{{end}}
+          </div>
+        </a>
+        {{else}}
+        <p class="muted">No seasons</p>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</main></div>
+{{template "partials/fetch_modal.html" .}}
+{{template "partials/entry_scan_modal.html" .}}
+</body></html>
+{{end}}

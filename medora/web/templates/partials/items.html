@@ -1,0 +1,12 @@
+{{define "partials/items.html"}}
+{{range .Items}}
+<a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
+  <div class="poster-wrap">
+    <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
+    {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID $.MetaReady $.MetaDisabledReason)}}
+    <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
+  </div>
+  <div class="t">{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</div>
+</a>
+{{else}}<p class="muted">No items.</p>{{end}}
+{{end}}

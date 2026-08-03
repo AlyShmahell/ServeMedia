@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<tvshow>
+  <title>Sample Show</title>
+  <plot>A sample TV show for Medora smoke tests.</plot>
+  <year>2024</year>
+</tvshow>

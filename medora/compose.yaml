@@ -1,0 +1,36 @@
+services:
+  medora:
+    build:
+      context: .
+      dockerfile: Containerfile
+    # Starts as root and stays root: under rootless Podman, container UID 0 maps to the host
+    # user so NFO/posters can be written next to media. Do not drop to UID 1000.
+    # label=disable — containers cannot read exFAT/dosfs_t media even with :Z; needed for MEDIA_PATH on MicroSD.
+    security_opt:
+      - label=disable
+    # Host network: outbound metadata fetches use the host resolver and routing
+    # (avoids Podman CNI DNS). App listens on MEDORA_HTTP_ADDR (:7676 by default).
+    network_mode: host
+    env_file:
+      - .env
+    environment:
+      MEDORA_HTTP_ADDR: ${MEDORA_HTTP_ADDR:-:7676}
+      OMDB_API_KEY: ${OMDB_API_KEY:-}
+      MEDORA_PROVIDERS_SOCKET: ${MEDORA_PROVIDERS_SOCKET:-/data/run/providers.sock}
+    volumes:
+      # :Z — SELinux relabel for rootless Podman on Fedora/RHEL (avoids mkdir Permission denied)
+      - ../data:/data:Z
+      # Read-write: fetched NFO/posters are written next to media files.
+      - ${MEDIA_PATH}:/media
+      - ../AUTHOR:/legal/AUTHOR:ro,Z
+      - ../VERSION:/legal/VERSION:ro,Z
+      - ../COPYRIGHT:/legal/COPYRIGHT:ro,Z
+      - ../LICENSE:/legal/LICENSE:ro,Z
+    # VAAPI: pass DRM render nodes (host user needs video/render group).
+    devices:
+      - /dev/dri:/dev/dri
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7676/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

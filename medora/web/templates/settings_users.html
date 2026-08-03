@@ -1,0 +1,25 @@
+{{define "settings_users.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Users — Settings</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content">
+  <p class="back-link"><a href="/settings">← Settings</a></p>
+  <h1>Users</h1>
+  <div class="page-main-card">
+    <table class="table"><thead><tr><th>Username</th><th>Role</th><th></th></tr></thead><tbody>
+    {{range .Users}}
+    <tr><td>{{.Username}}</td><td>{{.Role}}</td>
+    <td>{{if ne .Role "admin"}}<button class="secondary" hx-delete="/hx/users/{{.ID}}" hx-confirm="Delete user?" hx-target="closest tr" hx-swap="outerHTML">Delete</button>{{end}}</td></tr>
+    {{end}}
+    </tbody></table>
+    <h2>Create user</h2>
+    <form method="post" action="/hx/users">
+      <label>Username</label><input name="username" required>
+      <label>Password</label><input type="password" name="password" required>
+      <p class="muted">New accounts are ordinary users.</p>
+      <p><button type="submit">Create user</button></p>
+    </form>
+  </div>
+</main></div></body></html>
+{{end}}

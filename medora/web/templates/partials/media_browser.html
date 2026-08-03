@@ -1,0 +1,50 @@
+{{define "partials/media_browser.html"}}
+{{with .MediaBrowse}}
+<div class="media-browser" id="media-browser" data-path="{{.Path}}">
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <div class="media-browser-bar row">
+    <code class="media-browser-path">{{.Path}}</code>
+    {{if .CanGoUp}}
+    <button type="button" class="secondary"
+      hx-get="/hx/media/browse?path={{queryEscape .Parent}}"
+      hx-target="#media-browser" hx-swap="outerHTML">Up</button>
+    {{end}}
+  </div>
+  <ul class="media-browser-list">
+    {{$base := .Path}}
+    {{range .Dirs}}
+    <li>
+      <button type="button" class="media-browser-dir"
+        hx-get="/hx/media/browse?path={{queryEscape (joinPath $base .)}}"
+        hx-target="#media-browser" hx-swap="outerHTML">{{.}}</button>
+    </li>
+    {{else}}
+    <li class="muted">No subfolders</li>
+    {{end}}
+  </ul>
+  <script>
+  (function () {
+    var root = document.getElementById('media-browser');
+    if (!root) return;
+    var path = root.dataset.path || '';
+    var input = document.getElementById('library-path');
+    var display = document.getElementById('library-path-display');
+    if (input) input.value = path;
+    if (display) display.textContent = path || 'none';
+    if (typeof window.syncLibraryNameFromPath === 'function') {
+      window.syncLibraryNameFromPath();
+    } else if (path) {
+      var nameInput = document.getElementById('library-name');
+      if (nameInput) {
+        var parts = path.replace(/\/+$/, '').split('/');
+        var base = parts[parts.length - 1] || '';
+        if (base) nameInput.value = base;
+      }
+    }
+  })();
+  </script>
+</div>
+{{else}}
+<div class="media-browser" id="media-browser"><p class="muted">Loading folders…</p></div>
+{{end}}
+{{end}}

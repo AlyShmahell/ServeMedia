@@ -1,0 +1,54 @@
+{{define "partials/entry_scan_modal.html"}}
+<dialog id="entry-scan-modal" class="modal">
+  <form id="entry-scan-modal-form" class="modal-form"
+    hx-post="/hx/media/0/scan"
+    hx-target="#fetch-modal-body"
+    hx-swap="innerHTML"
+    hx-on::after-request="if(event.detail.successful){ document.getElementById('entry-scan-modal').close(); document.getElementById('fetch-modal').showModal(); }">
+    <header class="modal-head">
+      <h2>Scan</h2>
+      <button type="button" class="btn-icon secondary" id="entry-scan-modal-close" aria-label="Close">×</button>
+    </header>
+    <label for="entry-scan-mode">What do you want to do?</label>
+    <select name="mode" id="entry-scan-mode">
+      <option value="local" {{if not .MetaReady}}selected{{end}}>Scan local NFO/posters</option>
+      <option value="enrich_missing" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Enrich missing NFO/posters using providers</option>
+      <option value="refetch_all" {{if not .MetaReady}}disabled{{end}}>Re-fetch NFO/posters for all using providers</option>
+    </select>
+    {{if not .MetaReady}}
+    <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
+    {{else if .MetaHint}}
+    <p class="muted scan-modal-hint">{{.MetaHint}}</p>
+    {{end}}
+    <label class="scan-persist">
+      <input type="checkbox" name="persist" value="1" checked>
+      Save NFO/posters next to media files
+    </label>
+    <footer class="modal-foot">
+      <button type="button" class="secondary" id="entry-scan-modal-cancel">Cancel</button>
+      <button type="submit">Start</button>
+    </footer>
+  </form>
+</dialog>
+<script>
+(function () {
+  var dlg = document.getElementById('entry-scan-modal');
+  if (!dlg) return;
+  var form = document.getElementById('entry-scan-modal-form');
+  function closeDlg() { dlg.close(); }
+  var closeBtn = document.getElementById('entry-scan-modal-close');
+  var cancelBtn = document.getElementById('entry-scan-modal-cancel');
+  if (closeBtn) closeBtn.addEventListener('click', closeDlg);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeDlg);
+  dlg.addEventListener('click', function (e) {
+    if (e.target === dlg) closeDlg();
+  });
+  window.openEntryScanModal = function (mediaId) {
+    if (!form) return;
+    form.setAttribute('hx-post', '/hx/media/' + mediaId + '/scan');
+    if (window.htmx) htmx.process(form);
+    dlg.showModal();
+  };
+})();
+</script>
+{{end}}

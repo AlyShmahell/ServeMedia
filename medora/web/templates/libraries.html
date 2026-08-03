@@ -1,0 +1,9 @@
+{{define "libraries.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Libraries — Medora</title><link rel="stylesheet" href="/static/app.css"></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content"><h1>Libraries</h1>
+<ul>{{range .Libraries}}<li><a href="/libraries/{{.ID}}">{{.Name}}</a> <span class="muted">({{.Type}})</span></li>{{else}}<li class="muted">None</li>{{end}}</ul>
+</main></div></body></html>
+{{end}}

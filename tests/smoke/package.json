@@ -1,0 +1,10 @@
+{
+  "name": "medora-smoke",
+  "private": true,
+  "dependencies": {
+    "@playwright/test": "1.49.1"
+  },
+  "scripts": {
+    "test": "playwright test"
+  }
+}

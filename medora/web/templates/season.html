@@ -1,0 +1,40 @@
+{{define "season.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Item.Title}} S{{.Season.SeasonNumber}} — Medora</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content season-page">
+  <p class="back-link"><a href="/shows/{{.Item.ID}}">← {{.Item.Title}}</a></p>
+  <div class="season-main-card" data-scroll-key="season-main">
+    <header class="season-sticky-head">
+      <div class="season-head-row">
+        <h1>{{if .Season.Title.Valid}}{{.Season.Title.String}}{{else}}Season {{.Season.SeasonNumber}}{{end}}</h1>
+      </div>
+      {{if .Season.Plot.Valid}}<p class="plot">{{.Season.Plot.String}}</p>{{end}}
+    </header>
+    <div class="season-main-body">
+      <div class="episode-grid">
+        {{range .Episodes}}
+        <article class="episode-card">
+          <div class="episode-still-wrap">
+            <a class="episode-still" href="/play/episode/{{.Episode.ID}}">
+              <img class="poster" src="{{posterURL .Episode.StillPath.String .Episode.MetaID.String}}" alt="">
+              <span class="play-overlay" aria-hidden="true">▶</span>
+              <span class="visually-hidden">Play</span>
+              <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
+            </a>
+          </div>
+          <div class="episode-card-body">
+            <h3><span class="muted">E{{.Episode.EpisodeNumber}}</span> {{if .Episode.Title.Valid}}{{.Episode.Title.String}}{{else}}Episode {{.Episode.EpisodeNumber}}{{end}}</h3>
+            {{if .Episode.Plot.Valid}}<p class="plot">{{.Episode.Plot.String}}</p>{{else}}<p class="muted">No synopsis</p>{{end}}
+          </div>
+        </article>
+        {{else}}
+        <p class="muted">No episodes</p>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</main></div>
+</body></html>
+{{end}}

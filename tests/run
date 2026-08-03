@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Medora tests driver — Podman only. No host Go/Node/Playwright.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TESTS="$ROOT/tests"
+TOOLCHAINS="$ROOT/toolchains/compose.yaml"
+COMPOSE_FILE="$TESTS/compose.yaml"
+
+RED=$'\033[31m'; GREEN=$'\033[32m'; CYAN=$'\033[36m'; DIM=$'\033[2m'; REV=$'\033[7m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+
+if ! command -v podman >/dev/null 2>&1; then
+  echo "${RED}Podman is required for tests. Docker-only hosts are not supported.${RESET}" >&2
+  exit 1
+fi
+
+# Always run compose from tests/ so relative paths resolve.
+cd "$TESTS"
+COMPOSE_FILE="./compose.yaml"
+if command -v podman-compose >/dev/null 2>&1; then
+  COMPOSE=(podman-compose -f "$COMPOSE_FILE")
+else
+  echo "${RED}podman-compose required${RESET}" >&2
+  exit 1
+fi
+
+if [[ ! -t 0 || ! -t 1 ]]; then
+  echo "Non-interactive: running unit then smoke"
+  if [[ -f "$ROOT/medora/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$ROOT/medora/.env"
+    set +a
+  fi
+  "${COMPOSE[@]}" build unit
+  "${COMPOSE[@]}" run --rm unit
+  "${COMPOSE[@]}" down -v 2>/dev/null || true
+  # Build OMDb stub with an explicit tag (compose short-name pulls fail without a TTY).
+  podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
+  "${COMPOSE[@]}" up -d --build medora
+  "${COMPOSE[@]}" run --rm --build smoke
+  exit 0
+fi
+
+cleanup() { stty sane 2>/dev/null || true; printf '\033[?25h'; }
+trap cleanup EXIT
+stty -echo -icanon time 0 min 0 2>/dev/null || true
+printf '\033[?25l'
+
+read_key() {
+  local k rest
+  IFS= read -r -n1 k || return 1
+  if [[ "$k" == $'\033' ]]; then
+    IFS= read -r -n2 rest || true
+    echo "ESC$rest"
+  elif [[ "$k" == "" ]]; then echo ENTER
+  elif [[ "$k" == " " ]]; then echo SPACE
+  else echo "$k"; fi
+}
+
+run_pull() {
+  stty sane; printf '\033[?25h'
+  podman compose -f "$TOOLCHAINS" --profile pull pull
+  read -r -p "Enter…"; stty -echo -icanon time 0 min 0; printf '\033[?25l'
+}
+run_unit() {
+  stty sane; printf '\033[?25h'
+  "${COMPOSE[@]}" build unit
+  "${COMPOSE[@]}" run --rm unit
+  read -r -p "Enter…"; stty -echo -icanon time 0 min 0; printf '\033[?25l'
+}
+run_smoke() {
+  stty sane; printf '\033[?25h'
+  "${COMPOSE[@]}" down -v 2>/dev/null || true
+  # Movie Meta uses the local OMDb stub (see tests/omdb-stub); no real API key required.
+  podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
+  "${COMPOSE[@]}" up -d --build medora
+  "${COMPOSE[@]}" build smoke
+  "${COMPOSE[@]}" run --rm smoke
+  read -r -p "Enter…"; stty -echo -icanon time 0 min 0; printf '\033[?25l'
+}
+run_all() { run_unit; run_smoke; }
+
+sel=0
+items=("Pull toolchains" "Run unit" "Run smoke" "Run all" "Quit")
+while true; do
+  clear
+  echo "${CYAN}${BOLD}Medora tests${RESET} ${DIM}(Podman only)${RESET}"
+  echo
+  i=0
+  for it in "${items[@]}"; do
+    if [[ $i -eq $sel ]]; then echo "  ${REV}${GREEN}▸ $it${RESET}"; else echo "  $it"; fi
+    i=$((i+1))
+  done
+  echo; echo "${DIM}↑/↓ · Enter · Esc quit${RESET}"
+  key="$(read_key)"
+  case "$key" in
+    ESC[A) sel=$(( (sel+4)%5 ));;
+    ESC[B) sel=$(( (sel+1)%5 ));;
+    ESC*) break ;;
+    ENTER|SPACE)
+      case $sel in
+        0) run_pull ;;
+        1) run_unit ;;
+        2) run_smoke ;;
+        3) run_all ;;
+        4) break ;;
+      esac
+      ;;
+  esac
+done

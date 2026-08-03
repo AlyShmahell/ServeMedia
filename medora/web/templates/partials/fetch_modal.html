@@ -1,0 +1,22 @@
+{{define "partials/fetch_modal.html"}}
+<dialog id="fetch-modal" class="modal">
+  <div class="modal-form">
+    <header class="modal-head">
+      <h2 class="visually-hidden">Fetch</h2>
+      <button type="button" class="btn-icon secondary" id="fetch-modal-close" aria-label="Close">×</button>
+    </header>
+    <div id="fetch-modal-body"></div>
+  </div>
+</dialog>
+<script>
+(function () {
+  var dlg = document.getElementById('fetch-modal');
+  if (!dlg) return;
+  var closeBtn = document.getElementById('fetch-modal-close');
+  if (closeBtn) closeBtn.addEventListener('click', function () { dlg.close(); });
+  dlg.addEventListener('click', function (e) {
+    if (e.target === dlg) dlg.close();
+  });
+})();
+</script>
+{{end}}

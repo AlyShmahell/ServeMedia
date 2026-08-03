@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+
+FROM docker.io/library/golang:1.23-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git ca-certificates
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/medora ./cmd/medora \
+  && CGO_ENABLED=0 go build -o /out/medora-providers ./cmd/medora-providers
+
+FROM docker.io/library/alpine:3.20
+RUN apk add --no-cache \
+    ffmpeg wget ca-certificates \
+    libva libva-utils mesa-va-gallium \
+  && adduser -D -u 1000 medora
+
+COPY --from=build /out/medora /usr/local/bin/medora
+COPY --from=build /out/medora-providers /usr/local/bin/medora-providers
+COPY config.default.yaml /usr/share/medora/config.default.yaml
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /usr/local/bin/medora /usr/local/bin/medora-providers
+EXPOSE 7676
+ENTRYPOINT ["/entrypoint.sh"]

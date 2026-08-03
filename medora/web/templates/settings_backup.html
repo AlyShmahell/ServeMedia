@@ -1,0 +1,36 @@
+{{define "settings_backup.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backup — Settings</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content">
+  <p class="back-link"><a href="/settings">← Settings</a></p>
+  <h1>Backup</h1>
+  <div class="page-main-card">
+    <h2>Schedule</h2>
+    <form method="post" action="/settings/backup">
+      <label><input type="checkbox" name="backup_enabled" {{if .Config.Backup.Enabled}}checked{{end}}> Periodic backups enabled</label>
+      <label>Backup interval</label><input name="backup_interval" value="{{.Config.Backup.Interval}}">
+      <label>Retain count</label><input name="backup_retain" type="number" value="{{.Config.Backup.Retain}}">
+      <p><button type="submit">Save schedule</button></p>
+    </form>
+    <div hx-get="/hx/backup/status" hx-trigger="load, every 3s">{{template "partials/backup_status.html" .}}</div>
+    <p><button hx-post="/hx/backup" hx-swap="none">Backup now</button></p>
+    <h2>Archives</h2>
+    <table class="table"><thead><tr><th>File</th><th></th></tr></thead><tbody>
+    {{range .Archives}}
+    <tr>
+      <td><code>{{.}}</code></td>
+      <td class="row">
+        <form method="post" action="/hx/backup/restore" onsubmit="return confirm('Restore this backup? Server will reload store.')">
+          <input type="hidden" name="name" value="{{.}}">
+          <button type="submit">Restore</button>
+        </form>
+        <button class="secondary" hx-delete="/hx/backup/{{.}}" hx-confirm="Delete archive?" hx-target="closest tr" hx-swap="outerHTML">Delete</button>
+      </td>
+    </tr>
+    {{else}}<tr><td colspan="2" class="muted">No backups yet</td></tr>{{end}}
+    </tbody></table>
+  </div>
+</main></div></body></html>
+{{end}}
