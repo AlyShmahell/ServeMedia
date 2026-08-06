@@ -21,6 +21,7 @@ type Stream struct {
 	Index     int               `json:"index"`
 	CodecType string            `json:"codec_type"`
 	CodecName string            `json:"codec_name"`
+	PixFmt    string            `json:"pix_fmt"`
 	Channels  int               `json:"channels"`
 	Width     int               `json:"width"`
 	Height    int               `json:"height"`
@@ -57,6 +58,19 @@ func (p *Probe) DurationSeconds() float64 {
 		return 0
 	}
 	return f
+}
+
+// VideoPixFmt returns the first video stream pixel format, or "".
+func (p *Probe) VideoPixFmt() string {
+	if p == nil {
+		return ""
+	}
+	for _, s := range p.Streams {
+		if s.CodecType == "video" && s.PixFmt != "" {
+			return s.PixFmt
+		}
+	}
+	return ""
 }
 
 // VideoHeight returns the first video stream height, or 0.

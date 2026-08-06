@@ -8,6 +8,11 @@
   <h1>Server</h1>
   <div class="page-main-card">
     <p class="muted">Transcode: H.264 CRF {{.Config.Transcode.CRF}}, max height {{.Config.Transcode.MaxHeight}}p</p>
+    <p class="muted">Hardware acceleration: {{.TranscodeHW}}</p>
+    {{if .ActiveTranscode}}
+    <p class="muted">Active transcode pipeline: {{.ActiveTranscode}}</p>
+    {{end}}
+    <p class="muted">VAAPI uses GPU decode when supported; 10-bit sources convert on CPU after GPU decode. Hybrid CPU decode runs only as fallback.</p>
     <p class="muted">Periodic backup schedule is configured under Settings → Backup.</p>
   </div>
 </main></div></body></html>

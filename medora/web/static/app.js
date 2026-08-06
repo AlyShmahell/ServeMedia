@@ -207,3 +207,30 @@
   }
   document.addEventListener('htmx:afterSettle', scanPageState);
 })();
+
+(function () {
+  var token = '';
+  var pulseMs = 30000;
+
+  function createSession() {
+    return fetch('/watchdog/session', { method: 'POST', credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { token = d.token || ''; });
+  }
+
+  function pulse() {
+    if (!token || document.visibilityState !== 'visible') return;
+    fetch('/watchdog/pulse', {
+      method: 'POST',
+      headers: { 'X-Watchdog-Token': token },
+      credentials: 'same-origin',
+      keepalive: true
+    }).catch(function () {});
+  }
+
+  createSession().then(function () {
+    pulse();
+    setInterval(pulse, pulseMs);
+  });
+  document.addEventListener('visibilitychange', pulse);
+})();

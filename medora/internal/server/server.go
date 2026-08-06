@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -276,6 +277,18 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 func userFrom(r *http.Request) *db.User {
 	u, _ := r.Context().Value(userKey).(*db.User)
 	return u
+}
+
+func transcodeKey(r *http.Request, u *db.User) string {
+	uid := "anon"
+	if u != nil {
+		uid = fmt.Sprintf("%d", u.ID)
+	}
+	ip := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(ip); err == nil {
+		ip = host
+	}
+	return uid + "@" + ip
 }
 
 func (s *Server) setSession(w http.ResponseWriter, token string) {
@@ -921,7 +934,11 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	job, err := s.Transcode.Start(r.Context(), path, audioIndex, encodeHeight, startAt)
+	pixFmt := ""
+	if probe != nil {
+		pixFmt = probe.VideoPixFmt()
+	}
+	job, err := s.Transcode.Start(r.Context(), transcodeKey(r, u), path, audioIndex, encodeHeight, startAt, pixFmt)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -1247,7 +1264,11 @@ func (s *Server) handleSettingsLibrariesRedirect(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleSettingsServer(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "settings_server.html", map[string]any{"Config": s.Cfg})
+	s.render(w, r, "settings_server.html", map[string]any{
+		"Config":            s.Cfg,
+		"TranscodeHW":       s.Transcode.HWAccelStatus(),
+		"ActiveTranscode":   s.Transcode.ActiveTranscodeStatus(),
+	})
 }
 
 func (s *Server) handleSaveServer(w http.ResponseWriter, r *http.Request) {

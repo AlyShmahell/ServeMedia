@@ -255,7 +255,6 @@
   });
   seek.addEventListener('pointerup', commitSeekFromBar);
   seek.addEventListener('pointercancel', endSeeking);
-  seek.addEventListener('change', commitSeekFromBar);
   seek.addEventListener('input', () => {
     const dur = duration();
     if (!(dur > 0)) return;
@@ -806,6 +805,28 @@
   video.addEventListener('pause', () => postProgress(true));
   window.addEventListener('pagehide', () => postProgress(true));
   setInterval(() => postProgress(true), 10000);
+})();
+(function () {
+  let token = '';
+  function createSession() {
+    return fetch('/watchdog/session', { method: 'POST', credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => { token = d.token || ''; });
+  }
+  function pulse() {
+    if (!token || document.visibilityState !== 'visible') return;
+    fetch('/watchdog/pulse', {
+      method: 'POST',
+      headers: { 'X-Watchdog-Token': token },
+      credentials: 'same-origin',
+      keepalive: true
+    }).catch(() => {});
+  }
+  createSession().then(() => {
+    pulse();
+    setInterval(pulse, 30000);
+  });
+  document.addEventListener('visibilitychange', pulse);
 })();
 </script>
 </body></html>

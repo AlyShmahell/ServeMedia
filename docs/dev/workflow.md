@@ -58,3 +58,41 @@ podman compose -f tests/compose.yaml --project-directory tests run --rm smoke
 1. `cp medora/.env.example medora/.env` and set `MEDIA_PATH`  
 2. `./run` → Start (Podman preferred)  
 3. Open http://127.0.0.1:7676 → `/register` creates the admin user  
+
+## VAAPI transcode (AMD / Intel via Mesa)
+
+Runtime image: **Alpine 3.24** (Mesa 26.x, ffmpeg 8.x). Compose mounts `/dev/dri`.
+
+Medora probes render nodes and prefers **GPU decode + VAAPI H.264 encode**:
+
+| Pipeline | When |
+|----------|------|
+| `vaapi_full` | First attempt — input `-hwaccel vaapi` + `scale_vaapi` (8-bit and 10-bit) |
+| `vaapi_full_10bit` | 10-bit fallback — GPU decode, CPU 10→8 via hwdownload, GPU encode |
+| `vaapi_hybrid` | CPU decode + GPU encode |
+| `software` | Last resort — `libx264` |
+
+On Mesa 26, 10-bit anime may stay on `vaapi_full` (no CPU pixel convert). If direct GPU convert fails, logs show fallback to `vaapi_full_10bit` then `vaapi_hybrid`.
+
+**Verify on your host** (rebuild after image bump):
+
+```bash
+podman logs medora 2>&1 | rg 'transcode pipeline|10-bit direct|transcode hwaccel|ffmpeg '
+podman top medora | rg ffmpeg   # expect -hwaccel vaapi and h264_vaapi
+```
+
+Optional startup log when `/usr/share/medora/vaapi-probe.mkv` (HEVC Main 10) is present: `10-bit direct GPU convert OK`.
+
+Settings → Server shows probe status and active pipeline when transcoding.
+
+**AMD GPU monitors:** `gpu_busy_percent` often stays low during VAAPI encode; the video engine (VCN) may not appear in generic widgets. Trust logs and Settings → Server instead.
+
+**Rootless Podman (AMD):** if render nodes exist but probe fails with `stat: permission denied`, add your user to `render` and `video` groups, or uncomment `group_add` in [`medora/compose.yaml`](../../medora/compose.yaml) (see [`medora/.env.example`](../../medora/.env.example)).
+
+**Integration tests** (skip without GPU):
+
+```bash
+podman exec medora go test ./internal/transcode/ -run Vaapi -count=1
+```
+
+Set `hwaccel: none` in config to force software.

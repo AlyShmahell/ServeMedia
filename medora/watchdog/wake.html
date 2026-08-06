@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Medora</title>
+<style>{{.CSS}}</style>
+</head>
+<body>
+<main class="wake-card">
+  <div class="wake-mascot">
+    {{.SVG}}
+  </div>
+  <h1>Medora is waking up</h1>
+  <p class="wake-sub">Just a moment…</p>
+</main>
+<script>
+(function(){
+  var wakePollMs = {{.WakePollMs}};
+  var pulseMs = {{.PulseMs}};
+  var token = "";
+  function createSession(){
+    return fetch("/watchdog/session",{method:"POST"}).then(function(r){return r.json();}).then(function(d){
+      token = d.token || "";
+    });
+  }
+  function pulse(){
+    if(!token || document.visibilityState !== "visible") return Promise.resolve();
+    return fetch("/watchdog/pulse",{method:"POST",headers:{"X-Watchdog-Token":token}}).catch(function(){});
+  }
+  function pollHealth(){
+    return fetch("/healthz",{cache:"no-store"}).then(function(r){
+      if(r.ok) location.reload();
+    }).catch(function(){});
+  }
+  createSession().then(function(){
+    pulse();
+    pollHealth();
+    setInterval(pulse, pulseMs);
+    setInterval(pollHealth, wakePollMs);
+  });
+  document.addEventListener("visibilitychange", pulse);
+})();
+</script>
+</body>
+</html>

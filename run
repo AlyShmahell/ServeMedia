@@ -117,17 +117,23 @@ do_start() {
   # Rebuild image (UI is go:embed'd) and always recreate the container so :7676 runs the new binary.
   compose build
   compose up -d --force-recreate --build
-  echo "${GREEN}Started${RESET}"; sleep 1
+  echo "${GREEN}Container started${RESET}"
+  echo "${DIM}Open http://127.0.0.1:7676 — app starts on first visit${RESET}"
+  sleep 1
 }
 
 do_status() {
   compose ps || true
   echo
-  if curl -sf http://127.0.0.1:7676/healthz; then
-    echo
-    echo "${GREEN}healthz ok${RESET}"
+  if curl -sf http://127.0.0.1:7676/ >/dev/null 2>&1; then
+    echo "${GREEN}watchdog ok (:7676)${RESET}"
   else
-    echo "${RED}healthz failed${RESET}"
+    echo "${RED}container not responding on :7676${RESET}"
+  fi
+  if curl -sf http://127.0.0.1:7676/healthz >/dev/null 2>&1; then
+    echo "${GREEN}medora app running${RESET}"
+  else
+    echo "${YELLOW}medora app idle — open http://127.0.0.1:7676 to start${RESET}"
     echo "${DIM}--- recent logs ---${RESET}"
     compose logs --tail 40 medora 2>/dev/null || compose logs --tail 40 || true
   fi

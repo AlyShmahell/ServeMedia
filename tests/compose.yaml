@@ -29,7 +29,6 @@ services:
     env_file:
       - ../medora/.env
     environment:
-      MEDORA_HTTP_ADDR: ":7676"
       MEDORA_STORE_PATH: /data/store
       MEDORA_MEDIA_PATH: /media
       # Deterministic movie Meta in smoke (avoids real OMDb daily quota).
@@ -37,6 +36,7 @@ services:
       OMDB_BASE_URL: http://omdb-stub:8080/
       MEDORA_OMDB_DAILY: "0"
       MEDORA_OMDB_RPS: "20"
+      WATCHDOG_AUTOSTART: "1"
     dns:
       - 1.1.1.1
       - 8.8.8.8

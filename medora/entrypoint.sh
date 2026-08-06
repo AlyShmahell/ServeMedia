@@ -21,4 +21,4 @@ fi
 
 # Run as container root: under rootless Podman this maps to the host user, who can write
 # the /media bind mount. Dropping to UID 1000 would map to a subuid and break sidecar writes.
-exec /usr/local/bin/medora "$@"
+exec /usr/local/bin/medora-watchdog
