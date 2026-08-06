@@ -6,15 +6,67 @@
 <main class="content">
   <h1>Settings</h1>
   <div class="page-main-card">
-    <ul>
-      {{if eq .User.Role "admin"}}
-      <li><a href="/settings/users">Users</a></li>
-      <li><a href="/settings/backup">Backup</a></li>
-      <li><a href="/settings/server">Server</a></li>
-      {{else}}
-      <li class="muted">Library management is on Home.</li>
-      {{end}}
-    </ul>
+    {{if eq .User.Role "admin"}}
+    <div class="page-sub-card-grid">
+      <a class="page-sub-card page-sub-card-link settings-card" href="/settings/users">
+        <div class="settings-card-body">
+          <h2>Users</h2>
+          <p class="muted">Manage accounts and passwords</p>
+        </div>
+        <div class="settings-card-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+        </div>
+      </a>
+      <a class="page-sub-card page-sub-card-link settings-card" href="/settings/backup">
+        <div class="settings-card-body">
+          <h2>Backup</h2>
+          <p class="muted">Schedule backups and restore archives</p>
+        </div>
+        <div class="settings-card-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="21 8 21 21 3 21 3 8"></polyline>
+            <rect x="1" y="3" width="22" height="5"></rect>
+            <line x1="10" y1="12" x2="14" y2="12"></line>
+          </svg>
+        </div>
+      </a>
+      <a class="page-sub-card page-sub-card-link settings-card" href="/settings/server">
+        <div class="settings-card-body">
+          <h2>Server</h2>
+          <p class="muted">Transcode and server configuration</p>
+        </div>
+        <div class="settings-card-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+            <line x1="6" y1="6" x2="6.01" y2="6"></line>
+            <line x1="6" y1="18" x2="6.01" y2="18"></line>
+          </svg>
+        </div>
+      </a>
+      <a class="page-sub-card page-sub-card-link settings-card" href="/settings/integrations">
+        <div class="settings-card-body">
+          <h2>Integrations</h2>
+          <p class="muted">Webhooks and external services</p>
+        </div>
+        <div class="settings-card-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+          </svg>
+        </div>
+      </a>
+    </div>
+    {{else}}
+    <section class="page-sub-card">
+      <p class="muted">Library management is on Home.</p>
+    </section>
+    {{end}}
   </div>
 </main></div></body></html>
 {{end}}

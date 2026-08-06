@@ -7,19 +7,144 @@
   <p class="back-link"><a href="/settings">← Settings</a></p>
   <h1>Users</h1>
   <div class="page-main-card">
-    <table class="table"><thead><tr><th>Username</th><th>Role</th><th></th></tr></thead><tbody>
-    {{range .Users}}
-    <tr><td>{{.Username}}</td><td>{{.Role}}</td>
-    <td>{{if ne .Role "admin"}}<button class="secondary" hx-delete="/hx/users/{{.ID}}" hx-confirm="Delete user?" hx-target="closest tr" hx-swap="outerHTML">Delete</button>{{end}}</td></tr>
-    {{end}}
+    <div class="users-table-toolbar">
+      <button type="button" class="btn-icon" id="add-user-open" title="Add user" aria-label="Add user">+</button>
+    </div>
+    <table class="table"><thead><tr><th>Username</th><th>Role</th><th></th></tr></thead><tbody id="users-table-body">
+    {{template "partials/users_table_body.html" .}}
     </tbody></table>
-    <h2>Create user</h2>
-    <form method="post" action="/hx/users">
-      <label>Username</label><input name="username" required>
-      <label>Password</label><input type="password" name="password" required>
-      <p class="muted">New accounts are ordinary users.</p>
-      <p><button type="submit">Create user</button></p>
-    </form>
   </div>
-</main></div></body></html>
+</main></div>
+
+<dialog id="add-user-dialog" class="modal">
+  <form method="post" action="/hx/users" class="modal-form" id="add-user-form">
+    <header class="modal-head">
+      <h2>Add user</h2>
+      <button type="button" class="btn-icon secondary" id="add-user-close" aria-label="Close">×</button>
+    </header>
+    <label>Username</label>
+    <input name="username" id="add-user-username" required autocomplete="username">
+    <label>Password</label>
+    <input type="password" name="password" id="add-user-password" required autocomplete="new-password">
+    <label>Confirm</label>
+    <input type="password" name="confirm" id="add-user-confirm" required autocomplete="new-password">
+    <p class="auth-match-hint muted" id="add-user-match-hint" aria-live="polite"></p>
+    <p class="muted">New accounts are ordinary users.</p>
+    <footer class="modal-foot">
+      <button type="button" class="secondary" id="add-user-cancel">Cancel</button>
+      <button type="submit" id="add-user-submit" disabled>Create user</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="reset-user-password-dialog" class="modal">
+  <form method="post" action="" class="modal-form" id="reset-user-password-form">
+    <header class="modal-head">
+      <h2 id="reset-user-password-title">Reset password</h2>
+      <button type="button" class="btn-icon secondary" id="reset-user-password-close" aria-label="Close">×</button>
+    </header>
+    <label>Password</label>
+    <input type="password" name="password" id="reset-user-password" required autocomplete="new-password">
+    <label>Confirm</label>
+    <input type="password" name="confirm" id="reset-user-confirm" required autocomplete="new-password">
+    <p class="auth-match-hint muted" id="reset-user-match-hint" aria-live="polite"></p>
+    <footer class="modal-foot">
+      <button type="button" class="secondary" id="reset-user-password-cancel">Cancel</button>
+      <button type="submit" id="reset-user-submit" disabled>Reset password</button>
+    </footer>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  function initPasswordForm(opts) {
+    var user = opts.userInput;
+    var pass = opts.passInput;
+    var confirm = opts.confirmInput;
+    var hint = opts.hint;
+    var submit = opts.submit;
+    function sync() {
+      var u = user ? (user.value || "").trim() : "";
+      var p = pass.value || "";
+      var c = confirm.value || "";
+      var match = p.length > 0 && c.length > 0 && p === c;
+      confirm.classList.remove("match-ok", "match-error");
+      if (c.length === 0) {
+        hint.textContent = "";
+        hint.className = "auth-match-hint muted";
+      } else if (match) {
+        confirm.classList.add("match-ok");
+        hint.textContent = "Passwords match";
+        hint.className = "auth-match-hint match-ok-text";
+      } else {
+        confirm.classList.add("match-error");
+        hint.textContent = "Passwords do not match";
+        hint.className = "auth-match-hint match-error-text";
+      }
+      var ok = match && p.length > 0;
+      if (user) ok = ok && u.length > 0;
+      submit.disabled = !ok;
+    }
+    if (user) user.addEventListener("input", sync);
+    pass.addEventListener("input", sync);
+    confirm.addEventListener("input", sync);
+    sync();
+    return sync;
+  }
+
+  function wireDialog(dlg, openBtn, closeBtns) {
+    function openDlg() { dlg.showModal(); }
+    function closeDlg() { dlg.close(); }
+    if (openBtn) openBtn.addEventListener("click", openDlg);
+    closeBtns.forEach(function (btn) { btn.addEventListener("click", closeDlg); });
+    dlg.addEventListener("click", function (e) {
+      if (e.target === dlg) closeDlg();
+    });
+    return { openDlg: openDlg, closeDlg: closeDlg };
+  }
+
+  var addDlg = document.getElementById("add-user-dialog");
+  var addSync = initPasswordForm({
+    userInput: document.getElementById("add-user-username"),
+    passInput: document.getElementById("add-user-password"),
+    confirmInput: document.getElementById("add-user-confirm"),
+    hint: document.getElementById("add-user-match-hint"),
+    submit: document.getElementById("add-user-submit")
+  });
+  wireDialog(addDlg, document.getElementById("add-user-open"), [
+    document.getElementById("add-user-close"),
+    document.getElementById("add-user-cancel")
+  ]);
+
+  var resetDlg = document.getElementById("reset-user-password-dialog");
+  var resetForm = document.getElementById("reset-user-password-form");
+  var resetTitle = document.getElementById("reset-user-password-title");
+  var resetPass = document.getElementById("reset-user-password");
+  var resetConfirm = document.getElementById("reset-user-confirm");
+  var resetSync = initPasswordForm({
+    passInput: resetPass,
+    confirmInput: resetConfirm,
+    hint: document.getElementById("reset-user-match-hint"),
+    submit: document.getElementById("reset-user-submit")
+  });
+  var resetDlgCtl = wireDialog(resetDlg, null, [
+    document.getElementById("reset-user-password-close"),
+    document.getElementById("reset-user-password-cancel")
+  ]);
+
+  document.getElementById("users-table-body").addEventListener("click", function (e) {
+    var btn = e.target.closest(".user-action-edit");
+    if (!btn) return;
+    var id = btn.getAttribute("data-user-id");
+    var username = btn.getAttribute("data-username");
+    resetForm.action = "/hx/users/" + id + "/password";
+    resetTitle.textContent = "Reset password — " + username;
+    resetPass.value = "";
+    resetConfirm.value = "";
+    resetSync();
+    resetDlgCtl.openDlg();
+  });
+})();
+</script>
+</body></html>
 {{end}}

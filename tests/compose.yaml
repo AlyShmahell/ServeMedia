@@ -14,6 +14,14 @@ services:
     expose:
       - "8080"
 
+  webhook-stub:
+    image: localhost/tests_webhook-stub:latest
+    build:
+      context: ./webhook-stub
+      dockerfile: Containerfile
+    expose:
+      - "9090"
+
   medora:
     build:
       context: ../medora
@@ -34,6 +42,7 @@ services:
       - 8.8.8.8
     depends_on:
       - omdb-stub
+      - webhook-stub
     volumes:
       - medora-test-data:/data:Z
       - ./fixtures/media:/media:Z
@@ -58,6 +67,7 @@ services:
         condition: service_healthy
     environment:
       MEDORA_BASE_URL: http://medora:7676
+      WEBHOOK_STUB_URL: http://webhook-stub:9090
     volumes:
       - ./smoke:/tests:ro
 

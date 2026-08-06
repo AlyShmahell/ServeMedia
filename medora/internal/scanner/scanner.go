@@ -19,6 +19,13 @@ type Scanner struct {
 	DB        *db.DB
 	StorePath string
 	MediaRoot string
+	Webhooks  WebhookNotifier
+}
+
+type WebhookNotifier interface {
+	DispatchItemAdded(ctx context.Context, item *db.MediaItem)
+	DispatchEpisodeAdded(ctx context.Context, ep *db.Episode, show *db.MediaItem)
+	DispatchTaskCompleted(ctx context.Context, message string)
 }
 
 // ScanLibrary walks the library and marks the job done on success.
@@ -52,6 +59,9 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib *db.Library, jobID int64,
 	}
 	if markDone {
 		_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
+		if s.Webhooks != nil {
+			s.Webhooks.DispatchTaskCompleted(ctx, "Library scan complete")
+		}
 		return
 	}
 	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 100, "Scan complete")
@@ -229,7 +239,12 @@ func (s *Scanner) ingestMovie(ctx context.Context, lib *db.Library, path string)
 		Rating:         sql.NullFloat64{Float64: rating, Valid: rating > 0},
 		Mtime:          info.ModTime().Unix(),
 	}
-	_, err = s.DB.UpsertMediaItem(ctx, it)
+	existed, _ := s.DB.MediaItemExistsAtPath(ctx, lib.ID, path)
+	id, err := s.DB.UpsertMediaItem(ctx, it)
+	if err == nil && !existed && s.Webhooks != nil {
+		it.ID = id
+		s.Webhooks.DispatchItemAdded(ctx, &it)
+	}
 	return err
 }
 
@@ -885,7 +900,7 @@ func (s *Scanner) ingestShow(ctx context.Context, lib *db.Library, showPath stri
 		posterRel = filepath.Join("metadata", "tv", sanitize(showTitle), "poster.jpg")
 		_ = metadata.CopyFile(p, filepath.Join(s.StorePath, posterRel))
 	}
-	return s.DB.UpsertMediaItem(ctx, db.MediaItem{
+	it := db.MediaItem{
 		LibraryID:  lib.ID,
 		Kind:       "show",
 		Title:      showTitle,
@@ -897,7 +912,14 @@ func (s *Scanner) ingestShow(ctx context.Context, lib *db.Library, showPath stri
 		NFOPath:    sql.NullString{String: nfoRel, Valid: true},
 		Rating:     sql.NullFloat64{Float64: rating, Valid: rating > 0},
 		Mtime:      0,
-	})
+	}
+	existed, _ := s.DB.MediaItemExistsAtPath(ctx, lib.ID, showPath)
+	id, err := s.DB.UpsertMediaItem(ctx, it)
+	if err == nil && !existed && s.Webhooks != nil {
+		it.ID = id
+		s.Webhooks.DispatchItemAdded(ctx, &it)
+	}
+	return id, err
 }
 
 // resolveTVEpisode maps a video under a TV show dir to season/episode.
@@ -978,7 +1000,8 @@ func (s *Scanner) ingestEpisodeAt(ctx context.Context, showID int64, path string
 		stillRel = filepath.Join("metadata", "tv", showKey, fmt.Sprintf("S%02d", season), base+"-thumb"+ext)
 		_ = metadata.CopyFile(p, filepath.Join(s.StorePath, stillRel))
 	}
-	_, err = s.DB.UpsertEpisode(ctx, db.Episode{
+	existed, _ := s.DB.EpisodeExistsAtPath(ctx, showID, path)
+	id, err := s.DB.UpsertEpisode(ctx, db.Episode{
 		SeasonID:       seasonID,
 		ShowID:         showID,
 		EpisodeNumber:  episode,
@@ -990,6 +1013,14 @@ func (s *Scanner) ingestEpisodeAt(ctx context.Context, showID int64, path string
 		NFOPath:        sql.NullString{String: nfoRel, Valid: nfoRel != ""},
 		Mtime:          info.ModTime().Unix(),
 	})
+	if err == nil && !existed && s.Webhooks != nil {
+		ep := db.Episode{
+			ID: id, SeasonID: seasonID, ShowID: showID, EpisodeNumber: episode,
+			Title: sql.NullString{String: title, Valid: true}, Path: path,
+		}
+		show, _ := s.DB.GetMediaItem(ctx, showID)
+		s.Webhooks.DispatchEpisodeAdded(ctx, &ep, show)
+	}
 	return err
 }
 
@@ -1036,7 +1067,7 @@ func (s *Scanner) ensureSeason(ctx context.Context, showID int64, seasonNum int,
 		if p == "" {
 			p = metadata.FindSidecar(dir, baseAlt, "poster.jpg", "folder.jpg", "poster.png", "folder.png")
 		}
-		// Jellyfin-style seasonNN-poster.jpg is covered by FindSidecar(base+"-"+name).
+		// seasonNN-poster.jpg sidecar naming is covered by FindSidecar(base+"-"+name).
 		if p == "" {
 			for _, name := range []string{
 				base + "-poster.jpg", base + "-poster.png",

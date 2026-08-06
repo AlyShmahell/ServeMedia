@@ -16,21 +16,25 @@
     </form>
     <div hx-get="/hx/backup/status" hx-trigger="load, every 3s">{{template "partials/backup_status.html" .}}</div>
     <p><button hx-post="/hx/backup" hx-swap="none">Backup now</button></p>
-    <h2>Archives</h2>
-    <table class="table"><thead><tr><th>File</th><th></th></tr></thead><tbody>
-    {{range .Archives}}
-    <tr>
-      <td><code>{{.}}</code></td>
-      <td class="row">
-        <form method="post" action="/hx/backup/restore" onsubmit="return confirm('Restore this backup? Server will reload store.')">
-          <input type="hidden" name="name" value="{{.}}">
-          <button type="submit">Restore</button>
-        </form>
-        <button class="secondary" hx-delete="/hx/backup/{{.}}" hx-confirm="Delete archive?" hx-target="closest tr" hx-swap="outerHTML">Delete</button>
-      </td>
-    </tr>
-    {{else}}<tr><td colspan="2" class="muted">No backups yet</td></tr>{{end}}
-    </tbody></table>
+    <section class="page-sub-card">
+      <h2>Archives</h2>
+      <div class="page-sub-card-body-scroll">
+        <table class="table"><thead><tr><th>File</th><th></th></tr></thead><tbody>
+        {{range .Archives}}
+        <tr>
+          <td><code>{{.}}</code></td>
+          <td class="row">
+            <form method="post" action="/hx/backup/restore" onsubmit="return confirm('Restore this backup? Server will reload store.')">
+              <input type="hidden" name="name" value="{{.}}">
+              <button type="submit">Restore</button>
+            </form>
+            <button class="secondary" hx-delete="/hx/backup/{{.}}" hx-confirm="Delete archive?" hx-target="closest tr" hx-swap="outerHTML">Delete</button>
+          </td>
+        </tr>
+        {{else}}<tr><td colspan="2" class="muted">No backups yet</td></tr>{{end}}
+        </tbody></table>
+      </div>
+    </section>
   </div>
 </main></div></body></html>
 {{end}}

@@ -120,6 +120,25 @@ func (d *DB) ListUsers(ctx context.Context) ([]User, error) {
 	return out, rows.Err()
 }
 
+func (d *DB) UpdateUserPassword(ctx context.Context, id int64, password string) error {
+	hash, err := HashPassword(password)
+	if err != nil {
+		return err
+	}
+	res, err := d.SQL.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, hash, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (d *DB) DeleteUser(ctx context.Context, id int64) error {
 	var role string
 	var admins int

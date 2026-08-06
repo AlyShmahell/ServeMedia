@@ -341,6 +341,24 @@ func (d *DB) TouchMediaItemMtime(ctx context.Context, id int64, mtime int64) err
 	return err
 }
 
+func (d *DB) MediaItemExistsAtPath(ctx context.Context, libraryID int64, path string) (bool, error) {
+	var id int64
+	err := d.SQL.QueryRowContext(ctx, `SELECT id FROM media_items WHERE library_id = ? AND path = ?`, libraryID, path).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (d *DB) EpisodeExistsAtPath(ctx context.Context, showID int64, path string) (bool, error) {
+	var id int64
+	err := d.SQL.QueryRowContext(ctx, `SELECT id FROM episodes WHERE show_id = ? AND path = ?`, showID, path).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (d *DB) UpsertMediaItem(ctx context.Context, it MediaItem) (int64, error) {
 	var id int64
 	err := d.SQL.QueryRowContext(ctx, `SELECT id FROM media_items WHERE library_id = ? AND path = ?`, it.LibraryID, it.Path).Scan(&id)

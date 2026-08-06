@@ -1,0 +1,179 @@
+{{define "settings_integrations.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integrations — Settings</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script></head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content">
+  <p class="back-link"><a href="/settings">← Settings</a></p>
+  <h1>Integrations</h1>
+  <div class="page-main-card">
+    <div class="settings-tabs" role="tablist">
+      <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-tab="webhooks">Webhooks</button>
+    </div>
+    <div class="settings-tab-panel active" id="tab-webhooks" role="tabpanel">
+      <form method="post" action="/settings/integrations" id="integrations-form">
+        <section class="page-sub-card">
+          <h2>Webhooks</h2>
+          <div class="page-sub-card-body-scroll">
+            <p class="muted">Send outbound notifications in standard webhook JSON. <code>ServerName</code> is always <strong>Medora</strong>.</p>
+
+            <label><input type="checkbox" name="webhook_enabled" {{if .Config.Integrations.Webhooks.Enabled}}checked{{end}}> Enable webhooks</label>
+            <label>Server URL</label>
+            <input name="webhook_server_url" value="{{.Config.Integrations.Webhooks.ServerURL}}" placeholder="https://medora.example.com">
+            <label>Server ID</label>
+            <input value="{{.Config.Integrations.Webhooks.ServerID}}" readonly>
+            <label>Webhook API key</label>
+            <div class="webhook-key-row">
+              <input id="webhook-api-key" value="{{.Config.Integrations.Webhooks.APIKey}}" readonly>
+              <button type="button" class="secondary" id="webhook-copy-key">Copy</button>
+              <button type="submit" class="secondary" formaction="/hx/integrations/webhooks/regenerate-key" formmethod="post" onclick="return confirm('Regenerate webhook API key? Update receivers with the new key.')">Regenerate</button>
+            </div>
+            <p class="muted">Displayed masked in UI: {{.WebhookKeyMasked}}. Outbound requests include header <code>X-Medora-Webhook-Key</code>.</p>
+
+            <h3>Destinations</h3>
+            <div class="webhook-destinations" id="webhook-destinations">
+              {{range $i, $d := .Config.Integrations.Webhooks.Destinations}}
+              <fieldset class="webhook-destination" data-index="{{$i}}">
+                <legend>Destination {{add1 $i}}</legend>
+                <label>Name</label>
+                <input name="dest_{{$i}}_name" value="{{$d.Name}}" placeholder="Home Assistant">
+                <label>URL</label>
+                <input name="dest_{{$i}}_url" value="{{$d.URL}}" placeholder="https://example.com/webhook">
+                <label><input type="checkbox" name="dest_{{$i}}_enabled" {{if $d.Enabled}}checked{{end}}> Enabled</label>
+                <p class="muted">Notification types</p>
+                <div class="webhook-type-grid">
+                  {{range $.NotificationTypes}}
+                  <label><input type="checkbox" name="dest_{{$i}}_types" value="{{.}}" {{if hasStr $d.NotificationTypes .}}checked{{end}}> {{.}}</label>
+                  {{end}}
+                </div>
+                <p class="muted">Item types (empty = all)</p>
+                <div class="webhook-type-grid">
+                  {{range $.ItemTypes}}
+                  <label><input type="checkbox" name="dest_{{$i}}_items" value="{{.}}" {{if hasStr $d.ItemTypes .}}checked{{end}}> {{.}}</label>
+                  {{end}}
+                </div>
+                <label>Custom headers</label>
+                {{range $j, $h := $d.Headers}}
+                <div class="webhook-header-row">
+                  <input name="dest_{{$i}}_header_{{$j}}_key" value="{{$h.Key}}" placeholder="Header">
+                  <input name="dest_{{$i}}_header_{{$j}}_val" value="{{$h.Value}}" placeholder="Value">
+                </div>
+                {{else}}
+                <div class="webhook-header-row">
+                  <input name="dest_{{$i}}_header_0_key" value="Content-Type" placeholder="Header">
+                  <input name="dest_{{$i}}_header_0_val" value="application/json" placeholder="Value">
+                </div>
+                {{end}}
+                <input type="hidden" name="dest_{{$i}}_header_count" value="{{if $d.Headers}}{{len $d.Headers}}{{else}}1{{end}}">
+                <label>Template (optional JSON with {{`{{Field}}`}} placeholders)</label>
+                <textarea name="dest_{{$i}}_template" rows="4" placeholder="Leave empty for default JSON">{{$d.Template}}</textarea>
+              </fieldset>
+              {{else}}
+              <fieldset class="webhook-destination" data-index="0">
+                <legend>Destination 1</legend>
+                <input type="hidden" name="dest_0_header_count" value="1">
+                <label>Name</label>
+                <input name="dest_0_name" placeholder="Home Assistant">
+                <label>URL</label>
+                <input name="dest_0_url" placeholder="https://example.com/webhook">
+                <label><input type="checkbox" name="dest_0_enabled" checked> Enabled</label>
+                <p class="muted">Notification types</p>
+                <div class="webhook-type-grid">
+                  {{range .NotificationTypes}}
+                  <label><input type="checkbox" name="dest_0_types" value="{{.}}"> {{.}}</label>
+                  {{end}}
+                </div>
+                <p class="muted">Item types (empty = all)</p>
+                <div class="webhook-type-grid">
+                  {{range .ItemTypes}}
+                  <label><input type="checkbox" name="dest_0_items" value="{{.}}"> {{.}}</label>
+                  {{end}}
+                </div>
+                <label>Custom headers</label>
+                <div class="webhook-header-row">
+                  <input name="dest_0_header_0_key" value="Content-Type" placeholder="Header">
+                  <input name="dest_0_header_0_val" value="application/json" placeholder="Value">
+                </div>
+                <label>Template (optional JSON with {{`{{Field}}`}} placeholders)</label>
+                <textarea name="dest_0_template" rows="4" placeholder="Leave empty for default JSON"></textarea>
+              </fieldset>
+              {{end}}
+            </div>
+            <p><button type="button" class="secondary" id="add-destination">Add destination</button></p>
+
+            <h3>Default payload example</h3>
+            <pre class="webhook-example">{
+  "ServerId": "{{.Config.Integrations.Webhooks.ServerID}}",
+  "ServerName": "Medora",
+  "ServerVersion": "{{.Version}}",
+  "ServerUrl": "{{.Config.Integrations.Webhooks.ServerURL}}",
+  "NotificationType": "PlaybackStart",
+  "ClientName": "Medora",
+  "Name": "Example Movie",
+  "ItemType": "Movie",
+  "ItemId": "42",
+  "Username": "admin"
+}</pre>
+          </div>
+        </section>
+        <input type="hidden" name="dest_count" id="dest-count" value="{{if .Config.Integrations.Webhooks.Destinations}}{{len .Config.Integrations.Webhooks.Destinations}}{{else}}1{{end}}">
+        <p class="row">
+          <button type="submit">Save</button>
+          <button type="button" class="secondary" id="test-webhooks">Test webhooks</button>
+        </p>
+        <p class="muted" id="webhook-test-result" aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+</main></div>
+<script>
+(function () {
+  var destWrap = document.getElementById("webhook-destinations");
+  var destCount = document.getElementById("dest-count");
+  var addBtn = document.getElementById("add-destination");
+  var copyBtn = document.getElementById("webhook-copy-key");
+  var testBtn = document.getElementById("test-webhooks");
+  var testResult = document.getElementById("webhook-test-result");
+
+  if (copyBtn) {
+    copyBtn.addEventListener("click", function () {
+      var el = document.getElementById("webhook-api-key");
+      if (!el) return;
+      navigator.clipboard.writeText(el.value || "").catch(function () {});
+    });
+  }
+
+  if (addBtn && destWrap && destCount) {
+    addBtn.addEventListener("click", function () {
+      var n = parseInt(destCount.value || "0", 10);
+      var first = destWrap.querySelector(".webhook-destination");
+      if (!first) return;
+      var clone = first.cloneNode(true);
+      clone.setAttribute("data-index", String(n));
+      clone.querySelector("legend").textContent = "Destination " + (n + 1);
+      clone.querySelectorAll("[name]").forEach(function (el) {
+        el.name = el.name.replace(/^dest_\d+_/, "dest_" + n + "_");
+        if (el.type === "checkbox") el.checked = false;
+        else if (el.tagName === "TEXTAREA") el.value = "";
+        else if (el.type !== "hidden") el.value = "";
+      });
+      var hc = clone.querySelector("[name='dest_" + n + "_header_count']");
+      if (hc) hc.value = "1";
+      destWrap.appendChild(clone);
+      destCount.value = String(n + 1);
+    });
+  }
+
+  if (testBtn && testResult) {
+    testBtn.addEventListener("click", function () {
+      testResult.textContent = "Sending test…";
+      fetch("/hx/integrations/webhooks/test", { method: "POST", credentials: "same-origin" })
+        .then(function (r) { return r.text(); })
+        .then(function (t) { testResult.textContent = t; })
+        .catch(function (e) { testResult.textContent = String(e); });
+    });
+  }
+})();
+</script>
+</body></html>
+{{end}}

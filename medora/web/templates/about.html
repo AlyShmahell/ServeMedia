@@ -6,8 +6,8 @@
 <main class="content">
   <h1>About</h1>
   <div class="page-main-card">
-    <div class="about-grid">
-      <section class="about-tile">
+    <div class="about-grid page-sub-card-grid">
+      <section class="about-tile page-sub-card">
         <h2>Author</h2>
         <p>{{.Author}}</p>
         {{if .AuthorLinks}}
@@ -18,15 +18,15 @@
         </ul>
         {{end}}
       </section>
-      <section class="about-tile">
+      <section class="about-tile page-sub-card">
         <h2>Version</h2>
         <p>{{.Version}}</p>
       </section>
-      <section class="about-tile">
+      <section class="about-tile page-sub-card">
         <h2>Copyright</h2>
         <p>{{.Copyright}}</p>
       </section>
-      <section class="about-tile">
+      <section class="about-tile page-sub-card">
         <h2>License</h2>
         <pre class="about-license">{{.License}}</pre>
       </section>

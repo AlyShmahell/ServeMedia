@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -27,6 +29,7 @@ import (
 	"github.com/alyshmahell/medora/internal/stream"
 	"github.com/alyshmahell/medora/internal/providers"
 	"github.com/alyshmahell/medora/internal/transcode"
+	"github.com/alyshmahell/medora/internal/webhooks"
 	"github.com/alyshmahell/medora/internal/version"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -41,6 +44,7 @@ type Server struct {
 	Scanner   *scanner.Scanner
 	Fetch     *fetch.Worker
 	Transcode *transcode.Manager
+	Webhooks  *webhooks.Service
 	Templates *template.Template
 	Static    fs.FS
 	reopen    func() error
@@ -67,7 +71,7 @@ func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.S
 	}
 	return &Server{
 		Cfg: cfg, DB: database, Backup: bak, Scanner: sc, Fetch: fw, Transcode: tr,
-		Templates: tpl, Static: staticFS, reopen: reopen,
+		Webhooks: webhooks.New(cfg), Templates: tpl, Static: staticFS, reopen: reopen,
 	}, nil
 }
 
@@ -121,6 +125,15 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 		"mediaActionsStatic": func(scope string, id int64, metaReady bool, metaDisabledReason string) map[string]any {
 			return map[string]any{"Scope": scope, "ID": id, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "Static": true}
 		},
+		"hasStr": func(list []string, want string) bool {
+			for _, v := range list {
+				if strings.EqualFold(v, want) {
+					return true
+				}
+			}
+			return false
+		},
+		"add1": func(n int) int { return n + 1 },
 	})
 	return template.Must(t.ParseFS(fsys, "*.html", "*/*.html"))
 }
@@ -180,14 +193,19 @@ func (s *Server) Router() http.Handler {
 			r.Get("/settings/server", s.handleSettingsServer)
 			r.Get("/settings/backup", s.handleSettingsBackup)
 			r.Get("/settings/users", s.handleSettingsUsers)
+			r.Get("/settings/integrations", s.handleSettingsIntegrations)
 			r.Post("/hx/backup", s.handleBackupNow)
 			r.Get("/hx/backup/status", s.handleBackupStatus)
 			r.Post("/hx/backup/restore", s.handleBackupRestore)
 			r.Delete("/hx/backup/{name}", s.handleBackupDelete)
 			r.Post("/hx/users", s.handleCreateUser)
+			r.Post("/hx/users/{id}/password", s.handleResetUserPassword)
 			r.Delete("/hx/users/{id}", s.handleDeleteUser)
 			r.Post("/settings/server", s.handleSaveServer)
 			r.Post("/settings/backup", s.handleSaveBackup)
+			r.Post("/settings/integrations", s.handleSaveIntegrations)
+			r.Post("/hx/integrations/webhooks/regenerate-key", s.handleRegenerateWebhookKey)
+			r.Post("/hx/integrations/webhooks/test", s.handleTestWebhooks)
 		})
 	})
 	return r
@@ -338,6 +356,9 @@ func (s *Server) handleRegisterPost(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.render(w, r, "register.html", map[string]any{"Error": err.Error()})
 		return
+	}
+	if s.Webhooks != nil {
+		s.Webhooks.DispatchUserCreated(r.Context(), u)
 	}
 	token, err := s.DB.CreateSession(r.Context(), u.ID, 30)
 	if err != nil {
@@ -895,6 +916,9 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 		resp.URL = fmt.Sprintf("/stream/%s/%d", kind, id)
 		resp.Start = 0
 		_ = json.NewEncoder(w).Encode(resp)
+		if s.Webhooks != nil && u != nil {
+			s.Webhooks.DispatchPlaybackStart(r.Context(), kind, id, title, u)
+		}
 		return
 	}
 	job, err := s.Transcode.Start(r.Context(), path, audioIndex, encodeHeight, startAt)
@@ -906,6 +930,9 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	resp.URL = fmt.Sprintf("/hls/%s/master.m3u8", job.ID)
 	resp.Start = float64(job.StartAt)
 	_ = json.NewEncoder(w).Encode(resp)
+	if s.Webhooks != nil && u != nil {
+		s.Webhooks.DispatchPlaybackStart(r.Context(), kind, id, title, u)
+	}
 }
 
 func (s *Server) handleSubtitleVTT(w http.ResponseWriter, r *http.Request) {
@@ -1054,6 +1081,18 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = s.DB.UpsertWatchMovie(r.Context(), u.ID, id, pos, dur, completed)
+		if s.Webhooks != nil && u != nil {
+			it := s.ownedMediaItem(r, id)
+			title := ""
+			if it != nil {
+				title = it.Title
+			}
+			if completed {
+				s.Webhooks.DispatchPlaybackStop(r.Context(), "movie", id, title, u, pos, dur)
+			} else {
+				s.Webhooks.DispatchPlaybackProgress(r.Context(), "movie", id, title, u, pos, dur)
+			}
+		}
 	}
 	if eid := r.FormValue("episode_id"); eid != "" {
 		id, _ := strconv.ParseInt(eid, 10, 64)
@@ -1062,6 +1101,21 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = s.DB.UpsertWatchEpisode(r.Context(), u.ID, id, pos, dur, completed)
+		if s.Webhooks != nil && u != nil {
+			ep := s.ownedEpisode(r, id)
+			title := ""
+			if ep != nil {
+				title = ep.Title.String
+				if title == "" {
+					title = fmt.Sprintf("Episode %d", ep.EpisodeNumber)
+				}
+			}
+			if completed {
+				s.Webhooks.DispatchPlaybackStop(r.Context(), "episode", id, title, u, pos, dur)
+			} else {
+				s.Webhooks.DispatchPlaybackProgress(r.Context(), "episode", id, title, u, pos, dur)
+			}
+		}
 	}
 	w.WriteHeader(204)
 }
@@ -1144,7 +1198,6 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		return strings.TrimSpace(string(b))
 	}
 	authorRaw := readLegal("AUTHOR")
-	ver := readLegal("VERSION")
 	copyright := readLegal("COPYRIGHT")
 	license := readLegal("LICENSE")
 	authorName := "Unavailable"
@@ -1170,9 +1223,6 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 			authorLinks = append(authorLinks, map[string]string{"Href": href, "Label": label})
 		}
 	}
-	if ver == "" {
-		ver = version.Version
-	}
 	if copyright == "" {
 		copyright = "Unavailable"
 	}
@@ -1182,7 +1232,7 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "about.html", map[string]any{
 		"Author":      authorName,
 		"AuthorLinks": authorLinks,
-		"Version":     ver,
+		"Version":     version.Version,
 		"Copyright":   copyright,
 		"License":     license,
 	})
@@ -1415,6 +1465,9 @@ func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persi
 		return
 	}
 	_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
+	if s.Webhooks != nil {
+		s.Webhooks.DispatchTaskCompleted(ctx, "Library enrich complete")
+	}
 }
 
 func (s *Server) renderLibraryCard(w http.ResponseWriter, r *http.Request, lib *db.Library, job *db.ScanJob) {
@@ -1605,8 +1658,43 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
-	_, err := s.DB.CreateUser(r.Context(), strings.TrimSpace(r.FormValue("username")), r.FormValue("password"), db.RoleUser)
+	username := strings.TrimSpace(r.FormValue("username"))
+	pass := r.FormValue("password")
+	confirm := r.FormValue("confirm")
+	if username == "" || pass == "" || pass != confirm {
+		http.Error(w, "invalid input or passwords do not match", http.StatusBadRequest)
+		return
+	}
+	_, err := s.DB.CreateUser(r.Context(), username, pass, db.RoleUser)
 	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if u, err := s.DB.GetUserByUsername(r.Context(), username); err == nil && u != nil && s.Webhooks != nil {
+		s.Webhooks.DispatchUserCreated(r.Context(), u)
+	}
+	http.Redirect(w, r, "/settings/users", http.StatusFound)
+}
+
+func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	_ = r.ParseForm()
+	pass := r.FormValue("password")
+	confirm := r.FormValue("confirm")
+	if pass == "" || pass != confirm {
+		http.Error(w, "invalid input or passwords do not match", http.StatusBadRequest)
+		return
+	}
+	u, err := s.DB.GetUser(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if u == nil || u.Role == db.RoleAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := s.DB.UpdateUserPassword(r.Context(), id, pass); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -1615,9 +1703,112 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	u, _ := s.DB.GetUser(r.Context(), id)
 	if err := s.DB.DeleteUser(r.Context(), id); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	w.WriteHeader(204)
+	if u != nil && s.Webhooks != nil {
+		s.Webhooks.DispatchUserDeleted(r.Context(), u)
+	}
+	users, err := s.DB.ListUsers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.render(w, r, "partials/users_table_body.html", map[string]any{"Users": users})
+}
+
+func (s *Server) handleSettingsIntegrations(w http.ResponseWriter, r *http.Request) {
+	changed := s.Cfg.EnsureIntegrationDefaults()
+	if changed {
+		_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
+	}
+	s.render(w, r, "settings_integrations.html", map[string]any{
+		"Config":           s.Cfg,
+		"WebhookKeyMasked": webhooks.MaskKey(s.Cfg.Integrations.Webhooks.APIKey),
+		"NotificationTypes": webhooks.AllNotificationTypes,
+		"ItemTypes":         webhooks.AllItemTypes,
+	})
+}
+
+func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	s.Cfg.Integrations.Webhooks.Enabled = r.FormValue("webhook_enabled") == "on"
+	s.Cfg.Integrations.Webhooks.ServerURL = strings.TrimSpace(r.FormValue("webhook_server_url"))
+	s.Cfg.EnsureIntegrationDefaults()
+
+	destCount, _ := strconv.Atoi(r.FormValue("dest_count"))
+	if destCount < 0 {
+		destCount = 0
+	}
+	dests := make([]config.WebhookDestination, 0, destCount)
+	for i := 0; i < destCount; i++ {
+		prefix := fmt.Sprintf("dest_%d_", i)
+		name := strings.TrimSpace(r.FormValue(prefix + "name"))
+		url := strings.TrimSpace(r.FormValue(prefix + "url"))
+		if name == "" && url == "" {
+			continue
+		}
+		dest := config.WebhookDestination{
+			Name:              name,
+			URL:               url,
+			Enabled:           r.FormValue(prefix+"enabled") == "on",
+			NotificationTypes: r.Form[prefix+"types"],
+			ItemTypes:         r.Form[prefix+"items"],
+			Template:          r.FormValue(prefix + "template"),
+		}
+		headerCount, _ := strconv.Atoi(r.FormValue(prefix + "header_count"))
+		for j := 0; j < headerCount; j++ {
+			hk := strings.TrimSpace(r.FormValue(fmt.Sprintf("%sheader_%d_key", prefix, j)))
+			hv := r.FormValue(fmt.Sprintf("%sheader_%d_val", prefix, j))
+			if hk != "" {
+				dest.Headers = append(dest.Headers, config.WebhookHeader{Key: hk, Value: hv})
+			}
+		}
+		dests = append(dests, dest)
+	}
+	s.Cfg.Integrations.Webhooks.Destinations = dests
+	_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
+	if s.Webhooks != nil {
+		s.Webhooks.Refresh(s.Cfg)
+	}
+	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+}
+
+func (s *Server) handleRegenerateWebhookKey(w http.ResponseWriter, r *http.Request) {
+	key, err := configRandomHex(32)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.Cfg.Integrations.Webhooks.APIKey = key
+	s.Cfg.EnsureIntegrationDefaults()
+	_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
+	if s.Webhooks != nil {
+		s.Webhooks.Refresh(s.Cfg)
+	}
+	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+}
+
+func (s *Server) handleTestWebhooks(w http.ResponseWriter, r *http.Request) {
+	if s.Webhooks == nil {
+		http.Error(w, "webhooks unavailable", 500)
+		return
+	}
+	sent, errs := s.Webhooks.DispatchTest(r.Context())
+	msg := fmt.Sprintf("Sent to %d destination(s).", sent)
+	if len(errs) > 0 {
+		msg += " Errors: " + strings.Join(errs, "; ")
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(msg))
+}
+
+func configRandomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

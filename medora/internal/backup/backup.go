@@ -245,13 +245,9 @@ func (s *Service) applyRetention(dir string) error {
 
 func (s *Service) List() ([]string, error) {
 	dir := s.Cfg.Backup.Dir
-	var matches []string
-	for _, pat := range []string{"medora-metadata-*.tar.zst", "finlet-metadata-*.tar.zst"} {
-		m, err := filepath.Glob(filepath.Join(dir, pat))
-		if err != nil {
-			return nil, err
-		}
-		matches = append(matches, m...)
+	matches, err := filepath.Glob(filepath.Join(dir, "medora-metadata-*.tar.zst"))
+	if err != nil {
+		return nil, err
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(matches)))
 	var names []string
@@ -269,8 +265,7 @@ func (s *Service) List() ([]string, error) {
 
 func (s *Service) Delete(name string) error {
 	name = filepath.Base(name)
-	ok := (strings.HasPrefix(name, "medora-metadata-") || strings.HasPrefix(name, "finlet-metadata-")) &&
-		strings.HasSuffix(name, ".tar.zst")
+	ok := strings.HasPrefix(name, "medora-metadata-") && strings.HasSuffix(name, ".tar.zst")
 	if !ok {
 		return fmt.Errorf("invalid backup name")
 	}
@@ -371,11 +366,6 @@ func extractArchive(archive, dataParent, restoringStore string) error {
 				return err
 			}
 		case tar.TypeReg:
-			// Legacy Finlet archives stored finlet.db; map to medora.db on restore.
-			if rel == "finlet.db" {
-				rel = "medora.db"
-				target = filepath.Join(restoringStore, rel)
-			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}

@@ -16,6 +16,7 @@ import (
 	"github.com/alyshmahell/medora/internal/scanner"
 	"github.com/alyshmahell/medora/internal/server"
 	"github.com/alyshmahell/medora/internal/transcode"
+	"github.com/alyshmahell/medora/internal/version"
 	"github.com/alyshmahell/medora/web"
 )
 
@@ -29,6 +30,10 @@ func main() {
 	if cfg.Store.Path == "" {
 		cfg.Store.Path = storePath
 	}
+	if cfg.EnsureIntegrationDefaults() {
+		_ = cfg.Save(cfgPath)
+	}
+	version.Init(cfg.Legal.Path)
 	_ = os.MkdirAll(cfg.Store.Path, 0o755)
 	_ = os.MkdirAll(filepath.Join(cfg.Store.Path, "metadata", "movies"), 0o755)
 	_ = os.MkdirAll(filepath.Join(cfg.Store.Path, "metadata", "tv"), 0o755)
@@ -38,9 +43,6 @@ func main() {
 	var database *db.DB
 	openDB := func() error {
 		dbPath := filepath.Join(cfg.Store.Path, "medora.db")
-		if err := migrateLegacyDB(dbPath); err != nil {
-			return err
-		}
 		var err error
 		database, err = db.Open(dbPath)
 		return err
@@ -74,6 +76,9 @@ func main() {
 			srv.Backup = bak
 			srv.Scanner = sc
 			srv.RefreshFetchConfig()
+			if srv.Webhooks != nil {
+				srv.Webhooks.Refresh(&cfg)
+			}
 		}
 		bak.StartScheduler(context.Background())
 		return nil
@@ -83,6 +88,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	sc.Webhooks = srv.Webhooks
 	bak.StartScheduler(context.Background())
 
 	if cfg.Scan.OnStartup {
@@ -125,31 +131,4 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-// migrateLegacyDB renames finlet.db → medora.db (and sidecars) once if needed.
-func migrateLegacyDB(dbPath string) error {
-	if _, err := os.Stat(dbPath); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	legacy := filepath.Join(filepath.Dir(dbPath), "finlet.db")
-	if _, err := os.Stat(legacy); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if err := os.Rename(legacy, dbPath); err != nil {
-		return err
-	}
-	for _, suf := range []string{"-wal", "-shm"} {
-		old, neu := legacy+suf, dbPath+suf
-		if _, err := os.Stat(old); err == nil {
-			_ = os.Rename(old, neu)
-		}
-	}
-	log.Printf("migrated store database finlet.db → medora.db")
-	return nil
 }

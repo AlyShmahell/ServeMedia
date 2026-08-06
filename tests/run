@@ -37,6 +37,7 @@ if [[ ! -t 0 || ! -t 1 ]]; then
   "${COMPOSE[@]}" down -v 2>/dev/null || true
   # Build OMDb stub with an explicit tag (compose short-name pulls fail without a TTY).
   podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
+  podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
   "${COMPOSE[@]}" up -d --build medora
   "${COMPOSE[@]}" run --rm --build smoke
   exit 0
@@ -74,6 +75,7 @@ run_smoke() {
   "${COMPOSE[@]}" down -v 2>/dev/null || true
   # Movie Meta uses the local OMDb stub (see tests/omdb-stub); no real API key required.
   podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
+  podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
   "${COMPOSE[@]}" up -d --build medora
   "${COMPOSE[@]}" build smoke
   "${COMPOSE[@]}" run --rm smoke

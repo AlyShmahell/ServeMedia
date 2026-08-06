@@ -10,10 +10,10 @@ import (
 var (
 	genericLibraryFolderRe = regexp.MustCompile(`(?i)^(movies?|films?|tv|anime|media)$`)
 
-	// Jellyfin-style extra subfolder names (exact basename match).
+	// Common extra subfolder names (exact basename match).
 	movieExtraFolderRe = regexp.MustCompile(`(?i)^(trailers?|featurettes?|behind the scenes|deleted scenes|interviews?|scenes?|samples?|shorts?|clips?|extras?|other|theme-music|backdrops)$`)
 
-	// Jellyfin-style extra filename suffixes / whole names.
+	// Common extra filename suffixes / whole names.
 	movieExtraSuffixRe = regexp.MustCompile(`(?i)(?:[-._ ](?:trailer|sample|scene|clip|interview|behindthescenes|deleted(?:scene)?|featurette|short|other|extra)|(?:^|[-._ ])(?:trailer|sample)$)`)
 	movieExtraExactRe  = regexp.MustCompile(`(?i)^(trailer|sample|theme)$`)
 )
@@ -25,14 +25,14 @@ func IsGenericLibraryFolderName(name string) bool {
 	return genericLibraryFolderRe.MatchString(base)
 }
 
-// IsMovieExtraFolderName reports Jellyfin extra subfolders under a movie dir.
+// IsMovieExtraFolderName reports common extra subfolders under a movie dir.
 func IsMovieExtraFolderName(name string) bool {
 	base := strings.TrimSpace(filepath.Base(name))
 	return movieExtraFolderRe.MatchString(base)
 }
 
 // IsMovieExtra reports trailers/samples/featurettes by folder or filename
-// (Jellyfin extras + existing show OP/ED-style extras).
+// (standard movie extras + existing show OP/ED-style extras).
 func IsMovieExtra(path string) bool {
 	base := filepath.Base(path)
 	if IsEpisodeExtra(path) {

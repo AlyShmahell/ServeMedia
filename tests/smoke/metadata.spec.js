@@ -1,23 +1,5 @@
 const { test, expect } = require('@playwright/test');
-
-async function ensureAdmin(page) {
-  await page.goto('/');
-  const url = page.url();
-  if (url.includes('/register')) {
-    await page.fill('input[name="username"]', 'admin');
-    await page.fill('input[name="password"]', 'adminpass');
-    await page.fill('input[name="confirm"]', 'adminpass');
-    await page.click('button[type="submit"]');
-    await expect(page).toHaveURL(/\/$/);
-    return;
-  }
-  if (url.includes('/login')) {
-    await page.fill('input[name="username"]', 'admin');
-    await page.fill('input[name="password"]', 'adminpass');
-    await page.click('button[type="submit"]');
-    await expect(page).toHaveURL(/\/$/);
-  }
-}
+const { ensureAdmin } = require('./helpers');
 
 async function ensureAnimeLibrary(page) {
   await page.goto('/');

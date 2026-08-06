@@ -23,3 +23,10 @@ scan:
   on_startup: true
 providers:
   socket: /data/run/providers.sock
+integrations:
+  webhooks:
+    enabled: false
+    server_url: ""
+    server_id: ""
+    api_key: ""
+    destinations: []
