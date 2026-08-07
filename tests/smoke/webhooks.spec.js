@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { ensureAdmin } = require('./helpers');
+const { ensureAdmin, ensureRegularUser } = require('./helpers');
 
 const STUB = process.env.WEBHOOK_STUB_URL || 'http://webhook-stub:9090';
 
@@ -29,6 +29,13 @@ test('integrations page shows webhook settings', async ({ page }) => {
   await expect(page.locator('#webhook-api-key')).not.toHaveValue('');
 });
 
+test('regular user can access integrations', async ({ page }) => {
+  await ensureRegularUser(page);
+  const res = await page.goto('/settings/integrations');
+  expect(res.status()).toBe(200);
+  await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+});
+
 test('test webhook delivers Medora webhook payload', async ({ page, request }) => {
   await ensureAdmin(page);
   await clearStubEvents(request);
@@ -49,35 +56,55 @@ test('test webhook delivers Medora webhook payload', async ({ page, request }) =
   const evt = events[events.length - 1];
   expect(evt.body.ServerName).toBe('Medora');
   expect(evt.body.NotificationType).toBe('Generic');
+  expect(evt.body.Username).toBe('admin');
   expect(evt.body.ClientName).toBe('Medora');
   const keyHeader = evt.headers['X-Medora-Webhook-Key'] || evt.headers['x-medora-webhook-key'];
   expect(keyHeader).toBeTruthy();
 });
 
-test('user created fires UserCreated webhook', async ({ page, request }) => {
-  await ensureAdmin(page);
-  await clearStubEvents(request);
+test('user deleted fires UserDeleted webhook to that user', async ({ page, request }) => {
+  const username = `deluser${Date.now()}`;
+  const password = 'userpass1';
 
+  await ensureAdmin(page);
+  await page.goto('/settings/users');
+  await page.locator('#add-user-open').click();
+  await page.fill('#add-user-username', username);
+  await page.fill('#add-user-password', password);
+  await page.fill('#add-user-confirm', password);
+  await page.locator('#add-user-submit').click();
+  await page.waitForURL(/\/settings\/users$/);
+
+  await page.locator('form.logout button').click();
+  await page.waitForURL(/\/login$/);
+  await page.fill('input[name="username"]', username);
+  await page.fill('input[name="password"]', password);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(/\/$/);
+
+  await clearStubEvents(request);
   await page.goto('/settings/integrations');
   await page.locator('input[name="webhook_enabled"]').check();
   await page.fill('input[name="dest_0_name"]', 'Smoke');
   await page.fill('input[name="dest_0_url"]', `${STUB}/hook`);
   await page.locator('input[name="dest_0_enabled"]').check();
-  await page.locator('input[name="dest_0_types"][value="UserCreated"]').check();
+  await page.locator('input[name="dest_0_types"][value="UserDeleted"]').check();
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page).toHaveURL(/\/settings\/integrations$/);
 
+  await page.locator('form.logout button').click();
+  await page.waitForURL(/\/login$/);
+  await page.fill('input[name="username"]', 'admin');
+  await page.fill('input[name="password"]', 'adminpass');
+  await page.click('button[type="submit"]');
+  await page.waitForURL(/\/$/);
+
   await page.goto('/settings/users');
-  await page.locator('#add-user-open').click();
-  await page.fill('#add-user-username', `webhookuser${Date.now()}`);
-  await page.fill('#add-user-password', 'userpass1');
-  await page.fill('#add-user-confirm', 'userpass1');
-  await page.locator('#add-user-submit').click();
-  await expect(page).toHaveURL(/\/settings\/users$/);
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.locator('tr', { hasText: username }).locator('button.user-action-delete').click();
 
   const events = await waitForStubEvents(request, 1, 20000);
-  const created = events.find((e) => e.body && e.body.NotificationType === 'UserCreated');
-  expect(created).toBeTruthy();
-  expect(created.body.ServerName).toBe('Medora');
-  expect(created.body.Username).toMatch(/^webhookuser/);
+  const deleted = events.find((e) => e.body && e.body.NotificationType === 'UserDeleted');
+  expect(deleted).toBeTruthy();
+  expect(deleted.body.Username).toBe(username);
 });

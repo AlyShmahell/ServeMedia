@@ -34,8 +34,19 @@ type WebhooksConfig struct {
 	Destinations []WebhookDestination `yaml:"destinations"`
 }
 
+type PluginInstalledConfig struct {
+	Enabled bool           `yaml:"enabled"`
+	Config  map[string]any `yaml:"config"`
+}
+
+type PluginsConfig struct {
+	Enabled   bool                             `yaml:"enabled"`
+	Installed map[string]PluginInstalledConfig `yaml:"installed"`
+}
+
 type IntegrationsConfig struct {
 	Webhooks WebhooksConfig `yaml:"webhooks"`
+	Plugins  PluginsConfig  `yaml:"plugins"`
 }
 
 type Config struct {
@@ -66,9 +77,6 @@ type Config struct {
 	Scan struct {
 		OnStartup bool `yaml:"on_startup"`
 	} `yaml:"scan"`
-	Providers struct {
-		Socket string `yaml:"socket"`
-	} `yaml:"providers"`
 	Legal struct {
 		Path string `yaml:"path"`
 	} `yaml:"legal"`
@@ -93,7 +101,19 @@ func Defaults() Config {
 	c.Backup.Retain = 7
 	c.Backup.Dir = "/data/backups"
 	c.Scan.OnStartup = true
-	c.Providers.Socket = "/data/run/providers.sock"
+	c.Integrations.Plugins.Enabled = true
+	if c.Integrations.Plugins.Installed == nil {
+		c.Integrations.Plugins.Installed = map[string]PluginInstalledConfig{}
+	}
+	if _, ok := c.Integrations.Plugins.Installed["providers"]; !ok {
+		c.Integrations.Plugins.Installed["providers"] = PluginInstalledConfig{
+			Enabled: true,
+			Config: map[string]any{
+				"omdb":   map[string]any{"api_key": "", "base_url": "", "rps": 1.0, "daily_limit": 1000},
+				"tvmaze": map[string]any{"rps": 2.0, "daily_limit": 0},
+			},
+		}
+	}
 	return c
 }
 
@@ -102,13 +122,6 @@ func (c *Config) EnsureIntegrationDefaults() bool {
 	if c.Integrations.Webhooks.ServerID == "" {
 		c.Integrations.Webhooks.ServerID = uuid.NewString()
 		changed = true
-	}
-	if c.Integrations.Webhooks.APIKey == "" {
-		key, err := randomHex(32)
-		if err == nil {
-			c.Integrations.Webhooks.APIKey = key
-			changed = true
-		}
 	}
 	return changed
 }
@@ -157,10 +170,45 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("MEDORA_MEDIA_PATH"); v != "" {
 		c.Media.Path = v
 	}
-	if v := os.Getenv("MEDORA_PROVIDERS_SOCKET"); v != "" {
-		c.Providers.Socket = v
-	}
 	if v := os.Getenv("MEDORA_LEGAL_PATH"); v != "" {
 		c.Legal.Path = v
 	}
+	// Legacy env for OMDb key until set via plugin settings.
+	if v := os.Getenv("OMDB_API_KEY"); v != "" {
+		c.ensurePluginConfig("providers")
+		if omdb, ok := c.Integrations.Plugins.Installed["providers"].Config["omdb"].(map[string]any); ok {
+			if strAny(omdb["api_key"]) == "" {
+				omdb["api_key"] = v
+			}
+		}
+	}
+	if v := os.Getenv("OMDB_BASE_URL"); v != "" {
+		c.ensurePluginConfig("providers")
+		if omdb, ok := c.Integrations.Plugins.Installed["providers"].Config["omdb"].(map[string]any); ok {
+			if strAny(omdb["base_url"]) == "" {
+				omdb["base_url"] = v
+			}
+		}
+	}
+}
+
+func (c *Config) ensurePluginConfig(id string) {
+	if c.Integrations.Plugins.Installed == nil {
+		c.Integrations.Plugins.Installed = map[string]PluginInstalledConfig{}
+	}
+	if _, ok := c.Integrations.Plugins.Installed[id]; !ok {
+		c.Integrations.Plugins.Installed[id] = PluginInstalledConfig{Enabled: true, Config: map[string]any{}}
+	}
+	if c.Integrations.Plugins.Installed[id].Config == nil {
+		inst := c.Integrations.Plugins.Installed[id]
+		inst.Config = map[string]any{}
+		c.Integrations.Plugins.Installed[id] = inst
+	}
+}
+
+func strAny(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprint(v)
 }

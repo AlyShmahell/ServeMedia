@@ -106,6 +106,28 @@ draw_main() {
   echo "${DIM}↑/↓ move · Enter/Space select · Esc quit${RESET}"
 }
 
+build_plugins() {
+  local PLUGINS="$ROOT/plugins"
+  mkdir -p "$PLUGINS/dist" "$ROOT/medora/bundled/plugins"
+  if command -v podman >/dev/null 2>&1; then
+    podman build -t localhost/medora-plugins-packager:latest -f "$PLUGINS/Containerfile" --target package "$PLUGINS"
+    local cid
+    cid=$(podman create localhost/medora-plugins-packager:latest)
+    podman cp "$cid:/out/providers.zip" "$PLUGINS/dist/providers.zip"
+    podman rm "$cid" >/dev/null
+  elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    docker build -t medora-plugins-packager:latest -f "$PLUGINS/Containerfile" --target package "$PLUGINS"
+    local cid
+    cid=$(docker create medora-plugins-packager:latest)
+    docker cp "$cid:/out/providers.zip" "$PLUGINS/dist/providers.zip"
+    docker rm "$cid" >/dev/null
+  else
+    echo "${RED}No container engine for plugin build${RESET}" >&2
+    return 1
+  fi
+  cp "$PLUGINS/dist/providers.zip" "$ROOT/medora/bundled/plugins/providers.zip"
+}
+
 do_start() {
   mkdir -p "$DATA/store" "$DATA/transcode" "$DATA/backups"
   # Ensure container UID 1000 can write even if host created these as root.
@@ -114,6 +136,7 @@ do_start() {
   if [[ ! -f "$COMPOSE_DIR/.env" && -f "$COMPOSE_DIR/.env.example" ]]; then
     echo "${YELLOW}Copy medora/.env.example to medora/.env and set MEDIA_PATH${RESET}"
   fi
+  build_plugins
   # Rebuild image (UI is go:embed'd) and always recreate the container so :7676 runs the new binary.
   compose build
   compose up -d --force-recreate --build

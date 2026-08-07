@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	"github.com/alyshmahell/medora/internal/fetch"
-	"github.com/alyshmahell/medora/internal/providers"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -16,7 +15,9 @@ func (s *Server) syncFetchClients() {
 	}
 	s.Fetch.DB = s.DB
 	s.Fetch.Store = s.Cfg.Store.Path
-	s.Fetch.Meta = &providers.Client{Socket: s.Cfg.Providers.Socket}
+	if s.PluginMgr != nil {
+		s.Fetch.Meta = s.PluginMgr.MetadataClient()
+	}
 }
 
 func (s *Server) ownsFetchTarget(r *http.Request, scope string, id int64) bool {

@@ -45,10 +45,6 @@ func New(cfg *config.Config) *Service {
 	}
 }
 
-func (s *Service) Enabled() bool {
-	return s != nil && s.Cfg != nil && s.Cfg.Integrations.Webhooks.Enabled
-}
-
 func (s *Service) Refresh(cfg *config.Config) {
 	if s == nil {
 		return

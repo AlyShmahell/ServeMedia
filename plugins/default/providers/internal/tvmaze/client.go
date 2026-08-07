@@ -11,8 +11,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/alyshmahell/medora/providers/ratelimit"
-	"github.com/alyshmahell/medora/providers/rpcapi"
+	"github.com/alyshmahell/medora-plugin-providers/internal/ratelimit"
+	"github.com/alyshmahell/medora-plugin-sdk/rpcapi"
 )
 
 const apiBase = "https://api.tvmaze.com"

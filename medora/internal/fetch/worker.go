@@ -12,15 +12,15 @@ import (
 	"github.com/alyshmahell/medora/internal/db"
 	"github.com/alyshmahell/medora/internal/media"
 	"github.com/alyshmahell/medora/internal/metadata"
-	"github.com/alyshmahell/medora/internal/providers"
-	"github.com/alyshmahell/medora/providers/rpcapi"
+	"github.com/alyshmahell/medora/internal/plugins"
+	"github.com/alyshmahell/medora-plugin-sdk/rpcapi"
 )
 
-// Worker runs metadata async jobs via the providers RPC sidecar.
+// Worker runs metadata async jobs via the metadata plugin.
 type Worker struct {
 	DB    *db.DB
 	Store string
-	Meta  *providers.Client
+	Meta  *plugins.MetadataClient
 }
 
 // EnrichOpts controls library-wide provider enrichment after a scan.
@@ -338,7 +338,11 @@ func (w *Worker) enrichShow(ctx context.Context, jobID, showID int64, persist bo
 			lookupYear = int(it.Year.Int64)
 		}
 	}
-	excludeIDs, _ := w.DB.ListTakenMetaIDs(ctx, it.LibraryID, "tvmaze", it.ID)
+	dedupProvider := "tvmaze"
+	if w.Meta != nil {
+		dedupProvider = w.Meta.ShowDedupProvider()
+	}
+	excludeIDs, _ := w.DB.ListTakenMetaIDs(ctx, it.LibraryID, dedupProvider, it.ID)
 	res, err := w.Meta.LookupShow(lookupTitle, lookupYear, libType, excludeIDs...)
 	if err != nil {
 		return err

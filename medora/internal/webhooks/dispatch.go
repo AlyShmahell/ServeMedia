@@ -9,77 +9,39 @@ import (
 	"strings"
 
 	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/db"
 )
 
-func (s *Service) Dispatch(ctx context.Context, notificationType string, extra map[string]any) {
-	if s == nil || !s.Enabled() {
+func (s *Service) Dispatch(ctx context.Context, wh *config.WebhooksConfig, serverID, notificationType string, extra map[string]any) {
+	if s == nil || wh == nil || !wh.Enabled {
 		return
 	}
-	base := BasePayload(s.Cfg, notificationType)
+	base := BasePayload(serverID, wh.ServerURL, notificationType)
 	payload := MergePayload(base, extra)
 	itemType, _ := payload["ItemType"].(string)
-	go s.dispatchAll(notificationType, itemType, payload)
+	go func() {
+		_, _ = s.DispatchSync(*wh, notificationType, itemType, payload)
+	}()
 }
 
-func (s *Service) DispatchTest(ctx context.Context) (int, []string) {
-	if s == nil || !s.Enabled() {
+func (s *Service) DispatchTest(ctx context.Context, wh *config.WebhooksConfig, serverID, username string) (int, []string) {
+	if s == nil {
+		return 0, []string{"webhooks unavailable"}
+	}
+	if wh == nil || !wh.Enabled {
 		return 0, []string{"webhooks disabled"}
 	}
-	payload := MergePayload(BasePayload(s.Cfg, NotificationGeneric), map[string]any{
-		"Message": "Medora webhook test",
+	payload := MergePayload(BasePayload(serverID, wh.ServerURL, NotificationGeneric), map[string]any{
+		"Message":  "Medora webhook test",
+		"Username": username,
 	})
-	return s.DispatchSync(NotificationGeneric, "", payload)
-}
-
-func (s *Service) DispatchPlaybackStart(ctx context.Context, kind string, id int64, title string, u *db.User) {
-	if u == nil {
-		return
-	}
-	s.Dispatch(ctx, NotificationPlaybackStart, PlaybackPayload(kind, id, title, u.Username, u.ID, 0, 0, false))
-}
-
-func (s *Service) DispatchPlaybackProgress(ctx context.Context, kind string, id int64, title string, u *db.User, pos, dur float64) {
-	if u == nil {
-		return
-	}
-	s.Dispatch(ctx, NotificationPlaybackProgress, PlaybackPayload(kind, id, title, u.Username, u.ID, pos, dur, false))
-}
-
-func (s *Service) DispatchPlaybackStop(ctx context.Context, kind string, id int64, title string, u *db.User, pos, dur float64) {
-	if u == nil {
-		return
-	}
-	s.Dispatch(ctx, NotificationPlaybackStop, PlaybackPayload(kind, id, title, u.Username, u.ID, pos, dur, true))
-}
-
-func (s *Service) DispatchItemAdded(ctx context.Context, item *db.MediaItem) {
-	s.Dispatch(ctx, NotificationItemAdded, MediaItemPayload(item))
-}
-
-func (s *Service) DispatchEpisodeAdded(ctx context.Context, ep *db.Episode, show *db.MediaItem) {
-	s.Dispatch(ctx, NotificationItemAdded, EpisodePayload(ep, show))
-}
-
-func (s *Service) DispatchTaskCompleted(ctx context.Context, message string) {
-	s.Dispatch(ctx, NotificationTaskCompleted, TaskPayload(message))
-}
-
-func (s *Service) DispatchUserCreated(ctx context.Context, u *db.User) {
-	s.Dispatch(ctx, NotificationUserCreated, UserPayload(u))
-}
-
-func (s *Service) DispatchUserDeleted(ctx context.Context, u *db.User) {
-	s.Dispatch(ctx, NotificationUserDeleted, UserPayload(u))
-}
-
-func (s *Service) dispatchAll(notificationType, itemType string, payload map[string]any) {
-	s.DispatchSync(notificationType, itemType, payload)
+	return s.DispatchSync(*wh, NotificationGeneric, "", payload)
 }
 
 // DispatchSync sends to matching destinations synchronously (used by tests and DispatchTest).
-func (s *Service) DispatchSync(notificationType, itemType string, payload map[string]any) (int, []string) {
-	wh := s.Cfg.Integrations.Webhooks
+func (s *Service) DispatchSync(wh config.WebhooksConfig, notificationType, itemType string, payload map[string]any) (int, []string) {
+	if !wh.Enabled {
+		return 0, nil
+	}
 	var errs []string
 	sent := 0
 	for _, dest := range wh.Destinations {

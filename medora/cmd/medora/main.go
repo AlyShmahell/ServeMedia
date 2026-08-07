@@ -16,6 +16,7 @@ import (
 	"github.com/alyshmahell/medora/internal/scanner"
 	"github.com/alyshmahell/medora/internal/server"
 	"github.com/alyshmahell/medora/internal/transcode"
+	"github.com/alyshmahell/medora/internal/plugins"
 	"github.com/alyshmahell/medora/internal/version"
 	"github.com/alyshmahell/medora/web"
 )
@@ -56,6 +57,7 @@ func main() {
 	bak := &backup.Service{Cfg: &cfg, DB: database, StorePath: cfg.Store.Path, DataRoot: filepath.Dir(cfg.Store.Path)}
 
 	var srv *server.Server
+	pluginMgr := plugins.NewManager(&cfg)
 	reopen := func() error {
 		cfg2, err := config.Load(filepath.Join(cfg.Store.Path, "config.yaml"))
 		if err != nil {
@@ -79,16 +81,27 @@ func main() {
 			if srv.Webhooks != nil {
 				srv.Webhooks.Refresh(&cfg)
 			}
+			if pluginMgr != nil {
+				pluginMgr.Refresh(&cfg)
+				_ = pluginMgr.Reload("providers")
+				srv.PluginMgr = pluginMgr
+			}
+			sc.Webhooks = srv
 		}
 		bak.StartScheduler(context.Background())
 		return nil
 	}
 
-	srv, err = server.New(&cfg, database, bak, sc, tr, web.FS, reopen)
+	if err := pluginMgr.Start(); err != nil {
+		log.Printf("plugins: %v (metadata may be unavailable)", err)
+	}
+
+	srv, err = server.New(&cfg, database, bak, sc, tr, web.FS, pluginMgr, reopen)
 	if err != nil {
 		log.Fatal(err)
 	}
-	sc.Webhooks = srv.Webhooks
+	srv.MigrateLegacyWebhooks(context.Background())
+	sc.Webhooks = srv
 	bak.StartScheduler(context.Background())
 
 	if cfg.Scan.OnStartup {
@@ -123,6 +136,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
+	if pluginMgr != nil {
+		pluginMgr.Stop()
+	}
 	_ = database.Close()
 }
 

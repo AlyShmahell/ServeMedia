@@ -3,12 +3,16 @@ module github.com/alyshmahell/medora
 go 1.23
 
 require (
+	github.com/alyshmahell/medora-plugin-sdk v0.0.0
 	github.com/go-chi/chi/v5 v5.2.1
+	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.17.11
 	golang.org/x/crypto v0.32.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.34.5
 )
+
+replace github.com/alyshmahell/medora-plugin-sdk => ../plugins/sdk
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

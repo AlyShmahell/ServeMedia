@@ -21,8 +21,6 @@ backup:
   dir: /data/backups
 scan:
   on_startup: true
-providers:
-  socket: /data/run/providers.sock
 integrations:
   webhooks:
     enabled: false
@@ -30,3 +28,17 @@ integrations:
     server_id: ""
     api_key: ""
     destinations: []
+  plugins:
+    enabled: true
+    installed:
+      providers:
+        enabled: true
+        config:
+          omdb:
+            api_key: ""
+            base_url: ""
+            rps: 1
+            daily_limit: 1000
+          tvmaze:
+            rps: 2
+            daily_limit: 0

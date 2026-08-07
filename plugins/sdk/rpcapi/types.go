@@ -1,7 +1,6 @@
 package rpcapi
 
-// Provider-agnostic RPC types. Concrete provider names may appear only in
-// string fields filled by the medora-providers sidecar at runtime.
+// Provider-agnostic RPC types for metadata plugins.
 
 const ServiceName = "Meta"
 
@@ -13,18 +12,28 @@ type StatusReply struct {
 	Hint           string
 }
 
+type ListProvidersArgs struct{}
+
+type ListProvidersReply struct {
+	Providers []ProviderInfo
+}
+
+type ProviderInfo struct {
+	Name string
+}
+
 type LookupMovieArgs struct {
-	Title            string
-	Year             int
-	LibraryType      string // movies | tv | anime
-	DurationMinutes  int    // optional ffprobe duration; 0 = unknown
+	Title           string
+	Year            int
+	LibraryType     string // movies | tv | anime
+	DurationMinutes int
 }
 
 type LookupShowArgs struct {
 	Title              string
-	Year               int // optional folder year; 0 = unknown
+	Year               int
 	LibraryType        string
-	ExcludeProviderIDs []string // skip these provider ids (e.g. already used in library)
+	ExcludeProviderIDs []string
 }
 
 type LookupSeasonArgs struct {
@@ -44,7 +53,6 @@ type LookupEpisodeArgs struct {
 	ShowProviderID string
 }
 
-// Result is a provider-agnostic metadata payload.
 type Result struct {
 	Title       string
 	Year        int
@@ -55,9 +63,9 @@ type Result struct {
 	PosterURL   string
 	BackdropURL string
 	StillURL    string
-	Provider    string // opaque
-	ProviderID  string // opaque
-	Message     string // optional UI/progress text from sidecar
+	Provider    string
+	ProviderID  string
+	Message     string
 }
 
 type LookupReply struct {

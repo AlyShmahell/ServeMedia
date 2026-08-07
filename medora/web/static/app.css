@@ -41,7 +41,33 @@ a { color: var(--accent); text-decoration: none; }
   min-height: 0;
   overflow: hidden;
 }
-.brand { font-size: 1.5rem; font-weight: 700; color: var(--text); letter-spacing: 0.02em; flex: 0 0 auto; }
+.brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0 0.85rem;
+  flex: 0 0 auto;
+  color: var(--text);
+  text-decoration: none;
+}
+.brand-logo {
+  display: block;
+  width: 112px;
+  height: 112px;
+}
+.brand-name {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.auth-logo {
+  display: block;
+  margin: 0 auto 1rem;
+  width: 128px;
+  height: auto;
+}
 .nav-link-primary {
   padding: 0.45rem 0.6rem; border-radius: 6px;
   color: var(--nav); font-weight: 600; flex: 0 0 auto;
@@ -660,15 +686,35 @@ button.secondary, .btn.secondary { background: var(--panel); color: var(--text);
 .btn-icon.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
 .home-section-libraries .btn-icon,
 #add-library-open,
-#add-user-open {
+#add-user-open,
+#add-plugin-open {
   background: var(--success);
   color: #041018;
   border: none;
 }
 .home-section-libraries .btn-icon:hover,
 #add-library-open:hover,
-#add-user-open:hover {
+#add-user-open:hover,
+#add-plugin-open:hover {
   filter: brightness(1.08);
+}
+.plugins-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.65rem;
+}
+.plugin-card .plugin-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+}
+.plugin-card .plugin-card-head h3 {
+  margin: 0;
+}
+.tab-footer {
+  margin-top: 1rem;
 }
 .users-table-toolbar {
   display: flex;
@@ -958,6 +1004,12 @@ button.secondary, .btn.secondary { background: var(--panel); color: var(--text);
     flex-direction: row; flex-wrap: wrap; align-items: center;
     overflow: visible; max-height: none;
   }
+  .brand {
+    flex-direction: row;
+    padding: 0;
+    flex: 1 1 auto;
+  }
+  .brand-logo { width: 80px; height: 80px; }
   .nav-libraries-card {
     flex: 1 1 100%; max-height: 10rem;
   }

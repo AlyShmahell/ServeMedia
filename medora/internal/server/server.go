@@ -2,12 +2,11 @@ package server
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -26,12 +25,13 @@ import (
 	"github.com/alyshmahell/medora/internal/fetch"
 	"github.com/alyshmahell/medora/internal/media"
 	"github.com/alyshmahell/medora/internal/metadata"
+	"github.com/alyshmahell/medora/internal/plugins"
 	"github.com/alyshmahell/medora/internal/scanner"
 	"github.com/alyshmahell/medora/internal/stream"
-	"github.com/alyshmahell/medora/internal/providers"
 	"github.com/alyshmahell/medora/internal/transcode"
 	"github.com/alyshmahell/medora/internal/webhooks"
 	"github.com/alyshmahell/medora/internal/version"
+	"github.com/alyshmahell/medora-plugin-sdk/install"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -46,6 +46,7 @@ type Server struct {
 	Fetch     *fetch.Worker
 	Transcode *transcode.Manager
 	Webhooks  *webhooks.Service
+	PluginMgr *plugins.Manager
 	Templates *template.Template
 	Static    fs.FS
 	reopen    func() error
@@ -55,7 +56,7 @@ type ctxKey int
 
 const userKey ctxKey = 1
 
-func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.Scanner, tr *transcode.Manager, webFS fs.FS, reopen func() error) (*Server, error) {
+func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.Scanner, tr *transcode.Manager, webFS fs.FS, pluginMgr *plugins.Manager, reopen func() error) (*Server, error) {
 	tplFS, err := fs.Sub(webFS, "templates")
 	if err != nil {
 		return nil, err
@@ -65,15 +66,40 @@ func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.S
 		return nil, err
 	}
 	tpl := MustParseTemplates(tplFS)
+	if pluginMgr != nil {
+		if err := plugins.ParsePluginTemplates(tpl, pluginMgr.DataDir); err != nil {
+			return nil, err
+		}
+	}
 	fw := &fetch.Worker{
 		DB:    database,
 		Store: cfg.Store.Path,
-		Meta:  &providers.Client{Socket: cfg.Providers.Socket},
+	}
+	if pluginMgr != nil {
+		fw.Meta = pluginMgr.MetadataClient()
 	}
 	return &Server{
 		Cfg: cfg, DB: database, Backup: bak, Scanner: sc, Fetch: fw, Transcode: tr,
-		Webhooks: webhooks.New(cfg), Templates: tpl, Static: staticFS, reopen: reopen,
+		Webhooks: webhooks.New(cfg), PluginMgr: pluginMgr, Templates: tpl, Static: staticFS, reopen: reopen,
 	}, nil
+}
+
+func (s *Server) MigrateLegacyWebhooks(ctx context.Context) {
+	legacy := s.Cfg.Integrations.Webhooks
+	if !legacy.Enabled && legacy.ServerURL == "" && len(legacy.Destinations) == 0 && legacy.APIKey == "" {
+		return
+	}
+	users, err := s.DB.ListUsers(ctx)
+	if err != nil || len(users) == 0 {
+		return
+	}
+	for _, u := range users {
+		if u.Role == db.RoleAdmin {
+			_ = s.DB.ImportLegacyWebhooks(ctx, u.ID, legacy)
+			return
+		}
+	}
+	_ = s.DB.ImportLegacyWebhooks(ctx, users[0].ID, legacy)
 }
 
 func MustParseTemplates(fsys fs.FS) *template.Template {
@@ -145,6 +171,8 @@ func (s *Server) Router() http.Handler {
 	r.Use(s.authMiddleware)
 
 	r.Get("/healthz", s.handleHealthz)
+	r.Get("/favicon.ico", s.handleFavicon)
+	r.Get("/favicon.svg", s.handleFavicon)
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(s.Static))))
 
 	r.Get("/register", s.handleRegisterGet)
@@ -189,12 +217,21 @@ func (s *Server) Router() http.Handler {
 		r.Get("/hls/{job}/master.m3u8", s.handleHLSMaster)
 		r.Get("/hls/{job}/{seg}", s.handleHLSSeg)
 
+		r.Get("/settings/integrations", s.handleSettingsIntegrations)
+		r.Post("/settings/integrations", s.handleSaveIntegrations)
+		r.Post("/hx/integrations/webhooks/regenerate-key", s.handleRegenerateWebhookKey)
+		r.Post("/hx/integrations/webhooks/test", s.handleTestWebhooks)
+
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAdmin)
+			r.Post("/hx/integrations/plugins/install", s.handleInstallPlugin)
+		})
+
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
 			r.Get("/settings/server", s.handleSettingsServer)
 			r.Get("/settings/backup", s.handleSettingsBackup)
 			r.Get("/settings/users", s.handleSettingsUsers)
-			r.Get("/settings/integrations", s.handleSettingsIntegrations)
 			r.Post("/hx/backup", s.handleBackupNow)
 			r.Get("/hx/backup/status", s.handleBackupStatus)
 			r.Post("/hx/backup/restore", s.handleBackupRestore)
@@ -204,9 +241,6 @@ func (s *Server) Router() http.Handler {
 			r.Delete("/hx/users/{id}", s.handleDeleteUser)
 			r.Post("/settings/server", s.handleSaveServer)
 			r.Post("/settings/backup", s.handleSaveBackup)
-			r.Post("/settings/integrations", s.handleSaveIntegrations)
-			r.Post("/hx/integrations/webhooks/regenerate-key", s.handleRegenerateWebhookKey)
-			r.Post("/hx/integrations/webhooks/test", s.handleTestWebhooks)
 		})
 	})
 	return r
@@ -214,7 +248,7 @@ func (s *Server) Router() http.Handler {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" {
+		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" || r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.svg" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -352,6 +386,23 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
+func (s *Server) handleFavicon(w http.ResponseWriter, r *http.Request) {
+	name := "favicon.png"
+	ctype := "image/png"
+	if r.URL.Path == "/favicon.svg" {
+		name = "logo.svg"
+		ctype = "image/svg+xml"
+	}
+	b, err := fs.ReadFile(s.Static, name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	_, _ = w.Write(b)
+}
+
 func (s *Server) handleRegisterGet(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "register.html", nil)
 }
@@ -371,7 +422,7 @@ func (s *Server) handleRegisterPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Webhooks != nil {
-		s.Webhooks.DispatchUserCreated(r.Context(), u)
+		s.dispatchWebhooks(r.Context(), u.ID, webhooks.NotificationUserCreated, webhooks.UserPayload(u))
 	}
 	token, err := s.DB.CreateSession(r.Context(), u.ID, 30)
 	if err != nil {
@@ -930,7 +981,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 		resp.Start = 0
 		_ = json.NewEncoder(w).Encode(resp)
 		if s.Webhooks != nil && u != nil {
-			s.Webhooks.DispatchPlaybackStart(r.Context(), kind, id, title, u)
+			s.dispatchPlaybackWebhooks(r.Context(), u, kind, id, title, 0, 0, false, webhooks.NotificationPlaybackStart)
 		}
 		return
 	}
@@ -948,7 +999,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	resp.Start = float64(job.StartAt)
 	_ = json.NewEncoder(w).Encode(resp)
 	if s.Webhooks != nil && u != nil {
-		s.Webhooks.DispatchPlaybackStart(r.Context(), kind, id, title, u)
+		s.dispatchPlaybackWebhooks(r.Context(), u, kind, id, title, 0, 0, false, webhooks.NotificationPlaybackStart)
 	}
 }
 
@@ -1105,9 +1156,9 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 				title = it.Title
 			}
 			if completed {
-				s.Webhooks.DispatchPlaybackStop(r.Context(), "movie", id, title, u, pos, dur)
+				s.dispatchPlaybackWebhooks(r.Context(), u, "movie", id, title, pos, dur, true, webhooks.NotificationPlaybackStop)
 			} else {
-				s.Webhooks.DispatchPlaybackProgress(r.Context(), "movie", id, title, u, pos, dur)
+				s.dispatchPlaybackWebhooks(r.Context(), u, "movie", id, title, pos, dur, false, webhooks.NotificationPlaybackProgress)
 			}
 		}
 	}
@@ -1128,9 +1179,9 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if completed {
-				s.Webhooks.DispatchPlaybackStop(r.Context(), "episode", id, title, u, pos, dur)
+				s.dispatchPlaybackWebhooks(r.Context(), u, "episode", id, title, pos, dur, true, webhooks.NotificationPlaybackStop)
 			} else {
-				s.Webhooks.DispatchPlaybackProgress(r.Context(), "episode", id, title, u, pos, dur)
+				s.dispatchPlaybackWebhooks(r.Context(), u, "episode", id, title, pos, dur, false, webhooks.NotificationPlaybackProgress)
 			}
 		}
 	}
@@ -1487,7 +1538,7 @@ func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persi
 	}
 	_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
 	if s.Webhooks != nil {
-		s.Webhooks.DispatchTaskCompleted(ctx, "Library enrich complete")
+		s.dispatchWebhooks(ctx, lib.UserID, webhooks.NotificationTaskCompleted, webhooks.TaskPayload("Library enrich complete"))
 	}
 }
 
@@ -1692,7 +1743,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if u, err := s.DB.GetUserByUsername(r.Context(), username); err == nil && u != nil && s.Webhooks != nil {
-		s.Webhooks.DispatchUserCreated(r.Context(), u)
+		s.dispatchWebhooks(r.Context(), u.ID, webhooks.NotificationUserCreated, webhooks.UserPayload(u))
 	}
 	http.Redirect(w, r, "/settings/users", http.StatusFound)
 }
@@ -1725,12 +1776,19 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	u, _ := s.DB.GetUser(r.Context(), id)
+	var whCfg *config.WebhooksConfig
+	if u != nil {
+		if userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID); err == nil && userWH != nil {
+			cfg := userWH.ToConfig()
+			whCfg = &cfg
+		}
+	}
 	if err := s.DB.DeleteUser(r.Context(), id); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	if u != nil && s.Webhooks != nil {
-		s.Webhooks.DispatchUserDeleted(r.Context(), u)
+	if u != nil && s.Webhooks != nil && whCfg != nil {
+		s.Webhooks.Dispatch(r.Context(), whCfg, s.serverID(), webhooks.NotificationUserDeleted, webhooks.UserPayload(u))
 	}
 	users, err := s.DB.ListUsers(r.Context())
 	if err != nil {
@@ -1741,24 +1799,171 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSettingsIntegrations(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	changed := s.Cfg.EnsureIntegrationDefaults()
 	if changed {
 		_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
 	}
+	userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	var pluginPanels []plugins.PluginPanel
+	if s.PluginMgr != nil {
+		_ = s.PluginMgr.Rescan()
+		_ = plugins.ParsePluginTemplates(s.Templates, s.PluginMgr.DataDir)
+		pluginPanels = plugins.BuildPluginPanels(s.Templates, s.pluginSettingsViews())
+	}
 	s.render(w, r, "settings_integrations.html", map[string]any{
-		"Config":           s.Cfg,
-		"WebhookKeyMasked": webhooks.MaskKey(s.Cfg.Integrations.Webhooks.APIKey),
+		"Config":            s.Cfg,
+		"UserWebhooks":      userWH.ToConfig(),
+		"WebhookKeyMasked":  webhooks.MaskKey(userWH.APIKey),
 		"NotificationTypes": webhooks.AllNotificationTypes,
 		"ItemTypes":         webhooks.AllItemTypes,
+		"PluginPanels":      pluginPanels,
 	})
 }
 
-func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseForm()
-	s.Cfg.Integrations.Webhooks.Enabled = r.FormValue("webhook_enabled") == "on"
-	s.Cfg.Integrations.Webhooks.ServerURL = strings.TrimSpace(r.FormValue("webhook_server_url"))
-	s.Cfg.EnsureIntegrationDefaults()
+func (s *Server) pluginSettingsViews() []plugins.SettingsView {
+	if s.PluginMgr == nil {
+		return nil
+	}
+	var views []plugins.SettingsView
+	for _, p := range s.PluginMgr.List() {
+		cfg := map[string]any{}
+		enabled := p.Enabled
+		if s.Cfg != nil {
+			if inst, ok := s.Cfg.Integrations.Plugins.Installed[p.Manifest.ID]; ok {
+				cfg = inst.Config
+				enabled = inst.Enabled
+			}
+		}
+		views = append(views, plugins.PluginSettingsView(p, cfg, enabled))
+	}
+	return views
+}
 
+func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	_ = r.ParseForm()
+	wh := config.WebhooksConfig{
+		Enabled:   r.FormValue("webhook_enabled") == "on",
+		ServerURL: strings.TrimSpace(r.FormValue("webhook_server_url")),
+	}
+	wh.Destinations = parseWebhookDestinationsFromForm(r)
+	if _, err := s.DB.SaveUserWebhooks(r.Context(), u.ID, wh); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.savePluginConfigFromForm(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+}
+
+func (s *Server) savePluginConfigFromForm(r *http.Request) error {
+	if s.Cfg == nil {
+		return nil
+	}
+	s.Cfg.EnsureIntegrationDefaults()
+	if s.Cfg.Integrations.Plugins.Installed == nil {
+		s.Cfg.Integrations.Plugins.Installed = map[string]config.PluginInstalledConfig{}
+	}
+	inst := s.Cfg.Integrations.Plugins.Installed["providers"]
+	inst.Enabled = r.FormValue("plugin_providers_enabled") == "on"
+	if inst.Config == nil {
+		inst.Config = map[string]any{}
+	}
+	omdb, _ := inst.Config["omdb"].(map[string]any)
+	if omdb == nil {
+		omdb = map[string]any{}
+	}
+	omdb["api_key"] = strings.TrimSpace(r.FormValue("plugin_providers_omdb_api_key"))
+	omdb["base_url"] = strings.TrimSpace(r.FormValue("plugin_providers_omdb_base_url"))
+	if v := strings.TrimSpace(r.FormValue("plugin_providers_omdb_rps")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			omdb["rps"] = f
+		}
+	}
+	if v := strings.TrimSpace(r.FormValue("plugin_providers_omdb_daily")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			omdb["daily_limit"] = n
+		}
+	}
+	inst.Config["omdb"] = omdb
+	tv, _ := inst.Config["tvmaze"].(map[string]any)
+	if tv == nil {
+		tv = map[string]any{}
+	}
+	if v := strings.TrimSpace(r.FormValue("plugin_providers_tvmaze_rps")); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			tv["rps"] = f
+		}
+	}
+	if v := strings.TrimSpace(r.FormValue("plugin_providers_tvmaze_daily")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			tv["daily_limit"] = n
+		}
+	}
+	inst.Config["tvmaze"] = tv
+	s.Cfg.Integrations.Plugins.Installed["providers"] = inst
+	if err := s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml")); err != nil {
+		return err
+	}
+	if s.PluginMgr != nil {
+		s.PluginMgr.Refresh(s.Cfg)
+		return s.PluginMgr.Reload("providers")
+	}
+	return nil
+}
+
+func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
+	if s.PluginMgr == nil {
+		http.Error(w, "plugins unavailable", 500)
+		return
+	}
+	if err := r.ParseMultipartForm(install.MaxZipBytes); err != nil {
+		http.Error(w, "invalid upload", 400)
+		return
+	}
+	file, hdr, err := r.FormFile("archive")
+	if err != nil {
+		http.Error(w, "missing archive", 400)
+		return
+	}
+	defer file.Close()
+	b, err := io.ReadAll(io.LimitReader(file, install.MaxZipBytes+1))
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if int64(len(b)) > install.MaxZipBytes {
+		http.Error(w, "archive too large", 400)
+		return
+	}
+	plug, err := s.PluginMgr.InstallZipBytes(b, false)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	_ = hdr
+	if err := plugins.ParsePluginTemplates(s.Templates, s.PluginMgr.DataDir); err != nil {
+		log.Printf("plugin templates: %v", err)
+	}
+	http.Redirect(w, r, "/settings/integrations?installed="+plug.ID, http.StatusFound)
+}
+
+func parseWebhookDestinationsFromForm(r *http.Request) []config.WebhookDestination {
 	destCount, _ := strconv.Atoi(r.FormValue("dest_count"))
 	if destCount < 0 {
 		destCount = 0
@@ -1789,35 +1994,39 @@ func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) 
 		}
 		dests = append(dests, dest)
 	}
-	s.Cfg.Integrations.Webhooks.Destinations = dests
-	_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
-	if s.Webhooks != nil {
-		s.Webhooks.Refresh(s.Cfg)
-	}
-	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+	return dests
 }
 
 func (s *Server) handleRegenerateWebhookKey(w http.ResponseWriter, r *http.Request) {
-	key, err := configRandomHex(32)
-	if err != nil {
-		http.Error(w, err.Error(), 500)
+	u := userFrom(r)
+	if u == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	s.Cfg.Integrations.Webhooks.APIKey = key
-	s.Cfg.EnsureIntegrationDefaults()
-	_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
-	if s.Webhooks != nil {
-		s.Webhooks.Refresh(s.Cfg)
+	if _, err := s.DB.RegenerateUserWebhookKey(r.Context(), u.ID); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
 	}
 	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
 }
 
 func (s *Server) handleTestWebhooks(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	if s.Webhooks == nil {
 		http.Error(w, "webhooks unavailable", 500)
 		return
 	}
-	sent, errs := s.Webhooks.DispatchTest(r.Context())
+	userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	cfg := userWH.ToConfig()
+	sent, errs := s.Webhooks.DispatchTest(r.Context(), &cfg, s.serverID(), u.Username)
 	msg := fmt.Sprintf("Sent to %d destination(s).", sent)
 	if len(errs) > 0 {
 		msg += " Errors: " + strings.Join(errs, "; ")
@@ -1826,10 +2035,40 @@ func (s *Server) handleTestWebhooks(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(msg))
 }
 
-func configRandomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
+func (s *Server) serverID() string {
+	if s.Cfg.Integrations.Webhooks.ServerID == "" {
+		s.Cfg.EnsureIntegrationDefaults()
 	}
-	return hex.EncodeToString(b), nil
+	return s.Cfg.Integrations.Webhooks.ServerID
+}
+
+func (s *Server) dispatchWebhooks(ctx context.Context, userID int64, notificationType string, extra map[string]any) {
+	if s.Webhooks == nil || userID == 0 {
+		return
+	}
+	userWH, err := s.DB.GetUserWebhooks(ctx, userID)
+	if err != nil || userWH == nil {
+		return
+	}
+	cfg := userWH.ToConfig()
+	s.Webhooks.Dispatch(ctx, &cfg, s.serverID(), notificationType, extra)
+}
+
+func (s *Server) dispatchPlaybackWebhooks(ctx context.Context, u *db.User, kind string, id int64, title string, pos, dur float64, completed bool, notificationType string) {
+	if u == nil {
+		return
+	}
+	s.dispatchWebhooks(ctx, u.ID, notificationType, webhooks.PlaybackPayload(kind, id, title, u.Username, u.ID, pos, dur, completed))
+}
+
+func (s *Server) DispatchItemAdded(ctx context.Context, userID int64, item *db.MediaItem) {
+	s.dispatchWebhooks(ctx, userID, webhooks.NotificationItemAdded, webhooks.MediaItemPayload(item))
+}
+
+func (s *Server) DispatchEpisodeAdded(ctx context.Context, userID int64, ep *db.Episode, show *db.MediaItem) {
+	s.dispatchWebhooks(ctx, userID, webhooks.NotificationItemAdded, webhooks.EpisodePayload(ep, show))
+}
+
+func (s *Server) DispatchTaskCompleted(ctx context.Context, userID int64, message string) {
+	s.dispatchWebhooks(ctx, userID, webhooks.NotificationTaskCompleted, webhooks.TaskPayload(message))
 }

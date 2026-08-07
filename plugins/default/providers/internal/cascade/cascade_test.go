@@ -3,7 +3,7 @@ package cascade
 import (
 	"testing"
 
-	"github.com/alyshmahell/medora/providers/rpcapi"
+	"github.com/alyshmahell/medora-plugin-sdk/rpcapi"
 )
 
 func TestHasPosterAndStill(t *testing.T) {

@@ -6,20 +6,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/config"
 	"github.com/alyshmahell/medora/internal/db"
 	"github.com/alyshmahell/medora/internal/version"
 )
 
-func BasePayload(cfg *config.Config, notificationType string) map[string]any {
-	wh := cfg.Integrations.Webhooks
-	serverURL := strings.TrimSpace(wh.ServerURL)
+func BasePayload(serverID, serverURL, notificationType string) map[string]any {
+	serverURL = strings.TrimSpace(serverURL)
 	if serverURL == "" {
 		serverURL = "http://localhost:7676"
 	}
 	now := time.Now()
 	return map[string]any{
-		"ServerId":         wh.ServerID,
+		"ServerId":         serverID,
 		"ServerName":       "Medora",
 		"ServerVersion":    version.Version,
 		"ServerUrl":        serverURL,

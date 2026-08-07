@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1
+
+FROM docker.io/library/golang:1.23-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git ca-certificates zip
+COPY sdk/ ./sdk/
+COPY default/providers/ ./default/providers/
+WORKDIR /src/default/providers
+RUN go mod download && CGO_ENABLED=0 go build -ldflags="-s -w" -o /build/providers .
+
+FROM docker.io/library/alpine:3.24 AS package
+RUN apk add --no-cache zip
+WORKDIR /staging
+COPY --from=build /build/providers .
+COPY default/providers/plugin.yaml .
+COPY default/providers/settings.html .
+RUN mkdir -p /out && zip -j /out/providers.zip plugin.yaml settings.html providers
+
+FROM scratch AS export
+COPY --from=package /out/providers.zip /providers.zip

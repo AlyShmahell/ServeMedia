@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alyshmahell/medora/providers/omdb"
-	"github.com/alyshmahell/medora/providers/rpcapi"
-	"github.com/alyshmahell/medora/providers/tvmaze"
+	"github.com/alyshmahell/medora-plugin-providers/internal/omdb"
+	"github.com/alyshmahell/medora-plugin-sdk/rpcapi"
+	"github.com/alyshmahell/medora-plugin-providers/internal/tvmaze"
 )
 
 // Cascade tries TVmaze (tier-0) then OMDb (tier-1). Movies use OMDb only.
@@ -18,11 +18,22 @@ type Cascade struct {
 func (c *Cascade) Status() rpcapi.StatusReply {
 	reply := rpcapi.StatusReply{Ready: true}
 	if c.OMDb == nil || !c.OMDb.Enabled() {
-		reply.Hint = "Set OMDB_API_KEY for movie metadata. TVmaze handles TV without a key."
+		reply.Hint = "Set OMDb API key for movie metadata. TVmaze handles TV without a key."
 	} else {
 		reply.Hint = "Metadata: TVmaze (TV) → OMDb (fallback / movies)."
 	}
 	return reply
+}
+
+func (c *Cascade) ListProviders() []rpcapi.ProviderInfo {
+	var out []rpcapi.ProviderInfo
+	if c.TVmaze != nil {
+		out = append(out, rpcapi.ProviderInfo{Name: "tvmaze"})
+	}
+	if c.OMDb != nil && c.OMDb.Enabled() {
+		out = append(out, rpcapi.ProviderInfo{Name: "omdb"})
+	}
+	return out
 }
 
 func (c *Cascade) LookupMovie(title string, year int, libraryType string, durationMinutes int) (*rpcapi.Result, error) {

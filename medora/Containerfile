@@ -1,25 +1,24 @@
 # syntax=docker/dockerfile:1
 
 FROM docker.io/library/golang:1.23-alpine AS build
-WORKDIR /src
+WORKDIR /src/medora
 RUN apk add --no-cache git ca-certificates
-COPY go.mod go.sum ./
+COPY medora/go.mod medora/go.sum ./
+COPY plugins/sdk /src/plugins/sdk
 RUN go mod download
-COPY . .
+COPY medora/ .
 RUN CGO_ENABLED=0 go build -o /out/medora ./cmd/medora \
-  && CGO_ENABLED=0 go build -o /out/medora-providers ./cmd/medora-providers \
   && CGO_ENABLED=0 go build -o /out/medora-watchdog ./cmd/medora-watchdog
 
 FROM docker.io/library/alpine:3.24
-# VAAPI: mesa-va-gallium only (Mesa 26.x on Alpine 3.24). Probe may enable direct GPU 10→8 via scale_vaapi.
 RUN apk add --no-cache ffmpeg ca-certificates libva mesa-va-gallium \
   && adduser -D -u 1000 medora
 
 COPY --from=build /out/medora /usr/local/bin/medora
-COPY --from=build /out/medora-providers /usr/local/bin/medora-providers
 COPY --from=build /out/medora-watchdog /usr/local/bin/medora-watchdog
-COPY config.default.yaml /usr/share/medora/config.default.yaml
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/local/bin/medora /usr/local/bin/medora-providers /usr/local/bin/medora-watchdog
+COPY medora/config.default.yaml /usr/share/medora/config.default.yaml
+COPY medora/entrypoint.sh /entrypoint.sh
+COPY medora/bundled/plugins/ /usr/share/medora/plugins/bundled/
+RUN chmod +x /entrypoint.sh /usr/local/bin/medora /usr/local/bin/medora-watchdog
 EXPOSE 7676
 ENTRYPOINT ["/entrypoint.sh"]

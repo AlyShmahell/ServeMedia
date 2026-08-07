@@ -1,4 +1,4 @@
-package providers
+package plugins
 
 import (
 	"fmt"
@@ -10,18 +10,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/medora/providers/rpcapi"
+	"github.com/alyshmahell/medora-plugin-sdk/rpcapi"
 )
 
-// Client talks to medora-providers over a Unix socket. Provider-agnostic.
-type Client struct {
+// MetadataClient talks to the metadata plugin over a Unix socket.
+type MetadataClient struct {
 	Socket string
-	HTTP   *http.Client // for downloading artwork URLs
+	HTTP   *http.Client
 }
 
-func (c *Client) dial() (*rpc.Client, error) {
-	if strings.TrimSpace(c.Socket) == "" {
-		return nil, fmt.Errorf("providers socket not configured")
+func (m *Manager) MetadataClient() *MetadataClient {
+	return &MetadataClient{Socket: m.MetadataSocket()}
+}
+
+func (c *MetadataClient) dial() (*rpc.Client, error) {
+	if c == nil || strings.TrimSpace(c.Socket) == "" {
+		return nil, fmt.Errorf("metadata plugin not available")
 	}
 	conn, err := net.DialTimeout("unix", c.Socket, 5*time.Second)
 	if err != nil {
@@ -30,7 +34,7 @@ func (c *Client) dial() (*rpc.Client, error) {
 	return rpc.NewClient(conn), nil
 }
 
-func (c *Client) call(method string, args, reply any) error {
+func (c *MetadataClient) call(method string, args, reply any) error {
 	cli, err := c.dial()
 	if err != nil {
 		return err
@@ -39,13 +43,19 @@ func (c *Client) call(method string, args, reply any) error {
 	return cli.Call(rpcapi.ServiceName+"."+method, args, reply)
 }
 
-func (c *Client) Status() (rpcapi.StatusReply, error) {
+func (c *MetadataClient) Status() (rpcapi.StatusReply, error) {
 	var reply rpcapi.StatusReply
 	err := c.call("Status", &rpcapi.StatusArgs{}, &reply)
 	return reply, err
 }
 
-func (c *Client) LookupMovie(title string, year int, libraryType string, durationMinutes int) (rpcapi.Result, error) {
+func (c *MetadataClient) ListProviders() ([]rpcapi.ProviderInfo, error) {
+	var reply rpcapi.ListProvidersReply
+	err := c.call("ListProviders", &rpcapi.ListProvidersArgs{}, &reply)
+	return reply.Providers, err
+}
+
+func (c *MetadataClient) LookupMovie(title string, year int, libraryType string, durationMinutes int) (rpcapi.Result, error) {
 	var reply rpcapi.LookupReply
 	err := c.call("LookupMovie", &rpcapi.LookupMovieArgs{
 		Title: title, Year: year, LibraryType: libraryType, DurationMinutes: durationMinutes,
@@ -53,7 +63,7 @@ func (c *Client) LookupMovie(title string, year int, libraryType string, duratio
 	return reply.Result, err
 }
 
-func (c *Client) LookupShow(title string, year int, libraryType string, excludeProviderIDs ...string) (rpcapi.Result, error) {
+func (c *MetadataClient) LookupShow(title string, year int, libraryType string, excludeProviderIDs ...string) (rpcapi.Result, error) {
 	var reply rpcapi.LookupReply
 	err := c.call("LookupShow", &rpcapi.LookupShowArgs{
 		Title: title, Year: year, LibraryType: libraryType, ExcludeProviderIDs: excludeProviderIDs,
@@ -61,7 +71,7 @@ func (c *Client) LookupShow(title string, year int, libraryType string, excludeP
 	return reply.Result, err
 }
 
-func (c *Client) LookupSeason(showTitle string, season int, libraryType, showProvider, showProviderID string) (rpcapi.Result, error) {
+func (c *MetadataClient) LookupSeason(showTitle string, season int, libraryType, showProvider, showProviderID string) (rpcapi.Result, error) {
 	var reply rpcapi.LookupReply
 	err := c.call("LookupSeason", &rpcapi.LookupSeasonArgs{
 		ShowTitle: showTitle, Season: season, LibraryType: libraryType,
@@ -70,7 +80,7 @@ func (c *Client) LookupSeason(showTitle string, season int, libraryType, showPro
 	return reply.Result, err
 }
 
-func (c *Client) LookupEpisode(showTitle string, season, episode int, libraryType, showProvider, showProviderID string) (rpcapi.Result, error) {
+func (c *MetadataClient) LookupEpisode(showTitle string, season, episode int, libraryType, showProvider, showProviderID string) (rpcapi.Result, error) {
 	var reply rpcapi.LookupReply
 	err := c.call("LookupEpisode", &rpcapi.LookupEpisodeArgs{
 		ShowTitle: showTitle, Season: season, Episode: episode, LibraryType: libraryType,
@@ -79,8 +89,7 @@ func (c *Client) LookupEpisode(showTitle string, season, episode int, libraryTyp
 	return reply.Result, err
 }
 
-// DownloadURL fetches an absolute image URL (generic HTTP GET).
-func (c *Client) DownloadURL(u string) ([]byte, string, error) {
+func (c *MetadataClient) DownloadURL(u string) ([]byte, string, error) {
 	if u == "" {
 		return nil, "", fmt.Errorf("empty image URL")
 	}
@@ -105,4 +114,16 @@ func (c *Client) DownloadURL(u string) ([]byte, string, error) {
 		ext = ".jpg"
 	}
 	return b, ext, nil
+}
+
+// ShowDedupProvider returns the first metadata provider name for library dedup, or "tvmaze".
+func (c *MetadataClient) ShowDedupProvider() string {
+	if c == nil {
+		return "tvmaze"
+	}
+	list, err := c.ListProviders()
+	if err != nil || len(list) == 0 {
+		return "tvmaze"
+	}
+	return list[0].Name
 }

@@ -226,6 +226,31 @@ ALTER TABLE episodes ADD COLUMN meta_provider TEXT;
 ALTER TABLE episodes ADD COLUMN meta_id TEXT;
 `
 
+const migrationV9 = `
+CREATE TABLE IF NOT EXISTS user_tracker_webhooks (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  url TEXT NOT NULL DEFAULT '',
+  secret TEXT NOT NULL DEFAULT '',
+  notify_start INTEGER NOT NULL DEFAULT 1,
+  notify_stop INTEGER NOT NULL DEFAULT 1,
+  notify_progress INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+`
+
+const migrationV10 = `
+DROP TABLE IF EXISTS user_tracker_webhooks;
+CREATE TABLE IF NOT EXISTS user_webhooks (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  server_url TEXT NOT NULL DEFAULT '',
+  api_key TEXT NOT NULL DEFAULT '',
+  destinations_json TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL
+);
+`
+
 const migrationV4 = `
 CREATE TABLE IF NOT EXISTS playback_prefs (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -325,6 +350,24 @@ func (d *DB) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration v8: %w", err)
 		}
 		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (8, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 8
+	}
+	if ver < 9 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV9); err != nil {
+			return fmt.Errorf("migration v9: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (9, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 9
+	}
+	if ver < 10 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV10); err != nil {
+			return fmt.Errorf("migration v10: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (10, ?)`, now()); err != nil {
 			return err
 		}
 	}

@@ -1,7 +1,7 @@
 {{define "settings_integrations.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Integrations — Settings</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script></head>
+<title>Integrations — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
   <p class="back-link"><a href="/settings">← Settings</a></p>
@@ -9,22 +9,23 @@
   <div class="page-main-card">
     <div class="settings-tabs" role="tablist">
       <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-tab="webhooks">Webhooks</button>
+      <button type="button" class="settings-tab" role="tab" aria-selected="false" data-tab="plugins">Plugins</button>
     </div>
+    <form method="post" action="/settings/integrations" id="integrations-form">
     <div class="settings-tab-panel active" id="tab-webhooks" role="tabpanel">
-      <form method="post" action="/settings/integrations" id="integrations-form">
         <section class="page-sub-card">
           <h2>Webhooks</h2>
           <div class="page-sub-card-body-scroll">
             <p class="muted">Send outbound notifications in standard webhook JSON. <code>ServerName</code> is always <strong>Medora</strong>.</p>
 
-            <label><input type="checkbox" name="webhook_enabled" {{if .Config.Integrations.Webhooks.Enabled}}checked{{end}}> Enable webhooks</label>
+            <label><input type="checkbox" name="webhook_enabled" {{if .UserWebhooks.Enabled}}checked{{end}}> Enable webhooks</label>
             <label>Server URL</label>
-            <input name="webhook_server_url" value="{{.Config.Integrations.Webhooks.ServerURL}}" placeholder="https://medora.example.com">
+            <input name="webhook_server_url" value="{{.UserWebhooks.ServerURL}}" placeholder="https://medora.example.com">
             <label>Server ID</label>
             <input value="{{.Config.Integrations.Webhooks.ServerID}}" readonly>
             <label>Webhook API key</label>
             <div class="webhook-key-row">
-              <input id="webhook-api-key" value="{{.Config.Integrations.Webhooks.APIKey}}" readonly>
+              <input id="webhook-api-key" value="{{.UserWebhooks.APIKey}}" readonly>
               <button type="button" class="secondary" id="webhook-copy-key">Copy</button>
               <button type="submit" class="secondary" formaction="/hx/integrations/webhooks/regenerate-key" formmethod="post" onclick="return confirm('Regenerate webhook API key? Update receivers with the new key.')">Regenerate</button>
             </div>
@@ -32,7 +33,7 @@
 
             <h3>Destinations</h3>
             <div class="webhook-destinations" id="webhook-destinations">
-              {{range $i, $d := .Config.Integrations.Webhooks.Destinations}}
+              {{range $i, $d := .UserWebhooks.Destinations}}
               <fieldset class="webhook-destination" data-index="{{$i}}">
                 <legend>Destination {{add1 $i}}</legend>
                 <label>Name</label>
@@ -106,28 +107,90 @@
   "ServerId": "{{.Config.Integrations.Webhooks.ServerID}}",
   "ServerName": "Medora",
   "ServerVersion": "{{.Version}}",
-  "ServerUrl": "{{.Config.Integrations.Webhooks.ServerURL}}",
+  "ServerUrl": "{{.UserWebhooks.ServerURL}}",
   "NotificationType": "PlaybackStart",
   "ClientName": "Medora",
   "Name": "Example Movie",
   "ItemType": "Movie",
   "ItemId": "42",
-  "Username": "admin"
-}</pre>
+  "Username": "{{.User.Username}}"
+            }</pre>
           </div>
         </section>
-        <input type="hidden" name="dest_count" id="dest-count" value="{{if .Config.Integrations.Webhooks.Destinations}}{{len .Config.Integrations.Webhooks.Destinations}}{{else}}1{{end}}">
-        <p class="row">
+        <input type="hidden" name="dest_count" id="dest-count" value="{{if .UserWebhooks.Destinations}}{{len .UserWebhooks.Destinations}}{{else}}1{{end}}">
+        <p class="row tab-footer">
           <button type="submit">Save</button>
           <button type="button" class="secondary" id="test-webhooks">Test webhooks</button>
         </p>
         <p class="muted" id="webhook-test-result" aria-live="polite"></p>
-      </form>
     </div>
+    <div class="settings-tab-panel" id="tab-plugins" role="tabpanel" hidden>
+      {{if eq .User.Role "admin"}}
+      <div class="plugins-toolbar">
+        <button type="button" class="btn-icon" id="add-plugin-open" title="Install plugin" aria-label="Install plugin">+</button>
+      </div>
+      {{end}}
+      <div id="plugins-list">
+        {{range .PluginPanels}}
+        <section class="page-sub-card plugin-card" data-plugin="{{.ID}}">
+          <header class="plugin-card-head">
+            <h3>{{.Name}}</h3>
+            <span class="muted">{{.Type}} · v{{.Version}}{{if .Bundled}} · bundled{{end}}</span>
+          </header>
+          {{if .RenderError}}<p class="muted">{{.RenderError}}</p>{{else}}{{.SettingsHTML}}{{end}}
+        </section>
+        {{else}}
+        <p class="muted">No plugins installed. Use + to upload a plugin zip, or rebuild the image with the bundled providers plugin.</p>
+        {{end}}
+      </div>
+      <p class="row tab-footer">
+        <button type="submit">Save</button>
+      </p>
+    </div>
+    </form>
   </div>
 </main></div>
+
+<dialog id="plugin-install-dialog" class="modal">
+  <form method="post" action="/hx/integrations/plugins/install" enctype="multipart/form-data" class="modal-form" id="plugin-install-form">
+    <header class="modal-head">
+      <h2>Install plugin</h2>
+      <button type="button" class="btn-icon secondary" id="plugin-install-close" aria-label="Close">×</button>
+    </header>
+    <p class="muted">Upload a <code>.zip</code> containing <code>plugin.yaml</code>, <code>settings.html</code>, and the plugin binary.</p>
+    <label>Plugin archive</label>
+    <input type="file" name="archive" accept=".zip,application/zip" required>
+    <footer class="modal-foot">
+      <button type="button" class="secondary" id="plugin-install-cancel">Cancel</button>
+      <button type="submit">Install</button>
+    </footer>
+  </form>
+</dialog>
+
 <script>
 (function () {
+  var tabs = document.querySelectorAll(".settings-tab");
+  var panels = {
+    webhooks: document.getElementById("tab-webhooks"),
+    plugins: document.getElementById("tab-plugins")
+  };
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      var name = tab.getAttribute("data-tab");
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.classList.toggle("active", on);
+        t.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      Object.keys(panels).forEach(function (k) {
+        if (!panels[k]) return;
+        var show = k === name;
+        panels[k].hidden = !show;
+        panels[k].classList.toggle("active", show);
+      });
+    });
+  });
+
   var destWrap = document.getElementById("webhook-destinations");
   var destCount = document.getElementById("dest-count");
   var addBtn = document.getElementById("add-destination");
@@ -171,6 +234,21 @@
         .then(function (r) { return r.text(); })
         .then(function (t) { testResult.textContent = t; })
         .catch(function (e) { testResult.textContent = String(e); });
+    });
+  }
+
+  var pluginDlg = document.getElementById("plugin-install-dialog");
+  var pluginOpen = document.getElementById("add-plugin-open");
+  var pluginClose = document.getElementById("plugin-install-close");
+  var pluginCancel = document.getElementById("plugin-install-cancel");
+  if (pluginOpen && pluginDlg) {
+    pluginOpen.addEventListener("click", function () { pluginDlg.showModal(); });
+  }
+  if (pluginClose && pluginDlg) pluginClose.addEventListener("click", function () { pluginDlg.close(); });
+  if (pluginCancel && pluginDlg) pluginCancel.addEventListener("click", function () { pluginDlg.close(); });
+  if (pluginDlg) {
+    pluginDlg.addEventListener("click", function (e) {
+      if (e.target === pluginDlg) pluginDlg.close();
     });
   }
 })();

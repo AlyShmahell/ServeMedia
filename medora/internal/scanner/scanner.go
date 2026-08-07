@@ -23,9 +23,9 @@ type Scanner struct {
 }
 
 type WebhookNotifier interface {
-	DispatchItemAdded(ctx context.Context, item *db.MediaItem)
-	DispatchEpisodeAdded(ctx context.Context, ep *db.Episode, show *db.MediaItem)
-	DispatchTaskCompleted(ctx context.Context, message string)
+	DispatchItemAdded(ctx context.Context, userID int64, item *db.MediaItem)
+	DispatchEpisodeAdded(ctx context.Context, userID int64, ep *db.Episode, show *db.MediaItem)
+	DispatchTaskCompleted(ctx context.Context, userID int64, message string)
 }
 
 // ScanLibrary walks the library and marks the job done on success.
@@ -60,7 +60,7 @@ func (s *Scanner) scanLibrary(ctx context.Context, lib *db.Library, jobID int64,
 	if markDone {
 		_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
 		if s.Webhooks != nil {
-			s.Webhooks.DispatchTaskCompleted(ctx, "Library scan complete")
+			s.Webhooks.DispatchTaskCompleted(ctx, lib.UserID, "Library scan complete")
 		}
 		return
 	}
@@ -243,7 +243,7 @@ func (s *Scanner) ingestMovie(ctx context.Context, lib *db.Library, path string)
 	id, err := s.DB.UpsertMediaItem(ctx, it)
 	if err == nil && !existed && s.Webhooks != nil {
 		it.ID = id
-		s.Webhooks.DispatchItemAdded(ctx, &it)
+		s.Webhooks.DispatchItemAdded(ctx, lib.UserID, &it)
 	}
 	return err
 }
@@ -917,7 +917,7 @@ func (s *Scanner) ingestShow(ctx context.Context, lib *db.Library, showPath stri
 	id, err := s.DB.UpsertMediaItem(ctx, it)
 	if err == nil && !existed && s.Webhooks != nil {
 		it.ID = id
-		s.Webhooks.DispatchItemAdded(ctx, &it)
+		s.Webhooks.DispatchItemAdded(ctx, lib.UserID, &it)
 	}
 	return id, err
 }
@@ -1019,7 +1019,8 @@ func (s *Scanner) ingestEpisodeAt(ctx context.Context, showID int64, path string
 			Title: sql.NullString{String: title, Valid: true}, Path: path,
 		}
 		show, _ := s.DB.GetMediaItem(ctx, showID)
-		s.Webhooks.DispatchEpisodeAdded(ctx, &ep, show)
+		ownerID := s.libraryOwnerID(ctx, showID)
+		s.Webhooks.DispatchEpisodeAdded(ctx, ownerID, &ep, show)
 	}
 	return err
 }
@@ -1119,4 +1120,16 @@ func nullInt(y int) sql.NullInt64 {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+func (s *Scanner) libraryOwnerID(ctx context.Context, showID int64) int64 {
+	show, err := s.DB.GetMediaItem(ctx, showID)
+	if err != nil || show == nil {
+		return 0
+	}
+	var uid int64
+	if err := s.DB.SQL.QueryRowContext(ctx, `SELECT user_id FROM libraries WHERE id = ?`, show.LibraryID).Scan(&uid); err != nil {
+		return 0
+	}
+	return uid
 }

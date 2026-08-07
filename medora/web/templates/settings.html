@@ -1,13 +1,25 @@
 {{define "settings.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings — Medora</title><link rel="stylesheet" href="/static/app.css"></head>
+<title>Settings — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
   <h1>Settings</h1>
   <div class="page-main-card">
-    {{if eq .User.Role "admin"}}
     <div class="page-sub-card-grid">
+      <a class="page-sub-card page-sub-card-link settings-card" href="/settings/integrations">
+        <div class="settings-card-body">
+          <h2>Integrations</h2>
+          <p class="muted">Webhooks and plugins</p>
+        </div>
+        <div class="settings-card-icon" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+          </svg>
+        </div>
+      </a>
+      {{if eq .User.Role "admin"}}
       <a class="page-sub-card page-sub-card-link settings-card" href="/settings/users">
         <div class="settings-card-body">
           <h2>Users</h2>
@@ -49,21 +61,10 @@
           </svg>
         </div>
       </a>
-      <a class="page-sub-card page-sub-card-link settings-card" href="/settings/integrations">
-        <div class="settings-card-body">
-          <h2>Integrations</h2>
-          <p class="muted">Webhooks and external services</p>
-        </div>
-        <div class="settings-card-icon" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-          </svg>
-        </div>
-      </a>
+      {{end}}
     </div>
-    {{else}}
-    <section class="page-sub-card">
+    {{if ne .User.Role "admin"}}
+    <section class="page-sub-card" style="margin-top:1rem">
       <p class="muted">Library management is on Home.</p>
     </section>
     {{end}}

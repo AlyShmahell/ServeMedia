@@ -14,9 +14,6 @@ func TestEnsureIntegrationDefaults(t *testing.T) {
 	if cfg.Integrations.Webhooks.ServerID == "" {
 		t.Fatal("missing server id")
 	}
-	if cfg.Integrations.Webhooks.APIKey == "" {
-		t.Fatal("missing api key")
-	}
 	if cfg.EnsureIntegrationDefaults() {
 		t.Fatal("second call should not change")
 	}

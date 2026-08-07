@@ -1,8 +1,8 @@
 services:
   medora:
     build:
-      context: .
-      dockerfile: Containerfile
+      context: ..
+      dockerfile: medora/Containerfile
     # Starts as root and stays root: under rootless Podman, container UID 0 maps to the host
     # user so NFO/posters can be written next to media. Do not drop to UID 1000.
     # label=disable — containers cannot read exFAT/dosfs_t media even with :Z; needed for MEDIA_PATH on MicroSD.
@@ -14,7 +14,6 @@ services:
       - .env
     environment:
       OMDB_API_KEY: ${OMDB_API_KEY:-}
-      MEDORA_PROVIDERS_SOCKET: ${MEDORA_PROVIDERS_SOCKET:-/data/run/providers.sock}
     volumes:
       # :Z — SELinux relabel for rootless Podman on Fedora/RHEL (avoids mkdir Permission denied)
       - ../data:/data:Z

@@ -24,6 +24,17 @@ else
   exit 1
 fi
 
+run_build_plugins() {
+  local PLUGINS="$ROOT/plugins"
+  mkdir -p "$PLUGINS/dist" "$ROOT/medora/bundled/plugins"
+  podman build -t localhost/medora-plugins-packager:latest -f "$PLUGINS/Containerfile" --target package "$PLUGINS"
+  local cid
+  cid=$(podman create localhost/medora-plugins-packager:latest)
+  podman cp "$cid:/out/providers.zip" "$PLUGINS/dist/providers.zip"
+  podman rm "$cid" >/dev/null
+  cp "$PLUGINS/dist/providers.zip" "$ROOT/medora/bundled/plugins/providers.zip"
+}
+
 if [[ ! -t 0 || ! -t 1 ]]; then
   echo "Non-interactive: running unit then smoke"
   if [[ -f "$ROOT/medora/.env" ]]; then
@@ -35,6 +46,7 @@ if [[ ! -t 0 || ! -t 1 ]]; then
   "${COMPOSE[@]}" build unit
   "${COMPOSE[@]}" run --rm unit
   "${COMPOSE[@]}" down -v 2>/dev/null || true
+  run_build_plugins
   # Build OMDb stub with an explicit tag (compose short-name pulls fail without a TTY).
   podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
   podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
@@ -73,6 +85,7 @@ run_unit() {
 run_smoke() {
   stty sane; printf '\033[?25h'
   "${COMPOSE[@]}" down -v 2>/dev/null || true
+  run_build_plugins
   # Movie Meta uses the local OMDb stub (see tests/omdb-stub); no real API key required.
   podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
   podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub

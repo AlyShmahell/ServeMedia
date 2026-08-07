@@ -24,8 +24,8 @@ services:
 
   medora:
     build:
-      context: ../medora
-      dockerfile: Containerfile
+      context: ..
+      dockerfile: medora/Containerfile
     env_file:
       - ../medora/.env
     environment:

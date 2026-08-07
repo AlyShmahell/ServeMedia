@@ -18,7 +18,7 @@ type Limiter struct {
 	daily     int
 	tokens    float64
 	last      time.Time
-	day       string // YYYY-MM-DD UTC
+	day       string
 	usedToday int
 	path      string
 }
@@ -73,7 +73,6 @@ func (l *Limiter) save() {
 	_ = os.WriteFile(l.path, b, 0o644)
 }
 
-// Acquire blocks until a request is allowed or returns an error if the daily quota is exhausted.
 func (l *Limiter) Acquire() error {
 	for {
 		l.mu.Lock()

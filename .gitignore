@@ -24,6 +24,10 @@ go.work.sum
 !data/.gitkeep
 medora/.env
 
+# Plugin build artifacts
+plugins/dist/
+medora/bundled/plugins/*.zip
+
 # Editor
 .idea/
 .vscode/

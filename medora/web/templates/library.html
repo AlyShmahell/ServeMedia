@@ -1,7 +1,7 @@
 {{define "library.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Library.Name}} — Medora</title><link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
+<title>{{.Library.Name}} — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content library-page">
   <p class="back-link"><a href="/">← Back</a></p>
