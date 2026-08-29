@@ -179,8 +179,12 @@ chmod +x "$DEST/medora"
 mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
 ln -sfn "$DEST/medora" "$BIN_DIR/medora"
 
-if [[ -f "$DEST/public/logo.svg" ]]; then
-  cp -a "$DEST/public/logo.svg" "$ICON_DIR/medora.svg"
+icon_src="$DEST/public/logo.svg"
+if [[ -f "$icon_src" ]]; then
+  cp -a "$icon_src" "$ICON_DIR/medora.svg"
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICON_DIR")")" >/dev/null 2>&1 || true
 fi
 
 desktop_src="$DEST/share/applications/medora.desktop"
@@ -189,7 +193,11 @@ if [[ ! -f "$desktop_src" ]]; then
   echo "error: desktop file missing from release" >&2
   exit 1
 fi
-sed "s|^Exec=.*|Exec=${DEST}/medora|" "$desktop_src" >"$desktop_dst"
+icon_path="$ICON_DIR/medora.svg"
+if [[ ! -f "$icon_path" ]]; then
+  icon_path="$icon_src"
+fi
+sed -e "s|^Exec=.*|Exec=${DEST}/medora|" -e "s|^Icon=.*|Icon=${icon_path}|" "$desktop_src" >"$desktop_dst"
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
 fi
