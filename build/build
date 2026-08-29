@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# In-image helper. Host driver is build/run (Podman).
+set -euo pipefail
+DIST="${DIST:-/dist}"
+CACHE="${CACHE:-/cache/ffmpeg}"
+OUT="${OUT:-/out}"
+UA="${UA:-medora-builder}"
+
+retry() { curl -fsSL -A "$UA" --retry 5 --retry-delay 2 "$@"; }
+
+yaml_url() {
+  awk -v k="$1" '
+    $1 == k ":" {
+      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
+      gsub(/^"/, "")
+      gsub(/"[[:space:]]*$/, "")
+      print
+      exit
+    }
+  ' "$DIST/config/default.yaml"
+}
+
+vendor() {
+  local htmx_url htmx_lic videojs_js videojs_css videojs_lic hls_url hls_lic matchora_url
+  local tmp src
+  htmx_url="$(yaml_url htmx_url)"
+  htmx_lic="$(yaml_url htmx_license_url)"
+  videojs_js="$(yaml_url videojs_js_url)"
+  videojs_css="$(yaml_url videojs_css_url)"
+  videojs_lic="$(yaml_url videojs_license_url)"
+  hls_url="$(yaml_url hls_url)"
+  hls_lic="$(yaml_url hls_license_url)"
+  matchora_url="$(yaml_url url)"
+  mkdir -p "$DIST/vendor/video.js" "$DIST/vendor/ffmpeg" "$DIST/tools"
+  retry -o "$DIST/vendor/htmx.min.js" "$htmx_url"
+  retry -o "$DIST/vendor/htmx.min.js.LICENSE" "$htmx_lic"
+  printf '%s\n' "$htmx_lic" >"$DIST/vendor/htmx.min.js.NOTICE"
+  retry -o "$DIST/vendor/video.js/video.min.js" "$videojs_js"
+  retry -o "$DIST/vendor/video.js/video-js.min.css" "$videojs_css"
+  retry -o "$DIST/vendor/video.js/LICENSE" "$videojs_lic"
+  printf '%s\n' "$videojs_lic" >"$DIST/vendor/video.js/LICENSE.NOTICE"
+  retry -o "$DIST/vendor/hls.min.js" "$hls_url"
+  retry -o "$DIST/vendor/hls.min.js.LICENSE" "$hls_lic"
+  printf '%s\n' "$hls_lic" >"$DIST/vendor/hls.min.js.NOTICE"
+  tmp="$(mktemp -d)"
+  retry -o "$tmp/matchora.tar.gz" "$matchora_url"
+  mkdir -p "$tmp/matchora-extract"
+  tar -xzf "$tmp/matchora.tar.gz" -C "$tmp/matchora-extract"
+  src=""
+  if [[ -x "$tmp/matchora-extract/matchora/matchora" ]]; then
+    src="$tmp/matchora-extract/matchora"
+  elif [[ -x "$tmp/matchora-extract/matchora" ]]; then
+    src="$tmp/matchora-extract"
+  else
+    echo "error: matchora binary missing from release tarball" >&2
+    exit 1
+  fi
+  rm -rf "$DIST/tools/matchora"
+  cp -a "$src" "$DIST/tools/matchora"
+  chmod a+x "$DIST/tools/matchora/matchora"
+  rm -rf "$tmp"
+}
+
+compile_ffmpeg() {
+  local prefix x264_prefix ffmpeg_src x264_src tmp ffmpeg_lic
+  prefix="${PREFIX:-/opt/ffmpeg}"
+  x264_prefix="${X264_PREFIX:-/opt/x264}"
+  ffmpeg_src="$(yaml_url ffmpeg_src_url)"
+  x264_src="$(yaml_url x264_src_url)"
+  tmp="$(mktemp -d)"
+  retry -o "$tmp/x264.src" "$x264_src"
+  mkdir -p "$tmp/x264-src"
+  tar -xf "$tmp/x264.src" -C "$tmp/x264-src" --strip-components=1
+  (
+    cd "$tmp/x264-src"
+    bash ./configure --prefix="$x264_prefix" --enable-static --disable-shared --disable-cli
+    make -j"$(nproc)"
+    make install
+  )
+  retry -o "$tmp/ffmpeg.src" "$ffmpeg_src"
+  mkdir -p "$tmp/ffmpeg-src"
+  tar -xf "$tmp/ffmpeg.src" -C "$tmp/ffmpeg-src" --strip-components=1
+  (
+    cd "$tmp/ffmpeg-src"
+    export PKG_CONFIG_PATH="$x264_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    ./configure \
+      --prefix="$prefix" \
+      --enable-gpl \
+      --enable-version3 \
+      --enable-libx264 \
+      --enable-vaapi \
+      --enable-libdrm \
+      --enable-static \
+      --disable-shared \
+      --disable-debug \
+      --disable-doc \
+      --disable-ffplay \
+      --extra-cflags="-I$x264_prefix/include" \
+      --extra-ldflags="-L$x264_prefix/lib"
+    make -j"$(nproc)"
+    make install
+  )
+  rm -rf "$tmp"
+  cp /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe "$CACHE/"
+  ffmpeg_lic="$(yaml_url ffmpeg_license_url)"
+  retry -o "$CACHE/LICENSE" "$ffmpeg_lic"
+  printf '%s\n' "$ffmpeg_lic" >"$CACHE/LICENSE.NOTICE"
+}
+
+stage() {
+  find "$OUT" -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} +
+  mkdir -p "$CACHE" "$DIST/vendor/ffmpeg"
+  if [[ -f "$CACHE/ffmpeg" && -f "$CACHE/ffprobe" && -s "$CACHE/LICENSE" ]]; then
+    echo "using cached ffmpeg from $CACHE"
+  else
+    echo "compiling ffmpeg into $CACHE"
+    compile_ffmpeg
+  fi
+  chmod a+x "$CACHE/ffmpeg" "$CACHE/ffprobe"
+  chmod -R a+rwX /cache
+  rm -rf "$DIST/vendor/ffmpeg"
+  mkdir -p "$DIST/vendor/ffmpeg"
+  cp -a "$CACHE"/. "$DIST/vendor/ffmpeg/"
+  chmod a+x "$DIST/vendor/ffmpeg/ffmpeg" "$DIST/vendor/ffmpeg/ffprobe"
+  cp -a "$DIST"/. "$OUT/"
+  chmod -R a+rwX "$OUT"
+  chmod a+x "$OUT/medora"
+  find "$OUT/tools" -type f -name matchora -exec chmod a+x {} + 2>/dev/null || true
+  find "$OUT/vendor/ffmpeg" -type f \( -name ffmpeg -o -name ffprobe \) -exec chmod a+x {} +
+}
+
+case "${1:-}" in
+  vendor) vendor ;;
+  stage) stage ;;
+  *)
+    echo "usage: $0 vendor|stage" >&2
+    exit 1
+    ;;
+esac

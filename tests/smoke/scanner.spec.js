@@ -32,7 +32,7 @@ async function ensureAnimeLibrary(page) {
   }
   await page.click('#add-library-open');
   await page.fill('#library-name', 'Anime');
-  await page.selectOption('select[name="type"]', 'anime');
+  await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
   await expect(page.locator('#library-path')).toHaveValue('/media', { timeout: 15000 });
   await page.locator('button.media-browser-dir', { hasText: 'Anime' }).click();
   await expect(page.locator('#library-path')).toHaveValue('/media/Anime', { timeout: 15000 });
@@ -128,15 +128,16 @@ test('anime library: stray film, pack show, dual show, season pack', async ({ pa
   await expect(page).toHaveURL(/\/shows\/\d+/);
   const dualSeasons = page.locator('a.season-card');
   await expect(dualSeasons).toHaveCount(2);
+  const showURL = page.url();
 
-  const s1 = dualSeasons.filter({ hasText: /Season 1/i });
+  const s1 = page.locator('a.season-card[href$="/seasons/1"]');
   await expect(s1).toHaveCount(1);
   await expect(s1).toContainText(/2 episode/);
   await s1.click();
   await expect(page.locator('.episode-card')).toHaveCount(2);
 
-  await page.goBack();
-  const s2 = page.locator('a.season-card').filter({ hasText: /Season 2/i });
+  await page.goto(showURL);
+  const s2 = page.locator('a.season-card[href$="/seasons/2"]');
   await expect(s2).toHaveCount(1);
   await s2.click();
   await expect(page.locator('.episode-card')).toHaveCount(2);

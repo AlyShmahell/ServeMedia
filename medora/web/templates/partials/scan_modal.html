@@ -12,14 +12,17 @@
     <label for="scan-mode">What do you want to do?</label>
     <select name="mode" id="scan-mode">
       <option value="local" {{if not .MetaReady}}selected{{end}}>Scan local NFO/posters</option>
-      <option value="enrich_missing" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Enrich missing NFO/posters using providers</option>
-      <option value="refetch_all" {{if not .MetaReady}}disabled{{end}}>Re-fetch NFO/posters for all using providers</option>
+      <option value="matchora" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with Matchora</option>
     </select>
     {{if not .MetaReady}}
     <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
     {{else if .MetaHint}}
     <p class="muted scan-modal-hint">{{.MetaHint}}</p>
     {{end}}
+    <label class="scan-persist">
+      <input type="checkbox" name="overwrite" value="1">
+      Overwrite existing metadata
+    </label>
     <label class="scan-persist">
       <input type="checkbox" name="persist" value="1" checked>
       Save NFO/posters next to media files

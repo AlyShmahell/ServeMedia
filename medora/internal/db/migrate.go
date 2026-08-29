@@ -251,6 +251,43 @@ CREATE TABLE IF NOT EXISTS user_webhooks (
 );
 `
 
+const migrationV11 = `
+PRAGMA foreign_keys=OFF;
+
+CREATE TABLE libraries_v11 (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(user_id, path)
+);
+
+INSERT INTO libraries_v11(id, user_id, name, path, created_at, updated_at)
+SELECT id, user_id, name, path, created_at, updated_at FROM libraries;
+
+DROP TABLE libraries;
+ALTER TABLE libraries_v11 RENAME TO libraries;
+
+PRAGMA foreign_keys=ON;
+
+ALTER TABLE media_items DROP COLUMN tmdb_id;
+ALTER TABLE seasons DROP COLUMN tmdb_id;
+ALTER TABLE episodes DROP COLUMN tmdb_id;
+
+ALTER TABLE media_items ADD COLUMN matchora_job_id TEXT;
+ALTER TABLE media_items ADD COLUMN match_status TEXT;
+`
+
+const migrationV12 = `
+ALTER TABLE media_items ADD COLUMN matchora_session_id TEXT;
+`
+
+const migrationV13 = `
+DROP TABLE IF EXISTS async_jobs;
+`
+
 const migrationV4 = `
 CREATE TABLE IF NOT EXISTS playback_prefs (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -368,6 +405,33 @@ func (d *DB) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration v10: %w", err)
 		}
 		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (10, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 10
+	}
+	if ver < 11 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV11); err != nil {
+			return fmt.Errorf("migration v11: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (11, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 11
+	}
+	if ver < 12 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV12); err != nil {
+			return fmt.Errorf("migration v12: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 12
+	}
+	if ver < 13 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV13); err != nil {
+			return fmt.Errorf("migration v13: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (13, ?)`, now()); err != nil {
 			return err
 		}
 	}

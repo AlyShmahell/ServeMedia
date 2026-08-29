@@ -21,7 +21,7 @@ func TestResolveAndSavePlaybackPrefs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lib, err := d.CreateLibrary(ctx, u.ID, "TV", "tv", "/media/tv")
+	lib, err := d.CreateLibrary(ctx, u.ID, "TV", "/media/tv")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestItemPrefsOverrideUser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lib, err := d.CreateLibrary(ctx, u.ID, "TV", "tv", "/media/tv")
+	lib, err := d.CreateLibrary(ctx, u.ID, "TV", "/media/tv")
 	if err != nil {
 		t.Fatal(err)
 	}

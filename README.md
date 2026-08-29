@@ -1,38 +1,49 @@
-# Medora
+<p align="center">
+  <img src="medora/web/static/logo.svg" alt="Medora" width="200">
+</p>
 
-Minimal self-hosted media server (Go + HTMX + SQLite + FFmpeg). Rootless-friendly storage under `./data/store/`, app-owned `tar.zst` backups.
+<h1 align="center">Medora</h1>
 
-## Quick start
+Self-hosted media library for Linux: scan your files, fetch metadata, and play in the browser. Runs as a host app (not a container) at http://127.0.0.1:7676.
+
+## Requirements
+
+- Linux x86_64
+- `curl` and `python3` (for the installer)
+- A real terminal (the installer shows a menu)
+
+GPU transcode uses host Mesa/`libva` when available; software encode is the fallback.
+
+## Install
 
 ```bash
-cp medora/.env.example medora/.env
-# set MEDIA_PATH=/path/to/your/media
-./run          # Start (Podman default; Docker optional)
+curl -fsSL https://raw.githubusercontent.com/AlyShmahell/medora/main/install.sh | bash
 ```
 
-Open http://127.0.0.1:7676 — first visit creates the **admin** via `/register`.
+Pick a GitHub release, then **bundled** (ffmpeg + llama included) or **slim** (run `medora --prepare` once afterward). The installer writes `~/.medora`, links `~/.local/bin/medora`, and adds a userscope desktop entry. Add `~/.local/bin` to `PATH` if `medora` is not found. Override the install prefix with `MEDORA_HOME`.
 
-## Layout
+Archives are also on [GitHub Releases](https://github.com/AlyShmahell/medora/releases): `medora-<ver>-linux-amd64-bundled.tar.gz` or the slim `medora-<ver>-linux-amd64.tar.gz`.
+
+## Start
+
+Run `medora` or the desktop entry. With a display, the browser opens automatically (`MEDORA_NO_BROWSER=1` skips that). If Medora is already listening, a second start opens the URL and exits.
+
+The first visit goes to `/register` and creates the **admin**. After that, `/register` is gone. Add other users under Settings → Users.
+
+## Media
+
+Default library roots are `/media` and `/mnt`. Point Medora at your files with `MEDORA_MEDIA_PATH` or `media.path` in `~/.medora/data/config.yaml` (comma-separated paths show as one folder tree). Seed config stays in `~/.medora/config/default.yaml`; your changes go in the overlay.
+
+On Home, add a library and Scan (local NFO/posters, or Matchora when metadata is ready). Provider keys live under Settings → Integrations. Playback is in the browser. Settings → Backup does one-shot and periodic `tar.zst` of the store.
+
+## Files
 
 | Path | Purpose |
-|---|---|
-| `run` | Host TUI: Start/Stop/Logs/Engine |
-| `medora/` | App sources, Containerfile, compose |
-| `data/` | Runtime store, transcode cache, backups (gitignored) |
-| `tests/` | Podman-only unit + Playwright smoke |
-| `toolchains/` | Pull-only toolchain images |
-| `docs/dev/workflow.md` | Test and run workflow |
+|------|---------|
+| `~/.medora` | Binary, seed config, tools |
+| `~/.medora/data` | Library database, transcode cache, backups, overlay config |
+| `~/.local/bin/medora` | Command on `PATH` |
 
-## Auth
+## Building from source
 
-- No users → redirect to `/register` (bootstrap **admin** only)  
-- Afterward `/register` returns 404  
-- Admin → Settings → Users creates ordinary users  
-
-## Backup
-
-In the web UI (Settings → Backup): one-shot and periodic `tar.zst` of `store/`. Restore from the same page. Not handled by `./run`.
-
-## Tests
-
-See [docs/dev/workflow.md](docs/dev/workflow.md). **Podman only** — no host Go/Node/Playwright.
+See [docs/dev/workflow.md](docs/dev/workflow.md).

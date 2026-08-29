@@ -78,6 +78,19 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         qs = parse_qs(parsed.query)
+        path = parsed.path.rstrip("/") or "/"
+
+        # TVMaze / Jikan / TMDB search shapes — empty so synthetic show names stay unmatched.
+        if path == "/search/shows" or path.endswith("/search/movie") or path.endswith("/search/tv"):
+            self._json(200, [])
+            return
+        if path == "/anime" or path.endswith("/anime"):
+            self._json(200, {"data": []})
+            return
+        if path.startswith("/3/"):
+            self._json(200, {"results": []})
+            return
+
         if "i" in qs:
             imdb = qs["i"][0]
             if imdb in BY_ID:

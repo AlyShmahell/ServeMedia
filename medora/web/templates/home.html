@@ -1,7 +1,7 @@
 {{define "home.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Home — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js"></script><script src="/static/app.js" defer></script></head>
+<title>Home — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js"></script><script src="/static/app.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content home-page">
   <h1>Home</h1>
@@ -37,7 +37,7 @@
           <a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
             <div class="poster-wrap">
               <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
-              {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID $.MetaReady $.MetaDisabledReason)}}
+              {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String)}}
               <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
             </div>
             <div class="t">{{.Item.Title}}</div>
@@ -52,6 +52,7 @@
 {{template "partials/fetch_modal.html" .}}
 {{template "partials/scan_modal.html" .}}
 {{template "partials/entry_scan_modal.html" .}}
+<div id="match-modal-host"></div>
 
 <dialog id="add-library-dialog" class="modal">
   <form method="post" action="/hx/libraries" class="modal-form">
@@ -61,12 +62,6 @@
     </header>
     <label>Name</label>
     <input name="name" id="library-name" required autocomplete="off" placeholder="e.g. Movies">
-    <label>Type</label>
-    <select name="type">
-      <option value="movies">Movies</option>
-      <option value="tv">TV Shows</option>
-      <option value="anime">Anime</option>
-    </select>
     <label>Folder</label>
     <input type="hidden" name="path" id="library-path" required>
     <p class="folder-selected muted">Selected: <code id="library-path-display">none</code></p>
@@ -86,6 +81,10 @@
   var browser = document.getElementById('media-browser');
   var nameInput = document.getElementById('library-name');
 
+  function capitalizeFirst(s) {
+    if (!s) return s;
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
   function syncLibraryNameFromPath() {
     var pathInput = document.getElementById('library-path');
     if (!nameInput || !pathInput) return;
@@ -93,7 +92,7 @@
     if (!path) return;
     var parts = path.replace(/\/+$/, '').split('/');
     var base = parts[parts.length - 1] || '';
-    if (base) nameInput.value = base;
+    if (base) nameInput.value = capitalizeFirst(base);
   }
   window.syncLibraryNameFromPath = syncLibraryNameFromPath;
 

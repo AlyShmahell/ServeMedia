@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/alyshmahell/medora/internal/config"
+	"github.com/alyshmahell/medora/internal/ffbin"
 )
 
 func requireRenderNode(t *testing.T) string {
@@ -61,7 +62,7 @@ func TestProbeVAAPIIntegration(t *testing.T) {
 
 func TestVaapiFullHWEncodeSmoke(t *testing.T) {
 	dev := requireRenderNode(t)
-	cmd := exec.Command("ffmpeg",
+	cmd := exec.Command(ffbin.FFmpeg(),
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -90,7 +91,7 @@ func TestVaapiSmokeTest10BitDirect(t *testing.T) {
 
 func TestVaapiHybridEncodeSmoke(t *testing.T) {
 	dev := requireRenderNode(t)
-	cmd := exec.Command("ffmpeg",
+	cmd := exec.Command(ffbin.FFmpeg(),
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",

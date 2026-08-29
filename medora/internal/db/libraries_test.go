@@ -26,16 +26,27 @@ func TestPerUserLibraries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	la, err := d.CreateLibrary(ctx, a.ID, "Movies", "movies", "/media/movies")
+	la, err := d.CreateLibrary(ctx, a.ID, "Movies", "/media/movies")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lb, err := d.CreateLibrary(ctx, b.ID, "Movies", "movies", "/media/movies")
+	lb, err := d.CreateLibrary(ctx, b.ID, "Movies", "/media/movies")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if la.ID == lb.ID {
 		t.Fatal("expected distinct libraries")
+	}
+
+	var typeCol, tmdbCol, sessCol int
+	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('libraries') WHERE name='type'`).Scan(&typeCol); err != nil || typeCol != 0 {
+		t.Fatalf("libraries.type should be gone: %d %v", typeCol, err)
+	}
+	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='tmdb_id'`).Scan(&tmdbCol); err != nil || tmdbCol != 0 {
+		t.Fatalf("media_items.tmdb_id should be gone: %d %v", tmdbCol, err)
+	}
+	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='matchora_session_id'`).Scan(&sessCol); err != nil || sessCol != 1 {
+		t.Fatalf("media_items.matchora_session_id missing: %d %v", sessCol, err)
 	}
 
 	alist, err := d.ListLibraries(ctx, a.ID)

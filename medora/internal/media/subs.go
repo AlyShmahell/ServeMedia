@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/alyshmahell/medora/internal/ffbin"
 )
 
 // SubtitleVTTPath returns a cache path for a WebVTT extract of stream index.
@@ -27,7 +29,7 @@ func EnsureSubtitleVTT(source string, streamIndex int, outPath string) error {
 	}
 	tmp := outPath + ".tmp"
 	_ = os.Remove(tmp)
-	cmd := exec.Command("ffmpeg", "-y", "-i", source,
+	cmd := exec.Command(ffbin.FFmpeg(), "-y", "-i", source,
 		"-map", fmt.Sprintf("0:%d", streamIndex),
 		"-f", "webvtt", tmp)
 	out, err := cmd.CombinedOutput()

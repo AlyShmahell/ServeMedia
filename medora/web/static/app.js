@@ -209,28 +209,56 @@
 })();
 
 (function () {
-  var token = '';
-  var pulseMs = 30000;
-
-  function createSession() {
-    return fetch('/watchdog/session', { method: 'POST', credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .then(function (d) { token = d.token || ''; });
+  function matchHost() {
+    var host = document.getElementById('match-modal-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'match-modal-host';
+      document.body.appendChild(host);
+    }
+    return host;
   }
 
-  function pulse() {
-    if (!token || document.visibilityState !== 'visible') return;
-    fetch('/watchdog/pulse', {
+  window.openMatchModal = function (id) {
+    fetch('/hx/media/' + id + '/match', { credentials: 'same-origin' })
+      .then(function (r) {
+        return r.text().then(function (html) {
+          if (!r.ok) {
+            throw new Error(html || r.statusText);
+          }
+          return html;
+        });
+      })
+      .then(function (html) {
+        var host = matchHost();
+        host.innerHTML = html;
+        var dlg = document.getElementById('match-pick-dialog');
+        if (dlg && dlg.showModal) {
+          dlg.showModal();
+        }
+      })
+      .catch(function (err) {
+        alert(err.message || String(err));
+      });
+  };
+
+  window.pickMatchCandidate = function (itemId, provider, id) {
+    var body = new URLSearchParams();
+    body.set('provider', provider);
+    body.set('id', id);
+    fetch('/hx/media/' + itemId + '/match', {
       method: 'POST',
-      headers: { 'X-Watchdog-Token': token },
       credentials: 'same-origin',
-      keepalive: true
-    }).catch(function () {});
-  }
-
-  createSession().then(function () {
-    pulse();
-    setInterval(pulse, pulseMs);
-  });
-  document.addEventListener('visibilitychange', pulse);
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body,
+    }).then(function (r) {
+      if (r.ok) {
+        location.reload();
+        return;
+      }
+      return r.text().then(function (t) {
+        alert(t || r.statusText);
+      });
+    });
+  };
 })();

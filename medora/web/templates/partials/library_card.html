@@ -8,7 +8,6 @@
   {{end}}>
   <div class="library-card-head">
     <a class="library-card-title" href="/libraries/{{.Library.ID}}">{{.Library.Name}}</a>
-    <span class="library-card-type muted">{{.Library.Type}}</span>
   </div>
   <a class="library-collage" href="/libraries/{{.Library.ID}}" aria-label="Open {{.Library.Name}}">
     {{if .Posters}}
@@ -41,7 +40,7 @@
   </div>
   {{if or .Poll .Message}}
   <p class="library-scan-msg muted">
-    {{if .Job}}{{if eq .Job.Status "done"}}Scan complete{{else if eq .Job.Status "error"}}Scan failed{{else if .Poll}}{{if .Enriching}}Enriching{{else}}Scanning{{end}}{{end}}{{else if .Poll}}Scanning{{end}}
+    {{if .Job}}{{if eq .Job.Status "done"}}Scan complete{{else if eq .Job.Status "error"}}Scan failed{{else if .Poll}}{{if .Enriching}}Matching{{else}}Scanning{{end}}{{end}}{{else if .Poll}}Scanning{{end}}
     {{if .ProgressPct}} — {{.ProgressPct}}%{{end}}{{if .Message}} · {{.Message}}{{end}}
   </p>
   {{end}}

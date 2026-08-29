@@ -1,11 +1,7 @@
-FROM docker.io/library/golang:1.23-bookworm
+FROM docker.io/library/golang:1.26-bookworm
 WORKDIR /src
 ENV PATH="/usr/local/go/bin:${PATH}"
 COPY medora/ /src/medora/
-COPY plugins/sdk /src/plugins/sdk
-COPY plugins/default/providers /src/plugins/default/providers
 WORKDIR /src/medora
-RUN go mod tidy && go test ./...
-WORKDIR /src/plugins/default/providers
 RUN go mod tidy && go test ./...
 CMD ["go", "test", "./..."]

@@ -9,7 +9,7 @@ async function ensureAnimeLibrary(page) {
   if (!(await animeLib.count())) {
     await page.click('#add-library-open');
     await page.fill('#library-name', 'Anime');
-    await page.selectOption('select[name="type"]', 'anime');
+    await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
     await expect(page.locator('#library-path')).toHaveValue('/media', { timeout: 15000 });
     await page.locator('button.media-browser-dir', { hasText: 'Anime' }).click();
     await expect(page.locator('#library-path')).toHaveValue('/media/Anime', { timeout: 15000 });
@@ -32,7 +32,8 @@ async function entryScanRefetch(page) {
   await expect(scanBtn).toBeVisible({ timeout: 15000 });
   await scanBtn.click({ force: true });
   await expect(page.locator('#entry-scan-modal')).toBeVisible();
-  await page.selectOption('#entry-scan-mode', 'refetch_all');
+  await page.selectOption('#entry-scan-mode', 'matchora');
+  await page.locator('#entry-scan-modal-form input[name="overwrite"]').check();
   await page.locator('#entry-scan-modal-form button[type="submit"]').click();
   const panel = page.locator('#fetch-modal-body .job-progress');
   await expect(panel).toBeVisible({ timeout: 15000 });

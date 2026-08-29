@@ -21,63 +21,223 @@ async function ensureAdmin(page) {
 
 async function ensureMovieLibrary(page) {
   await page.goto('/');
-  const movieCard = page.locator('a[href^="/movies/"]').first();
-  if (await movieCard.count()) {
-    return;
-  }
-  // Prefer an existing Movies library (TV may also be present from layout smoke).
+  // Anime films also live at /movies/:id — always open the Movies library.
   const moviesLib = page.locator('.library-card-title', { hasText: 'Movies' }).first();
   if (await moviesLib.count()) {
     await moviesLib.click();
-    await expect(page.locator('a[href^="/movies/"]').first()).toBeVisible({ timeout: 90000 });
+    await expect(page.locator('#items a.card').first()).toBeVisible({ timeout: 90000 });
     return;
   }
   await page.click('#add-library-open');
   await page.fill('#library-name', 'Movies');
-  await page.selectOption('select[name="type"]', 'movies');
+  await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
   await expect(page.locator('#library-path')).toHaveValue('/media', { timeout: 15000 });
   await page.locator('button.media-browser-dir', { hasText: 'Movies' }).click();
   await expect(page.locator('#library-path')).toHaveValue('/media/Movies', { timeout: 15000 });
   await page.locator('#add-library-dialog button[type="submit"]').click();
   await expect(page).toHaveURL(/scan=/);
   await page.goto('/');
-  await expect(page.locator('a[href^="/movies/"], .library-card').first()).toBeVisible({
-    timeout: 90000,
-  });
-  if (await page.locator('a[href^="/movies/"]').count()) {
+  await page.locator('.library-card-title', { hasText: 'Movies' }).first().click();
+  await expect(page.locator('#items a.card').first()).toBeVisible({ timeout: 90000 });
+}
+
+async function ensureTVLibrary(page) {
+  await page.goto('/');
+  const showLink = page.getByRole('link', { name: /Sample Show/i }).first();
+  if (await showLink.count()) {
     return;
   }
+  const tvLib = page.locator('.library-card').filter({ has: page.locator('.library-card-title', { hasText: 'TV' }) }).first();
+  if (await tvLib.count()) {
+    await tvLib.locator('.library-card-title').click();
+    await expect(page.getByRole('link', { name: /Sample Show/i })).toBeVisible({ timeout: 90000 });
+    return;
+  }
+  await page.click('#add-library-open');
+  await page.fill('#library-name', 'TV');
+  await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
+  await expect(page.locator('#library-path')).toHaveValue('/media', { timeout: 15000 });
+  await page.locator('button.media-browser-dir', { hasText: 'TV' }).click();
+  await expect(page.locator('#library-path')).toHaveValue('/media/TV', { timeout: 15000 });
+  await page.locator('#add-library-dialog button[type="submit"]').click();
+  await expect(page).toHaveURL(/scan=/);
+  await page.goto('/');
+  await expect(page.locator('a[href^="/shows/"], .library-card').first()).toBeVisible({
+    timeout: 90000,
+  });
+  if (await page.getByRole('link', { name: /Sample Show/i }).count()) {
+    return;
+  }
+  await page.locator('.library-card-title', { hasText: 'TV' }).first().click();
+  await expect(page.getByRole('link', { name: /Sample Show/i })).toBeVisible({ timeout: 90000 });
+}
+
+async function ensureAnimeLibrary(page) {
+  await page.goto('/');
+  const animeLib = page.locator('.library-card').filter({
+    has: page.locator('.library-card-title', { hasText: 'Anime' }),
+  }).first();
+  if (await animeLib.count()) {
+    await animeLib.locator('.library-card-title').click();
+    await expect(page).toHaveURL(/\/libraries\/\d+/);
+    await expect(page.locator('#items .card').first()).toBeVisible({ timeout: 90000 });
+    return;
+  }
+  await page.click('#add-library-open');
+  await page.fill('#library-name', 'Anime');
+  await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
+  await expect(page.locator('#library-path')).toHaveValue('/media', { timeout: 15000 });
+  await page.locator('button.media-browser-dir', { hasText: 'Anime' }).click();
+  await expect(page.locator('#library-path')).toHaveValue('/media/Anime', { timeout: 15000 });
+  await page.locator('#add-library-dialog button[type="submit"]').click();
+  await expect(page).toHaveURL(/scan=/);
+  await page.goto('/');
+  await page.locator('.library-card-title', { hasText: 'Anime' }).first().click();
+  await expect(page.locator('#items .card').first()).toBeVisible({ timeout: 90000 });
+}
+
+async function forceControlBar(page) {
+  await page.addStyleTag({
+    content: `
+      .video-js .vjs-control-bar {
+        display: flex !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
+      }
+      .vjs-error-display { pointer-events: none !important; }
+    `,
+  });
+}
+
+async function injectSessionTracks(page) {
+  await page.route('**/play/**/session', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    const res = await route.fetch();
+    const json = await res.json();
+    json.audioTracks = [
+      { index: 1, type: 'audio', lang: 'eng', title: 'English', codec: 'aac' },
+      { index: 2, type: 'audio', lang: 'jpn', title: 'Japanese', codec: 'aac' },
+    ];
+    json.subtitleTracks = [
+      { index: 3, type: 'subtitle', lang: 'eng', title: 'English', codec: 'subrip' },
+    ];
+    await route.fulfill({
+      status: res.status(),
+      contentType: 'application/json',
+      body: JSON.stringify(json),
+    });
+  });
+}
+
+async function openSampleMoviePlayer(page) {
+  await page.goto('/');
   await page.locator('.library-card-title', { hasText: 'Movies' }).first().click();
-  await expect(page.locator('a[href^="/movies/"]').first()).toBeVisible({ timeout: 90000 });
+  await page.locator('#items a.card').filter({
+    has: page.locator('.t', { hasText: /Sample Movie/i }),
+  }).first().click();
+  await page.locator('a[href^="/play/movie/"]').first().click();
+  await expect(page.locator('.video-js')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('#status')).toContainText(/Direct play|Playing|Converting/, { timeout: 30000 });
 }
 
 test.describe.configure({ mode: 'serial' });
 
-test('stage fullscreen via custom control bar', async ({ page }) => {
+test('fullscreen via video.js control bar', async ({ page }) => {
   await ensureAdmin(page);
   await ensureMovieLibrary(page);
-
-  await page.goto('/');
-  if (!(await page.locator('a[href^="/movies/"]').count())) {
-    await page.locator('.library-card-title', { hasText: 'Movies' }).first().click();
-  }
-  await page.locator('a[href^="/movies/"]').first().click();
-  await page.locator('a[href^="/play/movie/"]').first().click();
-  await expect(page.locator('#stage')).toBeVisible();
-  await expect(page.locator('#controls')).toBeAttached();
-  await expect(page.locator('#fs-btn')).toBeAttached();
-
-  await page.locator('#stage').hover();
-  await page.locator('#controls').evaluate((el) => el.classList.add('is-visible'));
-  await page.locator('#fs-btn').click();
+  await openSampleMoviePlayer(page);
+  await forceControlBar(page);
+  const fsBtn = page.locator('.vjs-fullscreen-control');
+  await expect(fsBtn).toBeVisible({ timeout: 15000 });
+  await fsBtn.click();
 
   await expect
-    .poll(async () => page.evaluate(() => document.fullscreenElement && document.fullscreenElement.id), {
+    .poll(async () => page.evaluate(() => {
+      const el = document.querySelector('.video-js');
+      return !!(document.fullscreenElement || (el && el.classList.contains('vjs-fullscreen')));
+    }), {
       timeout: 10000,
     })
-    .toBe('stage');
+    .toBe(true);
+});
 
-  await expect(page.locator('#stage #controls')).toBeAttached();
-  await expect(page.locator('#stage #fs-btn')).toBeAttached();
-  await expect(page.locator('#stage #quality-sel')).toBeAttached();
+test('movie player has no episode buttons', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureMovieLibrary(page);
+  await openSampleMoviePlayer(page);
+  await forceControlBar(page);
+  await expect(page.locator('.vjs-control-bar .vjs-prev-episode')).toBeHidden();
+  await expect(page.locator('.vjs-control-bar .vjs-next-episode')).toBeHidden();
+});
+
+test('video.js control bar shows audio and subtitle menus', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureMovieLibrary(page);
+  await injectSessionTracks(page);
+  await openSampleMoviePlayer(page);
+  await forceControlBar(page);
+  await expect(page.locator('.vjs-control-bar .vjs-audio-button')).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('.vjs-control-bar .vjs-subs-caps-button')).toBeVisible({ timeout: 15000 });
+});
+
+test('episode player has prev/next in the control bar', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureTVLibrary(page);
+
+  await page.goto('/');
+  let show = page.getByRole('link', { name: /Sample Show/i }).first();
+  if (!(await show.count())) {
+    await page.locator('.library-card-title', { hasText: 'TV' }).first().click();
+    show = page.getByRole('link', { name: /Sample Show/i }).first();
+  }
+  await show.click();
+  await expect(page).toHaveURL(/\/shows\/\d+$/);
+  await page.locator('.season-card').first().click();
+  await expect(page).toHaveURL(/\/seasons\/\d+/);
+  await page.locator('a.episode-still[href^="/play/episode/"]').first().click();
+  await expect(page.locator('.video-js')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('#status')).toContainText(/Direct play|Playing|Converting|Loading/, { timeout: 30000 });
+  await forceControlBar(page);
+
+  const prev = page.locator('.vjs-control-bar .vjs-prev-episode');
+  const next = page.locator('.vjs-control-bar .vjs-next-episode');
+  await expect(prev).toBeVisible({ timeout: 15000 });
+  await expect(next).toBeVisible({ timeout: 15000 });
+  await expect(prev).toHaveClass(/vjs-disabled/);
+});
+
+test('next episode advances from the control bar', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureAnimeLibrary(page);
+
+  await page.goto('/');
+  await page.locator('.library-card-title', { hasText: 'Anime' }).first().click();
+  await expect(page.locator('#items .card').first()).toBeVisible({ timeout: 90000 });
+  await page.locator('#items a.card').filter({
+    has: page.locator('.t', { hasText: /^Dual Show/ }),
+  }).first().click();
+  await expect(page).toHaveURL(/\/shows\/\d+/);
+  await page.locator('a.season-card[href$="/seasons/1"]').click();
+  await expect(page.locator('.episode-card')).toHaveCount(2, { timeout: 30000 });
+  await page.locator('a.episode-still[href^="/play/episode/"]').first().click();
+  await expect(page).toHaveURL(/\/play\/episode\/\d+/);
+  await expect(page.locator('.video-js')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('#status')).toContainText(/Direct play|Playing|Converting|Loading/, { timeout: 30000 });
+  await forceControlBar(page);
+
+  const prev = page.locator('.vjs-control-bar .vjs-prev-episode');
+  const next = page.locator('.vjs-control-bar .vjs-next-episode');
+  await expect(prev).toBeVisible({ timeout: 15000 });
+  await expect(next).toBeVisible({ timeout: 15000 });
+  await expect(prev).toHaveClass(/vjs-disabled/);
+  await expect(next).not.toHaveClass(/vjs-disabled/);
+
+  const before = page.url();
+  await next.click();
+  await expect.poll(() => page.url(), { timeout: 20000 }).not.toBe(before);
+  await expect(page).toHaveURL(/\/play\/episode\/\d+/);
 });

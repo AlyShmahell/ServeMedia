@@ -2,21 +2,22 @@
 
 ## Prerequisites
 
-- **Podman** with `podman compose` (or `podman-compose`)
+- **Podman** with `podman-compose` (or `podman compose`)
 - Do **not** install or run Go, Node, or Playwright on the host for Medora tests
 
-Application lifecycle (optional Docker) is handled by root `./run`.  
-**All automated tests are Podman-only** via `./tests/run`.
+Application lifecycle is `./build/run` (host binary). **All automated tests are Podman-only** via `./tests/run`.
 
-## Pull toolchain images
+## Dist
+
+[`build/Containerfile`](../../build/Containerfile) is a one-shot **builder**, not a runtime. Host driver is [`./build/run`](../../build/run) (TTY menu, `podman-compose up --build`). Image helper is [`build/build`](../../build/build) (`vendor` at image build, `stage` at container start). Go stage: `docker.io/library/golang:1.26-bookworm`, `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`. The image copies the binary, `share/config` → `config/`, first-party static → `public/`, `LICENSE`, `VERSION`, unpacks Matchora v0.0.3 into `tools/matchora/`, and curls third-party JS into `vendor/`. Compose bind-mounts `build/dist` (`:z`) and `build/cache` (`:z`). At container start, **`build/dist` is wiped first** (including `data/`; `.gitkeep` kept). ffmpeg (static x264, dynamic VAAPI) is copied from `build/cache/ffmpeg` when `ffmpeg`, `ffprobe`, and `LICENSE` are present; otherwise it is compiled into the cache, then copied to dist. The container writes `/dist` to `/out` and exits. `build/cache` is never deleted. Delete `build/cache/ffmpeg` to force a recompile after bumping `ffmpeg_src_url` / `x264_src_url`.
 
 ```bash
-podman compose -f toolchains/compose.yaml --profile pull pull
+./build/run
 ```
 
-Or: `./tests/run` → **Pull toolchains**
+Choose **run**, **(re)build & run**, **(re)build & prepare**, or **(re)build & package** (arrow keys, Enter). **run** execs the current `build/dist/medora` (error if missing). Prepare verifies `tools/matchora/matchora`, fetches third-party `vendor/` if missing, runs Matchora `--prepare` (llama.cpp under `tools/matchora/vendor/llama.cpp`), then exits. Package writes two archives with root `medora/` and Medora’s `LICENSE`: slim `medora-<ver>-linux-amd64.tar.gz` (no `{exeDir}/vendor/`, slim Matchora) and `medora-<ver>-linux-amd64-bundled.tar.gz` (vendor + llama.cpp after `--prepare`, with fetched licenses).
 
-Images are declared only in [`toolchains/compose.yaml`](../../toolchains/compose.yaml) (Go, Playwright, Alpine). No app services.
+The binary defaults to `{exeDir}/config/default.yaml`. Writable data: `{exeDir}/data` (store, transcode, backups, optional `config.yaml` overlay). Media root: `MEDORA_MEDIA_PATH` or overlay `media.path` (comma-separated paths share one picker tree). ffmpeg is `{exeDir}/vendor/ffmpeg` (`MEDORA_FFMPEG` override).
 
 ## Run tests
 
@@ -26,10 +27,9 @@ Images are declared only in [`toolchains/compose.yaml`](../../toolchains/compose
 
 Menu:
 
-1. Pull toolchains  
-2. Run unit (`go test` inside `tests/unit` image)  
-3. Run smoke (Playwright against compose `medora`)  
-4. Run all  
+1. Run unit (`go test` inside `tests/unit` image)
+2. Run smoke (Playwright against compose `medora` on the dist tree)
+3. Run all
 
 Non-interactive (CI):
 
@@ -37,31 +37,35 @@ Non-interactive (CI):
 ./tests/run   # without a TTY runs unit then smoke
 ```
 
-Equivalent compose:
-
-```bash
-podman compose -f tests/compose.yaml --project-directory tests build unit
-podman compose -f tests/compose.yaml --project-directory tests run --rm unit
-
-podman compose -f tests/compose.yaml --project-directory tests up -d --build medora
-podman compose -f tests/compose.yaml --project-directory tests run --rm smoke
-```
+`./tests/run` builds `build/dist/` (same builder as `./build/run`) before smoke, then runs the existing unit and smoke compose services. It does not use Matchora’s check / live / stub-chat harness. Smoke bind-mounts `tests/fixtures/media` **read-only** so persist-beside-media cannot dirty the fixtures. Matchora’s overlay (`tests/matchora-overlay.yaml`) points OMDb/TVMaze/Jikan/TMDB at `omdb-stub` so synthetic show names stay unmatched; Film Title still hits the OMDb search fixture.
 
 ## Hard rules
 
-- Never `go test`, `npm test`, or `npx playwright` on the host for this repo’s automated test path  
-- Never use Docker as the test runner (`./tests/run` refuses Docker-only environments)  
-- App data for manual use lives in `./data/` (gitignored); test data uses a compose volume  
+- Never `go test`, `npm test`, or `npx playwright` on the host for this repo’s automated test path
+- Never use Docker as the test runner (`./tests/run` refuses Docker-only environments)
+- App data for manual use lives in `{exeDir}/data` (gitignored); test data uses a compose volume
 
 ## App quick start (manual)
 
-1. `cp medora/.env.example medora/.env` and set `MEDIA_PATH`  
-2. `./run` → Start (Podman preferred)  
-3. Open http://127.0.0.1:7676 → `/register` creates the admin user  
+1. `./build/run` → **(re)build & run** (or **run** if `build/dist/medora` already exists)
+2. Open http://127.0.0.1:7676 → `/register` creates the admin user
+3. Set `MEDORA_MEDIA_PATH` to your library root(s) if they are not already in the overlay (comma-separated)
+
+## Process stats
+
+Idle `medora` uses ~0% CPU, so default `top` (sorted by CPU) hides it. `./build/run` `exec`s `build/dist/medora`; Ctrl+C stops it. Matchora is a second process (`matchora` on `127.0.0.1:7680`).
+
+```bash
+pgrep -a medora
+top -p "$(pgrep -d, -f '/medora$')"
+ps -o pid,pcpu,rss,comm -p "$(pgrep -n -f '/medora$')"
+```
 
 ## VAAPI transcode (AMD / Intel via Mesa)
 
-Runtime image: **Alpine 3.24** (Mesa 26.x, ffmpeg 8.x). Compose mounts `/dev/dri`.
+GPU encode uses **host** Mesa/libva and `/dev/dri` (same idea as Matchora’s Vulkan note). Dist ffmpeg is built in the Podman builder from pinned FFmpeg source and stored in `build/cache/ffmpeg` so later rebuilds skip compile: **libx264 is statically linked**; **libva/libdrm stay dynamic** so the published `linux-amd64` tarball can use the host GPU. Fully static builds (for example BtbN) cannot drive host VAAPI. Software `libx264` remains the probe fallback.
+
+Runtime on the target: `libva.so.2`, `libdrm.so.2`, and Mesa DRI/VA (Fedora: `libva libdrm mesa-dri-drivers mesa-va-drivers`; Debian: `libva2 libdrm2 mesa-va-drivers`). Set `hwaccel: none` in `{exeDir}/data/config.yaml` to skip the probe.
 
 Medora probes render nodes and prefers **GPU decode + VAAPI H.264 encode**:
 
@@ -72,27 +76,4 @@ Medora probes render nodes and prefers **GPU decode + VAAPI H.264 encode**:
 | `vaapi_hybrid` | CPU decode + GPU encode |
 | `software` | Last resort — `libx264` |
 
-On Mesa 26, 10-bit anime may stay on `vaapi_full` (no CPU pixel convert). If direct GPU convert fails, logs show fallback to `vaapi_full_10bit` then `vaapi_hybrid`.
-
-**Verify on your host** (rebuild after image bump):
-
-```bash
-podman logs medora 2>&1 | rg 'transcode pipeline|10-bit direct|transcode hwaccel|ffmpeg '
-podman top medora | rg ffmpeg   # expect -hwaccel vaapi and h264_vaapi
-```
-
-Optional startup log when `/usr/share/medora/vaapi-probe.mkv` (HEVC Main 10) is present: `10-bit direct GPU convert OK`.
-
-Settings → Server shows probe status and active pipeline when transcoding.
-
-**AMD GPU monitors:** `gpu_busy_percent` often stays low during VAAPI encode; the video engine (VCN) may not appear in generic widgets. Trust logs and Settings → Server instead.
-
-**Rootless Podman (AMD):** if render nodes exist but probe fails with `stat: permission denied`, add your user to `render` and `video` groups, or uncomment `group_add` in [`medora/compose.yaml`](../../medora/compose.yaml) (see [`medora/.env.example`](../../medora/.env.example)).
-
-**Integration tests** (skip without GPU):
-
-```bash
-podman exec medora go test ./internal/transcode/ -run Vaapi -count=1
-```
-
-Set `hwaccel: none` in config to force software.
+Settings → Server shows probe status and active pipeline when transcoding. Set `hwaccel: none` in the overlay to force software.

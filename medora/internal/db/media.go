@@ -13,7 +13,6 @@ type Library struct {
 	ID        int64
 	UserID    int64
 	Name      string
-	Type      string
 	Path      string
 	CreatedAt string
 	UpdatedAt string
@@ -33,10 +32,13 @@ type MediaItem struct {
 	BackdropPath   sql.NullString
 	NFOPath        sql.NullString
 	Rating         sql.NullFloat64
-	MetaProvider   sql.NullString
-	MetaID         sql.NullString
-	Mtime          int64
-	DateAdded      string
+	MetaProvider      sql.NullString
+	MetaID            sql.NullString
+	MatchoraSessionID sql.NullString
+	MatchoraJobID     sql.NullString
+	MatchStatus       sql.NullString
+	Mtime             int64
+	DateAdded         string
 }
 
 type Season struct {
@@ -91,21 +93,21 @@ type ScanJob struct {
 	FinishedAt  sql.NullString
 }
 
-func (d *DB) CreateLibrary(ctx context.Context, userID int64, name, typ, path string) (*Library, error) {
+func (d *DB) CreateLibrary(ctx context.Context, userID int64, name, path string) (*Library, error) {
 	t := now()
 	res, err := d.SQL.ExecContext(ctx,
-		`INSERT INTO libraries(user_id, name, type, path, created_at, updated_at) VALUES (?,?,?,?,?,?)`,
-		userID, name, typ, path, t, t)
+		`INSERT INTO libraries(user_id, name, path, created_at, updated_at) VALUES (?,?,?,?,?)`,
+		userID, name, path, t, t)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
-	return &Library{ID: id, UserID: userID, Name: name, Type: typ, Path: path, CreatedAt: t, UpdatedAt: t}, nil
+	return &Library{ID: id, UserID: userID, Name: name, Path: path, CreatedAt: t, UpdatedAt: t}, nil
 }
 
 func (d *DB) ListLibraries(ctx context.Context, userID int64) ([]Library, error) {
 	rows, err := d.SQL.QueryContext(ctx,
-		`SELECT id, user_id, name, type, path, created_at, updated_at FROM libraries WHERE user_id = ? ORDER BY name`, userID)
+		`SELECT id, user_id, name, path, created_at, updated_at FROM libraries WHERE user_id = ? ORDER BY name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +115,7 @@ func (d *DB) ListLibraries(ctx context.Context, userID int64) ([]Library, error)
 	var out []Library
 	for rows.Next() {
 		var l Library
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Name, &l.Type, &l.Path, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Name, &l.Path, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -123,7 +125,7 @@ func (d *DB) ListLibraries(ctx context.Context, userID int64) ([]Library, error)
 
 func (d *DB) ListAllLibraries(ctx context.Context) ([]Library, error) {
 	rows, err := d.SQL.QueryContext(ctx,
-		`SELECT id, user_id, name, type, path, created_at, updated_at FROM libraries ORDER BY user_id, name`)
+		`SELECT id, user_id, name, path, created_at, updated_at FROM libraries ORDER BY user_id, name`)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +133,7 @@ func (d *DB) ListAllLibraries(ctx context.Context) ([]Library, error) {
 	var out []Library
 	for rows.Next() {
 		var l Library
-		if err := rows.Scan(&l.ID, &l.UserID, &l.Name, &l.Type, &l.Path, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		if err := rows.Scan(&l.ID, &l.UserID, &l.Name, &l.Path, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -142,8 +144,8 @@ func (d *DB) ListAllLibraries(ctx context.Context) ([]Library, error) {
 func (d *DB) GetLibrary(ctx context.Context, userID, id int64) (*Library, error) {
 	l := &Library{}
 	err := d.SQL.QueryRowContext(ctx,
-		`SELECT id, user_id, name, type, path, created_at, updated_at FROM libraries WHERE id = ? AND user_id = ?`, id, userID).
-		Scan(&l.ID, &l.UserID, &l.Name, &l.Type, &l.Path, &l.CreatedAt, &l.UpdatedAt)
+		`SELECT id, user_id, name, path, created_at, updated_at FROM libraries WHERE id = ? AND user_id = ?`, id, userID).
+		Scan(&l.ID, &l.UserID, &l.Name, &l.Path, &l.CreatedAt, &l.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -385,49 +387,25 @@ func (d *DB) GetMediaItem(ctx context.Context, id int64) (*MediaItem, error) {
 	it := &MediaItem{}
 	err := d.SQL.QueryRowContext(ctx, `
 		SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, poster_path, backdrop_path, nfo_path,
-			meta_provider, meta_id, mtime, date_added
+			meta_provider, meta_id, matchora_session_id, matchora_job_id, match_status, mtime, date_added
 		FROM media_items WHERE id = ?`, id).
 		Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
-			&it.MetaProvider, &it.MetaID, &it.Mtime, &it.DateAdded)
+			&it.MetaProvider, &it.MetaID, &it.MatchoraSessionID, &it.MatchoraJobID, &it.MatchStatus, &it.Mtime, &it.DateAdded)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return it, err
 }
 
-// LibraryTypeForMediaItem returns libraries.type for the item's library (movies|tv|anime).
-func (d *DB) LibraryTypeForMediaItem(ctx context.Context, mediaItemID int64) (string, error) {
-	var typ string
-	err := d.SQL.QueryRowContext(ctx, `
-		SELECT l.type FROM libraries l
-		JOIN media_items m ON m.library_id = l.id
-		WHERE m.id = ?`, mediaItemID).Scan(&typ)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	return typ, err
+func (d *DB) SetMatchoraMatch(ctx context.Context, id int64, session, jobID, status string) error {
+	_, err := d.SQL.ExecContext(ctx, `
+		UPDATE media_items SET matchora_session_id=NULLIF(?,''), matchora_job_id=NULLIF(?,''), match_status=NULLIF(?, '') WHERE id=?`,
+		session, jobID, status, id)
+	return err
 }
 
-// ListTakenMetaIDs returns meta_id values already used in the library for provider,
-// excluding excludeItemID (the item being enriched).
-func (d *DB) ListTakenMetaIDs(ctx context.Context, libraryID int64, provider string, excludeItemID int64) ([]string, error) {
-	rows, err := d.SQL.QueryContext(ctx, `
-		SELECT meta_id FROM media_items
-		WHERE library_id = ? AND meta_provider = ? AND meta_id IS NOT NULL AND meta_id != ''
-			AND id != ?`, libraryID, provider, excludeItemID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+func (d *DB) ClearMatchoraMatch(ctx context.Context, id int64) error {
+	return d.SetMatchoraMatch(ctx, id, "", "", "")
 }
 
 func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string, error) {
@@ -446,7 +424,7 @@ func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string,
 		SELECT poster_path FROM media_items
 		WHERE library_id = ? AND poster_path IS NOT NULL AND poster_path != ''
 		  AND rating IS NOT NULL AND rating > 0
-		ORDER BY rating DESC, date_added DESC LIMIT ?`, libraryID, maxStrips)
+		ORDER BY rating DESC, date_added DESC, id DESC LIMIT ?`, libraryID, maxStrips)
 	if err != nil {
 		return nil, err
 	}
@@ -469,14 +447,10 @@ func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string,
 		return out, nil
 	}
 
-	order := `date_added DESC`
-	if total >= maxStrips {
-		order = `RANDOM()`
-	}
 	fillRows, err := d.SQL.QueryContext(ctx, `
 		SELECT poster_path FROM media_items
 		WHERE library_id = ? AND poster_path IS NOT NULL AND poster_path != ''
-		ORDER BY `+order, libraryID)
+		ORDER BY date_added DESC, id DESC`, libraryID)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +481,7 @@ func (d *DB) ListMediaItems(ctx context.Context, libraryID int64, sort, q string
 		order = `year DESC, title COLLATE NOCASE`
 	}
 	query := `SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, poster_path, backdrop_path, nfo_path,
-			meta_provider, meta_id, mtime, date_added
+			meta_provider, meta_id, matchora_session_id, matchora_job_id, match_status, mtime, date_added
 		FROM media_items WHERE library_id = ?`
 	args := []any{libraryID}
 	if q != "" {
@@ -524,7 +498,7 @@ func (d *DB) ListMediaItems(ctx context.Context, libraryID int64, sort, q string
 	for rows.Next() {
 		var it MediaItem
 		if err := rows.Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
-			&it.MetaProvider, &it.MetaID, &it.Mtime, &it.DateAdded); err != nil {
+			&it.MetaProvider, &it.MetaID, &it.MatchoraSessionID, &it.MatchoraJobID, &it.MatchStatus, &it.Mtime, &it.DateAdded); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -535,7 +509,7 @@ func (d *DB) ListMediaItems(ctx context.Context, libraryID int64, sort, q string
 func (d *DB) RecentlyAdded(ctx context.Context, userID int64, limit int) ([]MediaItem, error) {
 	rows, err := d.SQL.QueryContext(ctx, `
 		SELECT m.id, m.library_id, m.kind, m.title, COALESCE(m.sort_title,''), m.year, m.path, m.runtime_seconds, m.plot, m.poster_path, m.backdrop_path, m.nfo_path,
-			m.meta_provider, m.meta_id, m.mtime, m.date_added
+			m.meta_provider, m.meta_id, m.matchora_session_id, m.matchora_job_id, m.match_status, m.mtime, m.date_added
 		FROM media_items m
 		JOIN libraries l ON l.id = m.library_id
 		WHERE l.user_id = ?
@@ -548,7 +522,7 @@ func (d *DB) RecentlyAdded(ctx context.Context, userID int64, limit int) ([]Medi
 	for rows.Next() {
 		var it MediaItem
 		if err := rows.Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
-			&it.MetaProvider, &it.MetaID, &it.Mtime, &it.DateAdded); err != nil {
+			&it.MetaProvider, &it.MetaID, &it.MatchoraSessionID, &it.MatchoraJobID, &it.MatchStatus, &it.Mtime, &it.DateAdded); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

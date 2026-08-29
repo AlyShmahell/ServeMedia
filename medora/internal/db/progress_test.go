@@ -19,7 +19,7 @@ func TestWatchProgressPctHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lib, err := d.CreateLibrary(ctx, u.ID, "Movies", "movies", "/media/m")
+	lib, err := d.CreateLibrary(ctx, u.ID, "Movies", "/media/m")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestWatchProgressPctHelpers(t *testing.T) {
 		t.Fatalf("movie pct: %#v", m)
 	}
 
-	tv, err := d.CreateLibrary(ctx, u.ID, "TV", "tv", "/media/tv")
+	tv, err := d.CreateLibrary(ctx, u.ID, "TV", "/media/tv")
 	if err != nil {
 		t.Fatal(err)
 	}

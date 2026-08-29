@@ -1,4 +1,9 @@
 {{define "partials/card_actions.html"}}
+{{$needPick := or (eq .MatchStatus "manual") (eq .MatchStatus "unmatched")}}
+{{if $needPick}}
+<button type="button" class="match-bang" title="Choose match" aria-label="Choose match"
+  onclick="event.preventDefault(); event.stopPropagation(); openMatchModal({{.ID}})">!</button>
+{{end}}
 <div class="card-actions{{if .Static}} is-static{{end}}" onclick="event.preventDefault(); event.stopPropagation();">
   <button type="button" class="card-action card-action-scan" title="Scan"
     onclick="openEntryScanModal({{.ID}})">

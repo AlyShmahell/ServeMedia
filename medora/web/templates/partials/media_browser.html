@@ -3,7 +3,7 @@
 <div class="media-browser" id="media-browser" data-path="{{.Path}}">
   {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
   <div class="media-browser-bar row">
-    <code class="media-browser-path">{{.Path}}</code>
+    <code class="media-browser-path">{{if .Path}}{{.Path}}{{else}}/{{end}}</code>
     {{if .CanGoUp}}
     <button type="button" class="secondary"
       hx-get="/hx/media/browse?path={{queryEscape .Parent}}"
@@ -11,12 +11,11 @@
     {{end}}
   </div>
   <ul class="media-browser-list">
-    {{$base := .Path}}
     {{range .Dirs}}
     <li>
       <button type="button" class="media-browser-dir"
-        hx-get="/hx/media/browse?path={{queryEscape (joinPath $base .)}}"
-        hx-target="#media-browser" hx-swap="outerHTML">{{.}}</button>
+        hx-get="/hx/media/browse?path={{queryEscape .Path}}"
+        hx-target="#media-browser" hx-swap="outerHTML">{{.Name}}</button>
     </li>
     {{else}}
     <li class="muted">No subfolders</li>
@@ -38,7 +37,7 @@
       if (nameInput) {
         var parts = path.replace(/\/+$/, '').split('/');
         var base = parts[parts.length - 1] || '';
-        if (base) nameInput.value = base;
+        if (base) nameInput.value = base.charAt(0).toUpperCase() + base.slice(1);
       }
     }
   })();

@@ -10,16 +10,26 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/alyshmahell/medora/internal/db"
 	"github.com/alyshmahell/medora/internal/metadata"
 )
 
 type Scanner struct {
-	DB        *db.DB
-	StorePath string
-	MediaRoot string
-	Webhooks  WebhookNotifier
+	DB         *db.DB
+	StorePath  string
+	MediaRoot  string
+	Webhooks   WebhookNotifier
+	mixedWalks atomic.Int32
+}
+
+// MixedWalks is how many times the local disk walker ran (tests).
+func (s *Scanner) MixedWalks() int {
+	if s == nil {
+		return 0
+	}
+	return int(s.mixedWalks.Load())
 }
 
 type WebhookNotifier interface {
@@ -33,25 +43,9 @@ func (s *Scanner) ScanLibrary(ctx context.Context, lib *db.Library, jobID int64)
 	s.scanLibrary(ctx, lib, jobID, true)
 }
 
-// ScanLibraryKeepOpen walks the library but leaves the job running on success
-// so a follow-up enrich step can keep updating the same scan job.
-func (s *Scanner) ScanLibraryKeepOpen(ctx context.Context, lib *db.Library, jobID int64) {
-	s.scanLibrary(ctx, lib, jobID, false)
-}
-
 func (s *Scanner) scanLibrary(ctx context.Context, lib *db.Library, jobID int64, markDone bool) {
 	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 1, "Scanning library…")
-	var err error
-	switch lib.Type {
-	case "movies":
-		err = s.scanMovies(ctx, lib, jobID)
-	case "tv":
-		err = s.scanTV(ctx, lib, jobID)
-	case "anime":
-		err = s.scanAnime(ctx, lib, jobID)
-	default:
-		err = fmt.Errorf("unknown library type %q", lib.Type)
-	}
+	err := s.scanMixed(ctx, lib, jobID)
 	if err != nil {
 		log.Printf("scan library %d: %v", lib.ID, err)
 		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
@@ -86,10 +80,7 @@ func (s *Scanner) RescanMediaItem(ctx context.Context, lib *db.Library, item *db
 		}
 		paths := collectShowVideos(showPath)
 		_ = s.DB.UpdateScanJob(ctx, jobID, "running", 50, fmt.Sprintf("Scanning %d episodes", len(paths)))
-		if lib.Type == "anime" {
-			return s.ingestAnimeEpisodes(ctx, showID, showPath, paths)
-		}
-		return s.ingestTVEpisodes(ctx, showID, showPath, paths)
+		return s.ingestAnimeEpisodes(ctx, showID, showPath, paths)
 	default:
 		return fmt.Errorf("unsupported kind %q", item.Kind)
 	}
@@ -104,23 +95,6 @@ func (s *Scanner) progress(ctx context.Context, jobID int64, i, n int, msg strin
 		}
 	}
 	_ = s.DB.UpdateScanJob(ctx, jobID, "running", pct, msg)
-}
-
-func (s *Scanner) scanMovies(ctx context.Context, lib *db.Library, jobID int64) error {
-	root := lib.Path
-	if !filepath.IsAbs(root) {
-		root = filepath.Join(s.MediaRoot, root)
-	}
-	files := collectMovieFiles(root)
-	n := len(files)
-	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 5, fmt.Sprintf("Found %d files", n))
-	for i, path := range files {
-		s.progress(ctx, jobID, i, n, fmt.Sprintf("Scanning %d/%d", i+1, n))
-		if err := s.ingestMovie(ctx, lib, path); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // collectMovieFiles walks root for primary movie videos: skips extras, and in
@@ -248,99 +222,8 @@ func (s *Scanner) ingestMovie(ctx context.Context, lib *db.Library, path string)
 	return err
 }
 
-func (s *Scanner) scanTV(ctx context.Context, lib *db.Library, jobID int64) error {
-	root := lib.Path
-	if !filepath.IsAbs(root) {
-		root = filepath.Join(s.MediaRoot, root)
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return err
-	}
-	type epFile struct {
-		showDir string
-		path    string
-	}
-	var files []epFile
-	var showDirs []string
-	var movieFiles []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		top := filepath.Join(root, e.Name())
-		if isFilmPack(top) {
-			movieFiles = append(movieFiles, filmPackMovies(top)...)
-			continue
-		}
-		if isFranchisePack(top) {
-			for _, showPath := range expandShowRoots(top) {
-				showDirs = append(showDirs, showPath)
-				for _, p := range collectShowVideos(showPath) {
-					files = append(files, epFile{showDir: showPath, path: p})
-				}
-			}
-			// Root videos beside nested shows (e.g. 1994 film) become movies.
-			ents, _ := os.ReadDir(top)
-			for _, fe := range ents {
-				if fe.IsDir() {
-					continue
-				}
-				fp := filepath.Join(top, fe.Name())
-				if metadata.IsVideo(fe.Name()) && !metadata.IsMovieExtra(fp) {
-					movieFiles = append(movieFiles, fp)
-				}
-			}
-			continue
-		}
-		for _, showPath := range expandShowRoots(top) {
-			showDirs = append(showDirs, showPath)
-			for _, p := range collectShowVideos(showPath) {
-				files = append(files, epFile{showDir: showPath, path: p})
-			}
-		}
-	}
-	n := len(showDirs) + len(files) + len(movieFiles)
-	done := 0
-	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 5, fmt.Sprintf("Found %d shows, %d episodes", len(showDirs), len(files)))
-
-	showIDs := map[string]int64{}
-	for _, showPath := range showDirs {
-		s.progress(ctx, jobID, done, n, fmt.Sprintf("Indexing shows %d/%d", done+1, len(showDirs)))
-		id, err := s.ingestShow(ctx, lib, showPath)
-		if err != nil {
-			return err
-		}
-		showIDs[showPath] = id
-		done++
-	}
-	byShow := map[string][]string{}
-	for _, f := range files {
-		byShow[f.showDir] = append(byShow[f.showDir], f.path)
-	}
-	epDone := 0
-	for showPath, paths := range byShow {
-		showID := showIDs[showPath]
-		if showID == 0 {
-			continue
-		}
-		s.progress(ctx, jobID, done+epDone, n, fmt.Sprintf("Scanning episodes %d/%d", epDone+1, len(files)))
-		if err := s.ingestTVEpisodes(ctx, showID, showPath, paths); err != nil {
-			return err
-		}
-		epDone += len(paths)
-	}
-	done += len(files)
-	for i, path := range movieFiles {
-		s.progress(ctx, jobID, done+i, n, fmt.Sprintf("Film %d/%d", i+1, len(movieFiles)))
-		if err := s.ingestMovie(ctx, lib, path); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Scanner) scanAnime(ctx context.Context, lib *db.Library, jobID int64) error {
+func (s *Scanner) scanMixed(ctx context.Context, lib *db.Library, jobID int64) error {
+	s.mixedWalks.Add(1)
 	root := lib.Path
 	if !filepath.IsAbs(root) {
 		root = filepath.Join(s.MediaRoot, root)
@@ -430,7 +313,7 @@ func (s *Scanner) scanAnime(ctx context.Context, lib *db.Library, jobID int64) e
 	if total == 0 {
 		total = n
 	}
-	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 5, fmt.Sprintf("Anime: %d shows, %d films", len(showDirs), len(movieFiles)))
+	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 5, fmt.Sprintf("Found %d shows, %d films", len(showDirs), len(movieFiles)))
 	done := 0
 	showIDs := map[string]int64{}
 	for _, showPath := range showDirs {
@@ -466,6 +349,24 @@ func (s *Scanner) scanAnime(ctx context.Context, lib *db.Library, jobID int64) e
 		}
 	}
 	return nil
+}
+
+// LooksLikeShowDir reports whether dir should be ingested as a show (same rules
+// as the local mixed walker). Single-video film folders are not shows.
+func LooksLikeShowDir(dir string) bool {
+	return looksLikeShowDir(dir)
+}
+
+// CollectShowVideos lists all videos under a show (including Movies/ packs and
+// root films). Those become season 0 episodes at ingest — not library movies.
+func CollectShowVideos(showPath string) []string {
+	return collectShowVideos(showPath)
+}
+
+// IngestShowEpisodes numbers and upserts episodes under an already-created show
+// row. Walks only showPath (not the whole library).
+func (s *Scanner) IngestShowEpisodes(ctx context.Context, showID int64, showPath string) error {
+	return s.ingestAnimeEpisodes(ctx, showID, showPath, collectShowVideos(showPath))
 }
 
 // collectShowVideos lists all videos under a show (including Movies/ packs and
@@ -696,33 +597,7 @@ func isSingleVideoFilmDir(dir string) bool {
 	return videoCount == 1 && !hasSeasonChild && !hasSxxEyy
 }
 
-// ingestTVEpisodes assigns season/episode for TV show trees.
-// ParseEpisode → loose → single-file S01E01; if nothing ingested, sequential fallback.
-func (s *Scanner) ingestTVEpisodes(ctx context.Context, showID int64, showPath string, paths []string) error {
-	sort.Strings(paths)
-	ingested := 0
-	seen := map[string]bool{}
-	for _, path := range paths {
-		season, episode, ok := resolveTVEpisode(showPath, path)
-		if !ok {
-			continue
-		}
-		if err := s.ingestEpisodeAt(ctx, showID, path, season, episode); err != nil {
-			return err
-		}
-		seen[path] = true
-		ingested++
-	}
-	if err := s.ingestShowFilmsAsSeason0(ctx, showID, showPath, paths, seen); err != nil {
-		return err
-	}
-	if ingested > 0 || len(seen) > 0 {
-		return nil
-	}
-	return s.ingestSequentialEpisodes(ctx, showID, showPath, paths)
-}
-
-// ingestAnimeEpisodes assigns season/episode for anime trees.
+// ingestAnimeEpisodes assigns season/episode for show trees.
 // Seasons come from folder layout (Season N / OVA / irregular child dirs).
 // Per season bucket: ingest ParseEpisode hits, then ResolveEpisodeLoose for
 // remaining files (mixed SxxEyy + dash-numbered packs).
@@ -874,17 +749,23 @@ func (s *Scanner) ingestShow(ctx context.Context, lib *db.Library, showPath stri
 	if showTitle == "" {
 		showTitle = filepath.Base(showPath)
 	}
+	pathTitle := showTitle
 	year := 0
 	plot := ""
 	rating := 0.0
 	if nfo := filepath.Join(showPath, "tvshow.nfo"); fileExists(nfo) {
 		if n, err := metadata.ReadTVShowNFO(nfo); err == nil {
-			if n.Title != "" {
-				showTitle = n.Title
+			if n.Title != "" && !metadata.MovieNFOMatchesPath(n.Title, pathTitle) {
+				// Stray tvshow.nfo (title does not match the folder). Keep the
+				// path-derived name, same as movies with a mismatched movie.nfo.
+			} else {
+				if n.Title != "" {
+					showTitle = n.Title
+				}
+				year = n.Year
+				plot = n.Plot
+				rating = metadata.NumericRating(n.Rating, n.Ratings)
 			}
-			year = n.Year
-			plot = n.Plot
-			rating = metadata.NumericRating(n.Rating, n.Ratings)
 		}
 	}
 	cacheShow := filepath.Join(s.StorePath, "metadata", "tv", sanitize(showTitle))

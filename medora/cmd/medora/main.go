@@ -2,44 +2,76 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/alyshmahell/medora/internal/backup"
 	"github.com/alyshmahell/medora/internal/config"
 	"github.com/alyshmahell/medora/internal/db"
+	"github.com/alyshmahell/medora/internal/ffbin"
+	"github.com/alyshmahell/medora/internal/matchora"
+	"github.com/alyshmahell/medora/internal/prepare"
 	"github.com/alyshmahell/medora/internal/scanner"
 	"github.com/alyshmahell/medora/internal/server"
 	"github.com/alyshmahell/medora/internal/transcode"
-	"github.com/alyshmahell/medora/internal/plugins"
 	"github.com/alyshmahell/medora/internal/version"
 	"github.com/alyshmahell/medora/web"
 )
 
 func main() {
-	storePath := envOr("MEDORA_STORE_PATH", "/data/store")
-	cfgPath := filepath.Join(storePath, "config.yaml")
-	cfg, err := config.Load(cfgPath)
+	exeDir, err := config.ExeDir()
 	if err != nil {
 		log.Fatal(err)
 	}
-	if cfg.Store.Path == "" {
-		cfg.Store.Path = storePath
+	configPath := flag.String("config", "", "path to default.yaml")
+	doPrepare := flag.Bool("prepare", false, "fetch third-party vendor if missing, install matchora llama.cpp, then exit")
+	flag.Parse()
+	path := *configPath
+	if path == "" {
+		path = filepath.Join(exeDir, "config", "default.yaml")
 	}
-	if cfg.EnsureIntegrationDefaults() {
-		_ = cfg.Save(cfgPath)
+	cfg, err := config.Load(path)
+	if err != nil {
+		log.Fatal(err)
 	}
-	version.Init(cfg.Legal.Path)
+	ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
+	version.Init(cfg.ExeDir)
+
+	matchoraData := filepath.Join(cfg.ExeDir, "data", "matchora")
+	if *doPrepare {
+		if _, err := os.Stat(cfg.MatchoraBin()); err != nil {
+			log.Fatal(err)
+		}
+		if err := prepare.ThirdParty(cfg); err != nil {
+			log.Fatal(err)
+		}
+		ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
+		if _, err := matchora.Start(cfg.ExeDir, matchoraData, cfg.Matchora.Addr, matchora.CommonRoot(cfg.MediaRoots()), true); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+
 	_ = os.MkdirAll(cfg.Store.Path, 0o755)
 	_ = os.MkdirAll(filepath.Join(cfg.Store.Path, "metadata", "movies"), 0o755)
 	_ = os.MkdirAll(filepath.Join(cfg.Store.Path, "metadata", "tv"), 0o755)
 	_ = os.MkdirAll(cfg.Transcode.Path, 0o755)
 	_ = os.MkdirAll(cfg.Backup.Dir, 0o755)
+
+	proc, err := matchora.Start(cfg.ExeDir, matchoraData, cfg.Matchora.Addr, matchora.CommonRoot(cfg.MediaRoots()), false)
+	if err != nil {
+		log.Printf("matchora: %v (metadata may be unavailable)", err)
+	}
 
 	var database *db.DB
 	openDB := func() error {
@@ -52,23 +84,25 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sc := &scanner.Scanner{DB: database, StorePath: cfg.Store.Path, MediaRoot: cfg.Media.Path}
+	sc := &scanner.Scanner{DB: database, StorePath: cfg.Store.Path, MediaRoot: cfg.PrimaryMediaRoot()}
 	tr := transcode.NewManager(cfg)
 	bak := &backup.Service{Cfg: &cfg, DB: database, StorePath: cfg.Store.Path, DataRoot: filepath.Dir(cfg.Store.Path)}
+	meta := &matchora.Client{Base: "http://" + cfg.Matchora.Addr}
 
 	var srv *server.Server
-	pluginMgr := plugins.NewManager(&cfg)
 	reopen := func() error {
-		cfg2, err := config.Load(filepath.Join(cfg.Store.Path, "config.yaml"))
+		cfg2, err := config.Load(path)
 		if err != nil {
 			return err
 		}
 		cfg = cfg2
+		ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
 		if err := openDB(); err != nil {
 			return err
 		}
 		sc.DB = database
 		sc.StorePath = cfg.Store.Path
+		sc.MediaRoot = cfg.PrimaryMediaRoot()
 		bak.DB = database
 		bak.Cfg = &cfg
 		bak.StorePath = cfg.Store.Path
@@ -77,14 +111,10 @@ func main() {
 			srv.Cfg = &cfg
 			srv.Backup = bak
 			srv.Scanner = sc
+			srv.Meta = meta
 			srv.RefreshFetchConfig()
 			if srv.Webhooks != nil {
 				srv.Webhooks.Refresh(&cfg)
-			}
-			if pluginMgr != nil {
-				pluginMgr.Refresh(&cfg)
-				_ = pluginMgr.Reload("providers")
-				srv.PluginMgr = pluginMgr
 			}
 			sc.Webhooks = srv
 		}
@@ -92,11 +122,7 @@ func main() {
 		return nil
 	}
 
-	if err := pluginMgr.Start(); err != nil {
-		log.Printf("plugins: %v (metadata may be unavailable)", err)
-	}
-
-	srv, err = server.New(&cfg, database, bak, sc, tr, web.FS, pluginMgr, reopen)
+	srv, err = server.New(&cfg, database, bak, sc, tr, web.FS, meta, reopen)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -123,12 +149,22 @@ func main() {
 	}
 
 	httpSrv := &http.Server{Addr: cfg.HTTP.Addr, Handler: srv.Router()}
+	uiURL := publicURL(cfg.HTTP.Addr)
+	ln, err := net.Listen("tcp", cfg.HTTP.Addr)
+	if err != nil {
+		if isAddrInUse(err) {
+			openBrowser(uiURL)
+			return
+		}
+		log.Fatal(err)
+	}
 	go func() {
 		log.Printf("medora listening on %s", cfg.HTTP.Addr)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
+	openBrowser(uiURL)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -136,15 +172,48 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
-	if pluginMgr != nil {
-		pluginMgr.Stop()
+	if proc != nil {
+		_ = proc.Stop()
 	}
 	_ = database.Close()
 }
 
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
+func publicURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://127.0.0.1:7676"
 	}
-	return def
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+func shouldOpenBrowser() bool {
+	if strings.TrimSpace(os.Getenv("MEDORA_NO_BROWSER")) != "" {
+		return false
+	}
+	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""
+}
+
+func openBrowser(rawURL string) {
+	if !shouldOpenBrowser() {
+		return
+	}
+	if err := exec.Command("xdg-open", rawURL).Start(); err == nil {
+		return
+	}
+	_ = exec.Command("gio", "open", rawURL).Start()
+}
+
+func isAddrInUse(err error) bool {
+	var op *net.OpError
+	if errors.As(err, &op) {
+		err = op.Err
+	}
+	var sys *os.SyscallError
+	if errors.As(err, &sys) {
+		err = sys.Err
+	}
+	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(strings.ToLower(err.Error()), "address already in use")
 }

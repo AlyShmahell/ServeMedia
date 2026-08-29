@@ -1,0 +1,8 @@
+services:
+  dist:
+    build:
+      context: ..
+      dockerfile: build/Containerfile
+    volumes:
+      - ./dist:/out:z
+      - ./cache:/cache:z

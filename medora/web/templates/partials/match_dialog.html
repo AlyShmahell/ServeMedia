@@ -1,0 +1,37 @@
+{{define "partials/match_dialog.html"}}
+<dialog id="match-pick-dialog" class="modal match-dialog">
+  <form method="dialog" class="modal-form match-dialog-form">
+    <header class="modal-head">
+      <h2>Choose match</h2>
+      <button type="button" class="btn-icon secondary" onclick="document.getElementById('match-pick-dialog').close()" aria-label="Close">×</button>
+    </header>
+    <div class="match-entry">
+      <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
+      <div>
+        <div class="match-entry-title">{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</div>
+        <p class="muted match-entry-path"><code>{{.Item.Path}}</code></p>
+      </div>
+    </div>
+    {{if .Error}}
+    <p class="muted">{{.Error}}</p>
+    {{else if not .Candidates}}
+    <p class="muted">No candidates. Rescan this title to try again.</p>
+    {{else}}
+    <div class="match-cands">
+      {{range .Candidates}}
+      <button type="button" class="cand" data-provider="{{.Provider}}" data-id="{{.ID}}"
+        onclick="pickMatchCandidate({{$.Item.ID}}, this.dataset.provider, this.dataset.id)">
+        {{if .Poster}}<img class="poster" src="{{.Poster}}" alt="">{{end}}
+        <div class="cand-body">
+          <div class="cand-id">{{.Provider}}:{{.ID}}</div>
+          <div class="cand-title">{{.Title}}{{if .Year}} ({{.Year}}){{end}}</div>
+          <div class="cand-score">score: {{printf "%.3f" .Score}}</div>
+          {{if .Synopsis}}<div class="cand-syn">{{.Synopsis}}</div>{{end}}
+        </div>
+      </button>
+      {{end}}
+    </div>
+    {{end}}
+  </form>
+</dialog>
+{{end}}

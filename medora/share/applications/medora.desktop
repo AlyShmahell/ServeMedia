@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Medora
+Comment=Self-hosted media library
+Exec=medora
+Icon=medora
+Terminal=false
+Type=Application
+Categories=AudioVideo;

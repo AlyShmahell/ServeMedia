@@ -2,58 +2,7 @@ package db
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 )
-
-type AsyncJob struct {
-	ID          int64
-	Kind        string
-	Scope       string
-	TargetID    int64
-	PayloadJSON sql.NullString
-	Status      string
-	ProgressPct int
-	Message     sql.NullString
-	StartedAt   sql.NullString
-	FinishedAt  sql.NullString
-}
-
-func (d *DB) CreateAsyncJob(ctx context.Context, kind, scope string, targetID int64, payloadJSON string) (int64, error) {
-	res, err := d.SQL.ExecContext(ctx, `
-		INSERT INTO async_jobs(kind, scope, target_id, payload_json, status, progress_pct, message, started_at)
-		VALUES (?,?,?,?,'running',0,'Starting',?)`,
-		kind, scope, targetID, nullStr(payloadJSON), now())
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
-func (d *DB) UpdateAsyncJob(ctx context.Context, id int64, status string, pct int, msg string) error {
-	if status == "done" || status == "error" {
-		_, err := d.SQL.ExecContext(ctx,
-			`UPDATE async_jobs SET status=?, progress_pct=?, message=?, finished_at=? WHERE id=?`,
-			status, pct, msg, now(), id)
-		return err
-	}
-	_, err := d.SQL.ExecContext(ctx,
-		`UPDATE async_jobs SET status=?, progress_pct=?, message=? WHERE id=?`,
-		status, pct, msg, id)
-	return err
-}
-
-func (d *DB) GetAsyncJob(ctx context.Context, id int64) (*AsyncJob, error) {
-	j := &AsyncJob{}
-	err := d.SQL.QueryRowContext(ctx, `
-		SELECT id, kind, scope, target_id, payload_json, status, progress_pct, message, started_at, finished_at
-		FROM async_jobs WHERE id=?`, id).
-		Scan(&j.ID, &j.Kind, &j.Scope, &j.TargetID, &j.PayloadJSON, &j.Status, &j.ProgressPct, &j.Message, &j.StartedAt, &j.FinishedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	return j, err
-}
 
 func (d *DB) ListEpisodesByShow(ctx context.Context, showID int64) ([]Episode, error) {
 	rows, err := d.SQL.QueryContext(ctx, `
@@ -75,16 +24,6 @@ func (d *DB) ListEpisodesByShow(ctx context.Context, showID int64) ([]Episode, e
 		out = append(out, e)
 	}
 	return out, rows.Err()
-}
-
-func (d *DB) GetSeason(ctx context.Context, id int64) (*Season, error) {
-	s := &Season{}
-	err := d.SQL.QueryRowContext(ctx, `SELECT id, show_id, season_number, title, poster_path, plot FROM seasons WHERE id=?`, id).
-		Scan(&s.ID, &s.ShowID, &s.SeasonNumber, &s.Title, &s.PosterPath, &s.Plot)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	return s, err
 }
 
 func (d *DB) UpdateMediaItemMeta(ctx context.Context, id int64, title string, year int, plot, poster, backdrop, nfo string, rating float64, metaProvider, metaID string) error {
@@ -129,14 +68,4 @@ func (d *DB) UpdateEpisodeMeta(ctx context.Context, id int64, title, plot, still
 		WHERE id=?`,
 		title, plot, still, nfo, metaProvider, metaID, id)
 	return err
-}
-
-func (d *DB) UserOwnsSeason(ctx context.Context, userID, seasonID int64) (bool, error) {
-	var n int
-	err := d.SQL.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM seasons s
-		JOIN media_items m ON m.id = s.show_id
-		JOIN libraries l ON l.id = m.library_id
-		WHERE s.id = ? AND l.user_id = ?`, seasonID, userID).Scan(&n)
-	return n > 0, err
 }

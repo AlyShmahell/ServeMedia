@@ -21,7 +21,7 @@ func TestInitReadsVersionFile(t *testing.T) {
 
 func TestInitMissingFile(t *testing.T) {
 	version.Init(t.TempDir())
-	if version.Version != "" {
-		t.Fatalf("Version = %q, want empty", version.Version)
+	if version.Version != "0.0.1" {
+		t.Fatalf("Version = %q, want 0.0.1 fallback", version.Version)
 	}
 }

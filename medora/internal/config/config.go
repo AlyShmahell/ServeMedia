@@ -1,10 +1,10 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,19 +34,26 @@ type WebhooksConfig struct {
 	Destinations []WebhookDestination `yaml:"destinations"`
 }
 
-type PluginInstalledConfig struct {
-	Enabled bool           `yaml:"enabled"`
-	Config  map[string]any `yaml:"config"`
-}
-
-type PluginsConfig struct {
-	Enabled   bool                             `yaml:"enabled"`
-	Installed map[string]PluginInstalledConfig `yaml:"installed"`
-}
-
 type IntegrationsConfig struct {
 	Webhooks WebhooksConfig `yaml:"webhooks"`
-	Plugins  PluginsConfig  `yaml:"plugins"`
+}
+
+type MatchoraConfig struct {
+	Addr string `yaml:"addr"`
+	URL  string `yaml:"url"`
+}
+
+type VendorConfig struct {
+	HTMXURL           string `yaml:"htmx_url"`
+	HTMXLicenseURL    string `yaml:"htmx_license_url"`
+	VideoJSJSURL      string `yaml:"videojs_js_url"`
+	VideoJSCSSURL     string `yaml:"videojs_css_url"`
+	VideoJSLicenseURL string `yaml:"videojs_license_url"`
+	HLSURL            string `yaml:"hls_url"`
+	HLSLicenseURL     string `yaml:"hls_license_url"`
+	FFmpegSrcURL      string `yaml:"ffmpeg_src_url"`
+	X264SrcURL        string `yaml:"x264_src_url"`
+	FFmpegLicenseURL  string `yaml:"ffmpeg_license_url"`
 }
 
 type Config struct {
@@ -65,8 +72,9 @@ type Config struct {
 		CRF            int    `yaml:"crf"`
 		SegmentSeconds int    `yaml:"segment_seconds"`
 		CleanupHours   int    `yaml:"cleanup_hours"`
-		HWAccel        string `yaml:"hwaccel"`      // auto | vaapi | none
-		VAAPIDevice    string `yaml:"vaapi_device"` // empty = first /dev/dri/renderD*
+		HWAccel        string `yaml:"hwaccel"`
+		VAAPIDevice    string `yaml:"vaapi_device"`
+		FFmpeg         string `yaml:"ffmpeg"`
 	} `yaml:"transcode"`
 	Backup struct {
 		Enabled  bool          `yaml:"enabled"`
@@ -77,43 +85,58 @@ type Config struct {
 	Scan struct {
 		OnStartup bool `yaml:"on_startup"`
 	} `yaml:"scan"`
-	Legal struct {
-		Path string `yaml:"path"`
-	} `yaml:"legal"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
+	Matchora     MatchoraConfig     `yaml:"matchora"`
+	Vendor       VendorConfig       `yaml:"vendor"`
+	Version      string             `yaml:"version"`
+
+	ExeDir      string `yaml:"-"`
+	ConfigPath  string `yaml:"-"`
+	OverlayPath string `yaml:"-"`
+}
+
+func ExeDir() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Dir(exe), nil
+}
+
+func resolvePath(base, p, fallback string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		p = fallback
+	}
+	if p == "" {
+		return ""
+	}
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(base, p)
 }
 
 func Defaults() Config {
 	var c Config
 	c.HTTP.Addr = ":7676"
-	c.Store.Path = "/data/store"
-	c.Media.Path = "/media"
-	c.Legal.Path = "/legal"
-	c.Transcode.Path = "/data/transcode"
+	c.Store.Path = "data/store"
+	c.Transcode.Path = "data/transcode"
 	c.Transcode.MaxHeight = 2160
 	c.Transcode.CRF = 23
 	c.Transcode.SegmentSeconds = 6
 	c.Transcode.CleanupHours = 24
 	c.Transcode.HWAccel = "auto"
-	c.Transcode.VAAPIDevice = ""
 	c.Backup.Enabled = true
 	c.Backup.Interval = 24 * time.Hour
 	c.Backup.Retain = 7
-	c.Backup.Dir = "/data/backups"
+	c.Backup.Dir = "data/backups"
 	c.Scan.OnStartup = true
-	c.Integrations.Plugins.Enabled = true
-	if c.Integrations.Plugins.Installed == nil {
-		c.Integrations.Plugins.Installed = map[string]PluginInstalledConfig{}
-	}
-	if _, ok := c.Integrations.Plugins.Installed["providers"]; !ok {
-		c.Integrations.Plugins.Installed["providers"] = PluginInstalledConfig{
-			Enabled: true,
-			Config: map[string]any{
-				"omdb":   map[string]any{"api_key": "", "base_url": "", "rps": 1.0, "daily_limit": 1000},
-				"tvmaze": map[string]any{"rps": 2.0, "daily_limit": 0},
-			},
-		}
-	}
+	c.Matchora.Addr = "127.0.0.1:7680"
+	c.Version = "0.0.1"
 	return c
 }
 
@@ -126,33 +149,104 @@ func (c *Config) EnsureIntegrationDefaults() bool {
 	return changed
 }
 
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
 func Load(path string) (Config, error) {
+	path = strings.TrimSpace(path)
 	c := Defaults()
-	b, err := os.ReadFile(path)
+	root, err := ExeDir()
 	if err != nil {
-		if os.IsNotExist(err) {
-			applyEnv(&c)
-			return c, nil
-		}
 		return c, err
 	}
-	if err := yaml.Unmarshal(b, &c); err != nil {
-		return c, fmt.Errorf("parse config: %w", err)
+	c.ExeDir = root
+	if path == "" {
+		path = filepath.Join(root, "config", "default.yaml")
+	}
+	c.ConfigPath = path
+	if b, err := os.ReadFile(path); err == nil {
+		if err := yaml.Unmarshal(b, &c); err != nil {
+			return c, fmt.Errorf("parse config: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return c, err
+	}
+	c.ExeDir = root
+	c.resolvePaths()
+	overlay := filepath.Join(root, "data", "config.yaml")
+	c.OverlayPath = overlay
+	if b, err := os.ReadFile(overlay); err == nil && len(b) > 0 {
+		if err := yaml.Unmarshal(b, &c); err != nil {
+			return c, fmt.Errorf("parse overlay: %w", err)
+		}
+		c.ExeDir = root
+		c.ConfigPath = path
+		c.OverlayPath = overlay
+		c.resolvePaths()
 	}
 	applyEnv(&c)
+	c.ExeDir = root
+	c.resolvePaths()
 	c.EnsureIntegrationDefaults()
 	return c, nil
 }
 
+func SplitMediaPaths(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func (c Config) MediaRoots() []string {
+	roots := SplitMediaPaths(c.Media.Path)
+	if len(roots) == 0 {
+		return []string{"/media"}
+	}
+	cleaned := make([]string, len(roots))
+	for i, r := range roots {
+		cleaned[i] = filepath.Clean(r)
+	}
+	return cleaned
+}
+
+func (c Config) PrimaryMediaRoot() string {
+	return c.MediaRoots()[0]
+}
+
+func (c *Config) resolvePaths() {
+	base := c.ExeDir
+	c.Store.Path = resolvePath(base, c.Store.Path, "data/store")
+	c.Transcode.Path = resolvePath(base, c.Transcode.Path, "data/transcode")
+	c.Backup.Dir = resolvePath(base, c.Backup.Dir, "data/backups")
+	parts := SplitMediaPaths(c.Media.Path)
+	if len(parts) > 0 {
+		for i, p := range parts {
+			if !filepath.IsAbs(p) {
+				parts[i] = resolvePath(base, p, "")
+			} else {
+				parts[i] = filepath.Clean(p)
+			}
+		}
+		c.Media.Path = strings.Join(parts, ",")
+	}
+	if strings.TrimSpace(c.Matchora.Addr) == "" {
+		c.Matchora.Addr = "127.0.0.1:7680"
+	}
+}
+
 func (c Config) Save(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = c.OverlayPath
+	}
+	if path == "" {
+		return fmt.Errorf("no overlay path")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
 		return err
@@ -170,45 +264,22 @@ func applyEnv(c *Config) {
 	if v := os.Getenv("MEDORA_MEDIA_PATH"); v != "" {
 		c.Media.Path = v
 	}
-	if v := os.Getenv("MEDORA_LEGAL_PATH"); v != "" {
-		c.Legal.Path = v
-	}
-	// Legacy env for OMDb key until set via plugin settings.
-	if v := os.Getenv("OMDB_API_KEY"); v != "" {
-		c.ensurePluginConfig("providers")
-		if omdb, ok := c.Integrations.Plugins.Installed["providers"].Config["omdb"].(map[string]any); ok {
-			if strAny(omdb["api_key"]) == "" {
-				omdb["api_key"] = v
-			}
-		}
-	}
-	if v := os.Getenv("OMDB_BASE_URL"); v != "" {
-		c.ensurePluginConfig("providers")
-		if omdb, ok := c.Integrations.Plugins.Installed["providers"].Config["omdb"].(map[string]any); ok {
-			if strAny(omdb["base_url"]) == "" {
-				omdb["base_url"] = v
-			}
-		}
+	if v := os.Getenv("MEDORA_FFMPEG"); v != "" {
+		c.Transcode.FFmpeg = v
 	}
 }
 
-func (c *Config) ensurePluginConfig(id string) {
-	if c.Integrations.Plugins.Installed == nil {
-		c.Integrations.Plugins.Installed = map[string]PluginInstalledConfig{}
+func (c Config) OverlaySavePath() string {
+	if strings.TrimSpace(c.OverlayPath) != "" {
+		return c.OverlayPath
 	}
-	if _, ok := c.Integrations.Plugins.Installed[id]; !ok {
-		c.Integrations.Plugins.Installed[id] = PluginInstalledConfig{Enabled: true, Config: map[string]any{}}
-	}
-	if c.Integrations.Plugins.Installed[id].Config == nil {
-		inst := c.Integrations.Plugins.Installed[id]
-		inst.Config = map[string]any{}
-		c.Integrations.Plugins.Installed[id] = inst
-	}
+	return filepath.Join(c.ExeDir, "data", "config.yaml")
 }
 
-func strAny(v any) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return fmt.Sprint(v)
+func (c Config) MatchoraBin() string {
+	return filepath.Join(c.ExeDir, "tools", "matchora", "matchora")
+}
+
+func (c Config) VendorDir() string {
+	return filepath.Join(c.ExeDir, "vendor")
 }

@@ -4,7 +4,6 @@ services:
     build:
       context: ..
       dockerfile: tests/unit/Containerfile
-    # sources copied at build time (avoids rootless volume permission issues)
 
   omdb-stub:
     image: localhost/tests_omdb-stub:latest
@@ -22,41 +21,58 @@ services:
     expose:
       - "9090"
 
-  medora:
+  llama-stub:
+    image: localhost/tests_llama-stub:latest
     build:
-      context: ..
-      dockerfile: medora/Containerfile
-    env_file:
-      - ../medora/.env
+      context: ./llama-stub
+      dockerfile: Containerfile
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  llm-stub:
+    image: localhost/tests_llama-stub:latest
+    build:
+      context: ./llama-stub
+      dockerfile: Containerfile
+    expose:
+      - "8080"
+
+  medora:
+    image: localhost/medora-runtime:latest
+    build:
+      context: ./runtime
+      dockerfile: Containerfile
     environment:
-      MEDORA_STORE_PATH: /data/store
       MEDORA_MEDIA_PATH: /media
-      # Deterministic movie Meta in smoke (avoids real OMDb daily quota).
-      OMDB_API_KEY: test
-      OMDB_BASE_URL: http://omdb-stub:8080/
-      MEDORA_OMDB_DAILY: "0"
-      MEDORA_OMDB_RPS: "20"
-      WATCHDOG_AUTOSTART: "1"
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
+      MEDORA_MATCHORA_OVERLAY: /overlay/matchora.yaml
     depends_on:
-      - omdb-stub
-      - webhook-stub
+      omdb-stub:
+        condition: service_started
+      webhook-stub:
+        condition: service_started
+      llama-stub:
+        condition: service_healthy
+      llm-stub:
+        condition: service_started
     volumes:
-      - medora-test-data:/data:Z
-      - ./fixtures/media:/media:Z
-      - ../AUTHOR:/legal/AUTHOR:ro,Z
-      - ../VERSION:/legal/VERSION:ro,Z
-      - ../COPYRIGHT:/legal/COPYRIGHT:ro,Z
-      - ../LICENSE:/legal/LICENSE:ro,Z
+      - ../build/dist:/app:z
+      - medora-test-data:/app/data:Z
+      - ./fixtures/media:/media:ro,z
+      - ./matchora-overlay.yaml:/overlay/matchora.yaml:ro,z
+    working_dir: /app
     expose:
       - "7676"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7676/healthz"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7676/healthz"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 24
+      start_period: 90s
 
   smoke:
     build:

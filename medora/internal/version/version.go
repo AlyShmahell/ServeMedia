@@ -8,8 +8,11 @@ import (
 
 var Version string
 
-func Init(legalDir string) {
-	Version = readVersion(filepath.Join(legalDir, "VERSION"))
+func Init(exeDir string) {
+	Version = readVersion(filepath.Join(exeDir, "VERSION"))
+	if Version == "" {
+		Version = "0.0.1"
+	}
 }
 
 func readVersion(path string) string {

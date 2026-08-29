@@ -1,0 +1,15 @@
+llama:
+  host: llama-stub
+  port: 8080
+  llm_base_url: "http://llm-stub:8080/v1"
+providers:
+  omdb:
+    base: "http://omdb-stub:8080"
+  tvmaze:
+    base: "http://omdb-stub:8080"
+  jikan:
+    base: "http://omdb-stub:8080"
+  tmdb:
+    base: "http://omdb-stub:8080"
+  tmdb_tv:
+    base: "http://omdb-stub:8080"

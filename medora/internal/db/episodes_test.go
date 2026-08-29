@@ -20,7 +20,7 @@ func TestUpsertEpisode_reassignsSeasonByPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", "/media/a")
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "/media/a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestUpsertEpisode_pathWinsOccupiedSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", "/media/a")
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "/media/a")
 	if err != nil {
 		t.Fatal(err)
 	}

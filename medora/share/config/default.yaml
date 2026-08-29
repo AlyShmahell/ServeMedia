@@ -1,0 +1,44 @@
+version: "0.0.1"
+http:
+  addr: ":7676"
+store:
+  path: data/store
+media:
+  # Comma-separated roots; the library picker shows them as one folder tree.
+  path: "/media,/mnt"
+transcode:
+  path: data/transcode
+  max_height: 2160
+  crf: 23
+  segment_seconds: 6
+  cleanup_hours: 24
+  hwaccel: auto
+  vaapi_device: ""
+backup:
+  enabled: true
+  interval: 24h
+  retain: 7
+  dir: data/backups
+scan:
+  on_startup: true
+integrations:
+  webhooks:
+    enabled: false
+    server_url: ""
+    server_id: ""
+    api_key: ""
+    destinations: []
+matchora:
+  addr: "127.0.0.1:7680"
+  url: "https://github.com/AlyShmahell/matchora/releases/download/v0.0.3/matchora-0.0.3-linux-amd64.tar.gz"
+vendor:
+  htmx_url: "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
+  htmx_license_url: "https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE"
+  videojs_js_url: "https://unpkg.com/video.js@8.21.1/dist/video.min.js"
+  videojs_css_url: "https://unpkg.com/video.js@8.21.1/dist/video-js.min.css"
+  videojs_license_url: "https://raw.githubusercontent.com/videojs/video.js/v8.21.1/LICENSE"
+  hls_url: "https://unpkg.com/hls.js@1.5.20/dist/hls.min.js"
+  hls_license_url: "https://raw.githubusercontent.com/video-dev/hls.js/v1.5.20/LICENSE"
+  ffmpeg_src_url: "https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz"
+  x264_src_url: "https://github.com/mirror/x264/archive/refs/heads/stable.tar.gz"
+  ffmpeg_license_url: "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1.1/COPYING.GPLv3"

@@ -17,7 +17,7 @@ func aliasKey(s string) string {
 var movieTitleSuffixRe = regexp.MustCompile(`(?i)\s*(?:-\s*)?(?:the\s+)?movie\s*$`)
 
 // StripMovieTitleSuffix removes a trailing " - The Movie" / "Movie" style suffix
-// for OMDb fallback lookups.
+// so NFO titles match path-derived names.
 func StripMovieTitleSuffix(title string) string {
 	t := strings.TrimSpace(title)
 	stripped := strings.TrimSpace(movieTitleSuffixRe.ReplaceAllString(t, ""))

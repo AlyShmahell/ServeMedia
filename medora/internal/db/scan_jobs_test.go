@@ -21,7 +21,7 @@ func TestRunningScanForLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", "/media/a")
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "/media/a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestRunningScanForLibrary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.UpdateScanJob(ctx, jobID, "running", 40, "Enriching 2/5"); err != nil {
+	if err := d.UpdateScanJob(ctx, jobID, "running", 40, "Matching 2/5"); err != nil {
 		t.Fatal(err)
 	}
 	got, err = d.RunningScanForLibrary(ctx, lib.ID)

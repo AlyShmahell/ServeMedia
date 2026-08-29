@@ -9,22 +9,22 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/alyshmahell/medora/internal/ffbin"
 )
 
 var sidecarLangRe = regexp.MustCompile(`(?i)^(.+)\.([a-z]{2,3}(?:-[a-z]{2,4})?)\.(srt|vtt|ass|ssa)$`)
-var sidecarWhisperRe = regexp.MustCompile(`(?i)^(.+)\.([a-z]{2,3}(?:-[a-z]{2,4})?)\.whisper-([a-z0-9._-]+)\.(srt|vtt|ass|ssa)$`)
 var sidecarPlainRe = regexp.MustCompile(`(?i)^(.+)\.(srt|vtt|ass|ssa)$`)
 
 // SidecarSubtitle is an external subtitle file next to a video.
 type SidecarSubtitle struct {
-	Path    string
-	Lang    string
-	Ext     string
-	ID      string // stable key for /sub/{id}.vtt, e.g. sc-en or sc-en-whisper-tiny-q5_1
-	Whisper string // model id or ""
+	Path string
+	Lang string
+	Ext  string
+	ID   string // stable key for /sub/{id}.vtt, e.g. sc-en
 }
 
-// DiscoverSidecarSubtitles finds sidecars beside videoPath, including Whisper AI files.
+// DiscoverSidecarSubtitles finds sidecars beside videoPath.
 func DiscoverSidecarSubtitles(videoPath string) []SidecarSubtitle {
 	dir := filepath.Dir(videoPath)
 	base := strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath))
@@ -40,22 +40,6 @@ func DiscoverSidecarSubtitles(videoPath string) []SidecarSubtitle {
 		}
 		name := e.Name()
 		full := filepath.Join(dir, name)
-		if m := sidecarWhisperRe.FindStringSubmatch(name); len(m) == 5 {
-			if !strings.EqualFold(m[1], base) {
-				continue
-			}
-			lang := strings.ToLower(m[2])
-			size := strings.ToLower(m[3])
-			id := "sc-" + lang + "-whisper-" + size
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			out = append(out, SidecarSubtitle{
-				Path: full, Lang: lang, Ext: strings.ToLower(m[4]), ID: id, Whisper: size,
-			})
-			continue
-		}
 		if m := sidecarLangRe.FindStringSubmatch(name); len(m) == 4 {
 			if !strings.EqualFold(m[1], base) {
 				continue
@@ -104,12 +88,7 @@ func SidecarTracks(sidecars []SidecarSubtitle, baseIndex int) []Track {
 	var out []Track
 	for i, sc := range sidecars {
 		title := "Sidecar"
-		switch {
-		case sc.Whisper != "" && sc.Lang != "":
-			title = fmt.Sprintf("AI whisper-%s (%s)", sc.Whisper, sc.Lang)
-		case sc.Whisper != "":
-			title = "AI whisper-" + sc.Whisper
-		case sc.Lang != "":
+		if sc.Lang != "" {
 			title = "Sidecar " + sc.Lang
 		}
 		out = append(out, Track{
@@ -144,7 +123,7 @@ func EnsureSidecarVTT(sourceSub, outPath string) error {
 	}
 	tmp := outPath + ".tmp"
 	_ = os.Remove(tmp)
-	cmd := exec.Command("ffmpeg", "-y", "-i", sourceSub, "-f", "webvtt", tmp)
+	cmd := exec.Command(ffbin.FFmpeg(), "-y", "-i", sourceSub, "-f", "webvtt", tmp)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = os.Remove(tmp)

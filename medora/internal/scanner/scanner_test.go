@@ -104,7 +104,7 @@ func TestIngestAnimeEpisodes_flatDashAndExtras(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestFranchisePack_detectionAndScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestIngestAnimeEpisodes_sequentialFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestIngestMovie_preservesMetaMatched(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestIngestAnimeEpisodes_irregularSeasonDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestEnsureSeason_showRootPoster(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +494,7 @@ func TestIngestAnimeEpisodes_numberedDirsAndRootOVA(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -565,7 +565,7 @@ func TestIngestAnimeEpisodes_keepsSxxEyy(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,7 +603,7 @@ func TestIngestAnimeEpisodes_mixedParsedAndLoose(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -655,7 +655,7 @@ func TestScanAnime_filmsUnderShow(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +720,7 @@ func TestRescanMediaItem_movie(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,7 +799,7 @@ func TestIngestShow_cleansReleaseGroupTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "anime", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -855,7 +855,7 @@ func TestScanTV_filmPack(t *testing.T) {
 		t.Fatal(err)
 	}
 	media := t.TempDir()
-	lib, err := d.CreateLibrary(ctx, u.ID, "TV", "tv", media)
+	lib, err := d.CreateLibrary(ctx, u.ID, "TV", media)
 	if err != nil {
 		t.Fatal(err)
 	}

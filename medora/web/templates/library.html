@@ -1,12 +1,12 @@
 {{define "library.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Library.Name}} — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
+<title>{{.Library.Name}} — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content library-page">
   <p class="back-link"><a href="/">← Back</a></p>
   <h1>{{.Library.Name}}</h1>
-  <p class="library-page-type muted">{{.Library.Type}} · {{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
+  <p class="library-page-type muted">{{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
   <form class="row library-toolbar" data-page-state="library-toolbar" hx-get="/hx/libraries/{{.Library.ID}}/items" hx-target="#items" hx-trigger="input changed delay:200ms, change, submit" hx-include="this">
     <div class="library-search">
       <input type="search" name="q" value="{{.Q}}" placeholder="Search" autocomplete="off">
@@ -24,5 +24,6 @@
 </main></div>
 {{template "partials/fetch_modal.html" .}}
 {{template "partials/entry_scan_modal.html" .}}
+<div id="match-modal-host"></div>
 </body></html>
 {{end}}

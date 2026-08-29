@@ -1,3 +1,11 @@
+# Dist builder output and packaged tarballs
+/build/dist/*
+!/build/dist/.gitkeep
+/build/cache/*
+!/build/cache/.gitkeep
+/build/package/*
+!/build/package/.gitkeep
+
 # Binaries
 *.exe
 *.exe~
@@ -14,7 +22,6 @@ coverage.*
 profile.cov
 
 # Go
-vendor/
 go.work
 go.work.sum
 
@@ -23,10 +30,6 @@ go.work.sum
 /data/
 !data/.gitkeep
 medora/.env
-
-# Plugin build artifacts
-plugins/dist/
-medora/bundled/plugins/*.zip
 
 # Editor
 .idea/

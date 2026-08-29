@@ -1,7 +1,7 @@
 {{define "settings_integrations.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Integrations — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/htmx.min.js" defer></script></head>
+<title>Integrations — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
   <p class="back-link"><a href="/settings">← Settings</a></p>
@@ -9,7 +9,7 @@
   <div class="page-main-card">
     <div class="settings-tabs" role="tablist">
       <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-tab="webhooks">Webhooks</button>
-      <button type="button" class="settings-tab" role="tab" aria-selected="false" data-tab="plugins">Plugins</button>
+      <button type="button" class="settings-tab" role="tab" aria-selected="false" data-tab="metadata">Metadata</button>
     </div>
     <form method="post" action="/settings/integrations" id="integrations-form">
     <div class="settings-tab-panel active" id="tab-webhooks" role="tabpanel">
@@ -124,55 +124,37 @@
         </p>
         <p class="muted" id="webhook-test-result" aria-live="polite"></p>
     </div>
-    <div class="settings-tab-panel" id="tab-plugins" role="tabpanel" hidden>
+    <div class="settings-tab-panel" id="tab-metadata" role="tabpanel" hidden>
       {{if eq .User.Role "admin"}}
-      <div class="plugins-toolbar">
-        <button type="button" class="btn-icon" id="add-plugin-open" title="Install plugin" aria-label="Install plugin">+</button>
-      </div>
-      {{end}}
-      <div id="plugins-list">
-        {{range .PluginPanels}}
-        <section class="page-sub-card plugin-card" data-plugin="{{.ID}}">
-          <header class="plugin-card-head">
-            <h3>{{.Name}}</h3>
-            <span class="muted">{{.Type}} · v{{.Version}}{{if .Bundled}} · bundled{{end}}</span>
-          </header>
-          {{if .RenderError}}<p class="muted">{{.RenderError}}</p>{{else}}{{.SettingsHTML}}{{end}}
-        </section>
-        {{else}}
-        <p class="muted">No plugins installed. Use + to upload a plugin zip, or rebuild the image with the bundled providers plugin.</p>
-        {{end}}
-      </div>
+      <section class="page-sub-card">
+        <h2>Metadata keys</h2>
+        <div class="page-sub-card-body-scroll">
+          <p class="muted">Provider keys are stored by Matchora, not in Medora config. Leave a field blank to keep the current value.</p>
+          {{range .SecretKeys}}
+          <label>{{if eq . "omdb"}}OMDb{{else if eq . "tmdb"}}TMDB{{else}}{{.}}{{end}} API key {{if index $.Secrets .}}<span class="muted">(set)</span>{{else}}<span class="muted">(not set)</span>{{end}}</label>
+          <input type="password" name="secret_{{.}}" id="secret-{{.}}" placeholder="Leave blank to keep current" autocomplete="off">
+          {{else}}
+          <p class="muted">No Matchora secret keys available.</p>
+          {{end}}
+        </div>
+      </section>
       <p class="row tab-footer">
         <button type="submit">Save</button>
       </p>
+      {{else}}
+      <p class="muted">Only an admin can set metadata provider keys.</p>
+      {{end}}
     </div>
     </form>
   </div>
 </main></div>
-
-<dialog id="plugin-install-dialog" class="modal">
-  <form method="post" action="/hx/integrations/plugins/install" enctype="multipart/form-data" class="modal-form" id="plugin-install-form">
-    <header class="modal-head">
-      <h2>Install plugin</h2>
-      <button type="button" class="btn-icon secondary" id="plugin-install-close" aria-label="Close">×</button>
-    </header>
-    <p class="muted">Upload a <code>.zip</code> containing <code>plugin.yaml</code>, <code>settings.html</code>, and the plugin binary.</p>
-    <label>Plugin archive</label>
-    <input type="file" name="archive" accept=".zip,application/zip" required>
-    <footer class="modal-foot">
-      <button type="button" class="secondary" id="plugin-install-cancel">Cancel</button>
-      <button type="submit">Install</button>
-    </footer>
-  </form>
-</dialog>
 
 <script>
 (function () {
   var tabs = document.querySelectorAll(".settings-tab");
   var panels = {
     webhooks: document.getElementById("tab-webhooks"),
-    plugins: document.getElementById("tab-plugins")
+    metadata: document.getElementById("tab-metadata")
   };
   tabs.forEach(function (tab) {
     tab.addEventListener("click", function () {
@@ -234,21 +216,6 @@
         .then(function (r) { return r.text(); })
         .then(function (t) { testResult.textContent = t; })
         .catch(function (e) { testResult.textContent = String(e); });
-    });
-  }
-
-  var pluginDlg = document.getElementById("plugin-install-dialog");
-  var pluginOpen = document.getElementById("add-plugin-open");
-  var pluginClose = document.getElementById("plugin-install-close");
-  var pluginCancel = document.getElementById("plugin-install-cancel");
-  if (pluginOpen && pluginDlg) {
-    pluginOpen.addEventListener("click", function () { pluginDlg.showModal(); });
-  }
-  if (pluginClose && pluginDlg) pluginClose.addEventListener("click", function () { pluginDlg.close(); });
-  if (pluginCancel && pluginDlg) pluginCancel.addEventListener("click", function () { pluginDlg.close(); });
-  if (pluginDlg) {
-    pluginDlg.addEventListener("click", function (e) {
-      if (e.target === pluginDlg) pluginDlg.close();
     });
   }
 })();

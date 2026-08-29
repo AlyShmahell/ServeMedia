@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/alyshmahell/medora/internal/ffbin"
 )
 
 type Probe struct {
@@ -254,7 +256,7 @@ func isTextSubtitle(codec string) bool {
 }
 
 func Ffprobe(path string) (*Probe, error) {
-	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path)
+	cmd := exec.Command(ffbin.FFprobe(), "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -330,5 +332,16 @@ func GuessDirectPlayByExt(path string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// StreamMIME is the Content-Type for a direct-play file. Extensionless
+// stream URLs need this so video.js can pick a tech.
+func StreamMIME(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".webm":
+		return "video/webm"
+	default:
+		return "video/mp4"
 	}
 }

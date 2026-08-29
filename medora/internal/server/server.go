@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
-	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -23,15 +22,14 @@ import (
 	"github.com/alyshmahell/medora/internal/config"
 	"github.com/alyshmahell/medora/internal/db"
 	"github.com/alyshmahell/medora/internal/fetch"
+	"github.com/alyshmahell/medora/internal/matchora"
 	"github.com/alyshmahell/medora/internal/media"
 	"github.com/alyshmahell/medora/internal/metadata"
-	"github.com/alyshmahell/medora/internal/plugins"
 	"github.com/alyshmahell/medora/internal/scanner"
 	"github.com/alyshmahell/medora/internal/stream"
 	"github.com/alyshmahell/medora/internal/transcode"
 	"github.com/alyshmahell/medora/internal/webhooks"
 	"github.com/alyshmahell/medora/internal/version"
-	"github.com/alyshmahell/medora-plugin-sdk/install"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -46,7 +44,7 @@ type Server struct {
 	Fetch     *fetch.Worker
 	Transcode *transcode.Manager
 	Webhooks  *webhooks.Service
-	PluginMgr *plugins.Manager
+	Meta      *matchora.Client
 	Templates *template.Template
 	Static    fs.FS
 	reopen    func() error
@@ -56,7 +54,7 @@ type ctxKey int
 
 const userKey ctxKey = 1
 
-func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.Scanner, tr *transcode.Manager, webFS fs.FS, pluginMgr *plugins.Manager, reopen func() error) (*Server, error) {
+func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.Scanner, tr *transcode.Manager, webFS fs.FS, meta *matchora.Client, reopen func() error) (*Server, error) {
 	tplFS, err := fs.Sub(webFS, "templates")
 	if err != nil {
 		return nil, err
@@ -66,21 +64,14 @@ func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.S
 		return nil, err
 	}
 	tpl := MustParseTemplates(tplFS)
-	if pluginMgr != nil {
-		if err := plugins.ParsePluginTemplates(tpl, pluginMgr.DataDir); err != nil {
-			return nil, err
-		}
-	}
 	fw := &fetch.Worker{
 		DB:    database,
 		Store: cfg.Store.Path,
-	}
-	if pluginMgr != nil {
-		fw.Meta = pluginMgr.MetadataClient()
+		Meta:  meta,
 	}
 	return &Server{
 		Cfg: cfg, DB: database, Backup: bak, Scanner: sc, Fetch: fw, Transcode: tr,
-		Webhooks: webhooks.New(cfg), PluginMgr: pluginMgr, Templates: tpl, Static: staticFS, reopen: reopen,
+		Webhooks: webhooks.New(cfg), Meta: meta, Templates: tpl, Static: staticFS, reopen: reopen,
 	}, nil
 }
 
@@ -126,13 +117,13 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 			if p == "" {
 				return "/static/placeholder.svg"
 			}
-			out := "/metadata/" + p
+			key := p
 			if len(metaID) > 0 {
 				if m := strings.TrimSpace(metaID[0]); m != "" {
-					out += "?m=" + url.QueryEscape(m)
+					key = m
 				}
 			}
-			return out
+			return "/metadata/" + p + "?m=" + url.QueryEscape(key)
 		},
 		"queryEscape": url.QueryEscape,
 		"joinPath":    filepath.Join,
@@ -146,11 +137,11 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 			}
 			return strings.Join(out, ", ")
 		},
-		"mediaActions": func(scope string, id int64, metaReady bool, metaDisabledReason string) map[string]any {
-			return map[string]any{"Scope": scope, "ID": id, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason}
+		"mediaActions": func(scope string, id int64, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
+			return map[string]any{"Scope": scope, "ID": id, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus}
 		},
-		"mediaActionsStatic": func(scope string, id int64, metaReady bool, metaDisabledReason string) map[string]any {
-			return map[string]any{"Scope": scope, "ID": id, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "Static": true}
+		"mediaActionsStatic": func(scope string, id int64, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
+			return map[string]any{"Scope": scope, "ID": id, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus, "Static": true}
 		},
 		"hasStr": func(list []string, want string) bool {
 			for _, v := range list {
@@ -173,6 +164,10 @@ func (s *Server) Router() http.Handler {
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/favicon.ico", s.handleFavicon)
 	r.Get("/favicon.svg", s.handleFavicon)
+	if s.Cfg != nil {
+		vendor := filepath.Join(s.Cfg.ExeDir, "vendor")
+		r.Handle("/static/vendor/*", http.StripPrefix("/static/vendor/", http.FileServer(http.Dir(vendor))))
+	}
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(s.Static))))
 
 	r.Get("/register", s.handleRegisterGet)
@@ -204,11 +199,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/hx/scan/{id}/status", s.handleScanStatus)
 		r.Get("/hx/scan/{id}/entry-status", s.handleEntryScanStatus)
 		r.Post("/hx/media/{id}/scan", s.handleScanMedia)
+		r.Get("/hx/media/{id}/match", s.handleMatchGet)
+		r.Post("/hx/media/{id}/match", s.handleMatchPost)
 		r.Post("/hx/libraries/{id}", s.handleRenameLibrary)
 		r.Delete("/hx/libraries/{id}", s.handleDeleteLibrary)
 		r.Get("/hx/media/browse", s.handleMediaBrowse)
-		r.Post("/hx/fetch/metadata", s.handleMetadataFetch)
-		r.Get("/hx/jobs/{id}/status", s.handleAsyncJobStatus)
 		r.Get("/metadata/*", s.handleMetadata)
 		r.Get("/stream/movie/{id}", s.handleStreamMovie)
 		r.Get("/stream/episode/{id}", s.handleStreamEpisode)
@@ -221,11 +216,6 @@ func (s *Server) Router() http.Handler {
 		r.Post("/settings/integrations", s.handleSaveIntegrations)
 		r.Post("/hx/integrations/webhooks/regenerate-key", s.handleRegenerateWebhookKey)
 		r.Post("/hx/integrations/webhooks/test", s.handleTestWebhooks)
-
-		r.Group(func(r chi.Router) {
-			r.Use(s.requireAdmin)
-			r.Post("/hx/integrations/plugins/install", s.handleInstallPlugin)
-		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
@@ -484,7 +474,7 @@ func (s *Server) libraryCardData(ctx context.Context, lib *db.Library, job *db.S
 		card.Poll = job.Status == "running"
 		if job.Message.Valid {
 			card.Message = job.Message.String
-			card.Enriching = strings.HasPrefix(card.Message, "Enriching")
+			card.Enriching = strings.HasPrefix(card.Message, "Matching") || strings.HasPrefix(card.Message, "Applying")
 		}
 	}
 	return card
@@ -937,6 +927,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	type playResp struct {
 		Mode           string                `json:"mode"`
 		URL            string                `json:"url"`
+		Mime           string                `json:"mime,omitempty"`
 		Title          string                `json:"title,omitempty"`
 		Duration       float64               `json:"duration,omitempty"`
 		Audio          int                   `json:"audio"`
@@ -978,6 +969,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	if direct {
 		resp.Mode = "direct"
 		resp.URL = fmt.Sprintf("/stream/%s/%d", kind, id)
+		resp.Mime = media.StreamMIME(path)
 		resp.Start = 0
 		_ = json.NewEncoder(w).Encode(resp)
 		if s.Webhooks != nil && u != nil {
@@ -1254,55 +1246,20 @@ func (s *Server) handlePlaybackPrefs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
-	dir := "/legal"
-	if s.Cfg != nil && strings.TrimSpace(s.Cfg.Legal.Path) != "" {
-		dir = s.Cfg.Legal.Path
+	dir := "."
+	if s.Cfg != nil && strings.TrimSpace(s.Cfg.ExeDir) != "" {
+		dir = s.Cfg.ExeDir
 	}
-	readLegal := func(name string) string {
-		b, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(b))
-	}
-	authorRaw := readLegal("AUTHOR")
-	copyright := readLegal("COPYRIGHT")
-	license := readLegal("LICENSE")
-	authorName := "Unavailable"
-	var authorLinks []map[string]string
-	if authorRaw != "" {
-		lines := strings.Split(authorRaw, "\n")
-		var parts []string
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				parts = append(parts, line)
-			}
-		}
-		if len(parts) > 0 {
-			authorName = parts[0]
-		}
-		for _, line := range parts[1:] {
-			href := line
-			if !strings.HasPrefix(href, "http://") && !strings.HasPrefix(href, "https://") {
-				href = "https://" + href
-			}
-			label := strings.TrimPrefix(strings.TrimPrefix(line, "https://"), "http://")
-			authorLinks = append(authorLinks, map[string]string{"Href": href, "Label": label})
-		}
-	}
-	if copyright == "" {
-		copyright = "Unavailable"
+	license := ""
+	if b, err := os.ReadFile(filepath.Join(dir, "LICENSE")); err == nil {
+		license = strings.TrimSpace(string(b))
 	}
 	if license == "" {
 		license = "Unavailable"
 	}
 	s.render(w, r, "about.html", map[string]any{
-		"Author":      authorName,
-		"AuthorLinks": authorLinks,
-		"Version":     version.Version,
-		"Copyright":   copyright,
-		"License":     license,
+		"Version": version.Version,
+		"License": license,
 	})
 }
 
@@ -1339,7 +1296,7 @@ func (s *Server) handleSaveBackup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.Cfg.Backup.Enabled = r.FormValue("backup_enabled") == "on"
-	_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
+	_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
 	s.Backup.Cfg = s.Cfg
 	s.Backup.StartScheduler(context.Background())
 	http.Redirect(w, r, "/settings/backup", http.StatusFound)
@@ -1364,40 +1321,39 @@ func (s *Server) handleCreateLibrary(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	_ = r.ParseForm()
 	name := r.FormValue("name")
-	typ := r.FormValue("type")
 	path := r.FormValue("path")
-	if name == "" || (typ != "movies" && typ != "tv" && typ != "anime") || path == "" {
+	if name == "" || path == "" {
 		http.Error(w, "bad request", 400)
 		return
 	}
-	clean, err := jailMediaPath(mediaRoot(s.Cfg), path)
+	clean, err := jailMediaPath(mediaRoots(s.Cfg), path)
 	if err != nil {
-		http.Error(w, "path must be under /media", 400)
+		http.Error(w, "path must be under the media root", 400)
 		return
 	}
 	st, err := os.Stat(clean)
 	if err != nil {
 		if os.IsPermission(err) {
-			http.Error(w, "permission denied reading path under /media", 400)
+			http.Error(w, "permission denied reading path under the media root", 400)
 			return
 		}
 		if os.IsNotExist(err) {
-			http.Error(w, "path not found under /media", 400)
+			http.Error(w, "path not found under the media root", 400)
 			return
 		}
-		http.Error(w, "cannot access path under /media", 400)
+		http.Error(w, "cannot access path under the media root", 400)
 		return
 	}
 	if !st.IsDir() {
-		http.Error(w, "path is not a directory under /media", 400)
+		http.Error(w, "path is not a directory under the media root", 400)
 		return
 	}
-	lib, err := s.DB.CreateLibrary(r.Context(), u.ID, name, typ, clean)
+	lib, err := s.DB.CreateLibrary(r.Context(), u.ID, name, clean)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	jobID, err := s.startLibraryScan(lib, "enrich_missing", true)
+	jobID, err := s.startLibraryScan(lib, "matchora", true, false)
 	if err != nil {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -1405,50 +1361,106 @@ func (s *Server) handleCreateLibrary(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/?scan=%d&lib=%d", jobID, lib.ID), http.StatusFound)
 }
 
+type mediaBrowseDir struct {
+	Name string
+	Path string
+}
+
 type mediaBrowseData struct {
 	Path    string
 	Parent  string
-	Dirs    []string
+	Dirs    []mediaBrowseDir
 	CanGoUp bool
 	Error   string
 }
 
 func (s *Server) handleMediaBrowse(w http.ResponseWriter, r *http.Request) {
-	root := mediaRoot(s.Cfg)
+	roots := mediaRoots(s.Cfg)
 	reqPath := r.URL.Query().Get("path")
-	browse, err := s.listMediaDirs(root, reqPath)
+	browse, err := listMediaDirs(roots, reqPath)
 	if err != nil {
-		browse = &mediaBrowseData{Path: root, Error: err.Error()}
+		fallback := ""
+		if len(roots) == 1 {
+			fallback = roots[0]
+		}
+		browse = &mediaBrowseData{Path: fallback, Error: err.Error()}
 	}
 	s.render(w, r, "partials/media_browser.html", map[string]any{"MediaBrowse": browse})
 }
 
-func mediaRoot(cfg *config.Config) string {
-	if cfg != nil && cfg.Media.Path != "" {
-		return filepath.Clean(cfg.Media.Path)
+func mediaRoots(cfg *config.Config) []string {
+	if cfg == nil {
+		return []string{"/media"}
 	}
-	return "/media"
+	return cfg.MediaRoots()
 }
 
-// jailMediaPath ensures path is under root (typically /media).
-func jailMediaPath(root, p string) (string, error) {
-	root = filepath.Clean(root)
-	if p == "" {
-		p = root
+func mediaRootIndex(roots []string, p string) int {
+	p = filepath.Clean(p)
+	for i, r := range roots {
+		if filepath.Clean(r) == p {
+			return i
+		}
+	}
+	return -1
+}
+
+// jailMediaPath ensures path is under one of the media roots.
+func jailMediaPath(roots []string, p string) (string, error) {
+	if len(roots) == 0 {
+		roots = []string{"/media"}
+	}
+	p = strings.TrimSpace(p)
+	if p == "" || p == "/" {
+		if len(roots) == 1 {
+			return filepath.Clean(roots[0]), nil
+		}
+		return "", fmt.Errorf("outside media root")
 	}
 	clean := filepath.Clean(p)
 	if !filepath.IsAbs(clean) {
-		clean = filepath.Join(root, clean)
-		clean = filepath.Clean(clean)
+		if len(roots) != 1 {
+			return "", fmt.Errorf("outside media root")
+		}
+		clean = filepath.Clean(filepath.Join(roots[0], p))
 	}
-	if clean != root && !strings.HasPrefix(clean, root+string(os.PathSeparator)) {
-		return "", fmt.Errorf("outside media root")
+	for _, root := range roots {
+		root = filepath.Clean(root)
+		if clean == root || strings.HasPrefix(clean, root+string(os.PathSeparator)) {
+			return clean, nil
+		}
 	}
-	return clean, nil
+	return "", fmt.Errorf("outside media root")
 }
 
-func (s *Server) listMediaDirs(root, reqPath string) (*mediaBrowseData, error) {
-	clean, err := jailMediaPath(root, reqPath)
+func listVirtualMediaRoots(roots []string) *mediaBrowseData {
+	counts := map[string]int{}
+	bases := make([]string, len(roots))
+	for i, r := range roots {
+		bases[i] = filepath.Base(r)
+		counts[bases[i]]++
+	}
+	dirs := make([]mediaBrowseDir, 0, len(roots))
+	for i, r := range roots {
+		name := bases[i]
+		clean := filepath.Clean(r)
+		if counts[name] > 1 {
+			name = clean
+		}
+		dirs = append(dirs, mediaBrowseDir{Name: name, Path: clean})
+	}
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
+	return &mediaBrowseData{Path: "", Dirs: dirs, CanGoUp: false}
+}
+
+func listMediaDirs(roots []string, reqPath string) (*mediaBrowseData, error) {
+	if len(roots) == 0 {
+		roots = []string{"/media"}
+	}
+	if len(roots) > 1 && (strings.TrimSpace(reqPath) == "" || reqPath == "/") {
+		return listVirtualMediaRoots(roots), nil
+	}
+	clean, err := jailMediaPath(roots, reqPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1456,18 +1468,23 @@ func (s *Server) listMediaDirs(root, reqPath string) (*mediaBrowseData, error) {
 	if err != nil {
 		return nil, err
 	}
-	var dirs []string
+	var dirs []mediaBrowseDir
 	for _, e := range entries {
 		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			dirs = append(dirs, e.Name())
+			dirs = append(dirs, mediaBrowseDir{Name: e.Name(), Path: filepath.Join(clean, e.Name())})
 		}
 	}
-	sort.Strings(dirs)
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
 	parent := filepath.Dir(clean)
-	canUp := clean != filepath.Clean(root)
-	if !canUp {
-		parent = ""
-	} else if p, err := jailMediaPath(root, parent); err != nil {
+	canUp := true
+	if mediaRootIndex(roots, clean) >= 0 {
+		if len(roots) == 1 {
+			canUp = false
+			parent = ""
+		} else {
+			parent = ""
+		}
+	} else if p, err := jailMediaPath(roots, parent); err != nil {
 		canUp = false
 		parent = ""
 	} else {
@@ -1503,42 +1520,32 @@ func (s *Server) handleDeleteLibrary(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(200)
 }
 
-func (s *Server) startLibraryScan(lib *db.Library, mode string, persist bool) (int64, error) {
+func (s *Server) startLibraryScan(lib *db.Library, mode string, persist, overwrite bool) (int64, error) {
 	jobID, err := s.DB.CreateScanJob(context.Background(), lib.ID)
 	if err != nil {
 		return 0, err
 	}
-	go s.runLibraryScan(lib, jobID, mode, persist)
+	go s.runLibraryScan(lib, jobID, mode, persist, overwrite)
 	return jobID, nil
 }
 
-func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persist bool) {
+func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persist, overwrite bool) {
 	ctx := context.Background()
-	enrich := mode == "enrich_missing" || mode == "refetch_all"
-	if enrich {
-		s.Scanner.ScanLibraryKeepOpen(ctx, lib, jobID)
-	} else {
+	if mode != "matchora" {
 		s.Scanner.ScanLibrary(ctx, lib, jobID)
 		return
 	}
-	j, _ := s.DB.GetScanJob(ctx, jobID)
-	if j == nil || j.Status == "error" {
-		return
-	}
-	_ = s.DB.UpdateScanJob(ctx, jobID, "running", j.ProgressPct, "Enriching…")
-	opts := fetch.EnrichOpts{
-		All:                mode == "refetch_all",
-		PersistBesideMedia: persist,
-		ScanJobID:          jobID,
-	}
-	if err := s.Fetch.EnrichLibrary(ctx, lib, opts); err != nil {
-		log.Printf("enrich library %d: %v", lib.ID, err)
+	s.syncFetchClients()
+	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 1, "Matching…")
+	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID}
+	if err := s.Fetch.MatchLibrary(ctx, lib, opts); err != nil {
+		log.Printf("match library %d: %v", lib.ID, err)
 		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
 		return
 	}
 	_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
 	if s.Webhooks != nil {
-		s.dispatchWebhooks(ctx, lib.UserID, webhooks.NotificationTaskCompleted, webhooks.TaskPayload("Library enrich complete"))
+		s.dispatchWebhooks(ctx, lib.UserID, webhooks.NotificationTaskCompleted, webhooks.TaskPayload("Library scan complete"))
 	}
 }
 
@@ -1562,16 +1569,17 @@ func (s *Server) handleScanLibrary(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	mode := r.FormValue("mode")
 	switch mode {
-	case "local", "enrich_missing", "refetch_all":
+	case "local", "matchora":
 	default:
 		mode = "local"
 	}
 	persist := r.FormValue("persist") == "1" || r.FormValue("persist") == "on" || r.FormValue("persist") == "true"
+	overwrite := r.FormValue("overwrite") == "1" || r.FormValue("overwrite") == "on" || r.FormValue("overwrite") == "true"
 	if mode == "local" {
-		// persist only applies to provider enrich modes
 		persist = false
+		overwrite = false
 	}
-	jobID, err := s.startLibraryScan(lib, mode, persist)
+	jobID, err := s.startLibraryScan(lib, mode, persist, overwrite)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -1615,15 +1623,17 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	mode := r.FormValue("mode")
 	switch mode {
-	case "local", "enrich_missing", "refetch_all":
+	case "local", "matchora":
 	default:
 		mode = "local"
 	}
 	persist := r.FormValue("persist") == "1" || r.FormValue("persist") == "on" || r.FormValue("persist") == "true"
+	overwrite := r.FormValue("overwrite") == "1" || r.FormValue("overwrite") == "on" || r.FormValue("overwrite") == "true"
 	if mode == "local" {
 		persist = false
+		overwrite = false
 	}
-	if mode == "enrich_missing" || mode == "refetch_all" {
+	if mode == "matchora" {
 		ready, reason, _ := s.metaStatus()
 		if !ready {
 			if reason == "" {
@@ -1638,7 +1648,7 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	go s.runMediaScan(lib, it, jobID, mode, persist)
+	go s.runMediaScan(lib, it, jobID, mode, persist, overwrite)
 	j, _ := s.DB.GetScanJob(r.Context(), jobID)
 	if j == nil {
 		j = &db.ScanJob{ID: jobID, Status: "running", ProgressPct: 0, LibraryID: sql.NullInt64{Int64: lib.ID, Valid: true}}
@@ -1647,31 +1657,22 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "partials/entry_scan_progress.html", map[string]any{"Job": j, "Poll": poll})
 }
 
-func (s *Server) runMediaScan(lib *db.Library, item *db.MediaItem, jobID int64, mode string, persist bool) {
+func (s *Server) runMediaScan(lib *db.Library, item *db.MediaItem, jobID int64, mode string, persist, overwrite bool) {
 	ctx := context.Background()
 	s.syncFetchClients()
-	if err := s.Scanner.RescanMediaItem(ctx, lib, item, jobID); err != nil {
-		log.Printf("rescan media %d: %v", item.ID, err)
-		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
-		return
-	}
-	enrich := mode == "enrich_missing" || mode == "refetch_all"
-	if !enrich {
+	if mode != "matchora" {
+		if err := s.Scanner.RescanMediaItem(ctx, lib, item, jobID); err != nil {
+			log.Printf("rescan media %d: %v", item.ID, err)
+			_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
+			return
+		}
 		_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
 		return
 	}
-	fresh, _ := s.DB.GetMediaItem(ctx, item.ID)
-	if fresh == nil {
-		fresh = item
-	}
-	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 0, "Enriching…")
-	opts := fetch.EnrichOpts{
-		All:                mode == "refetch_all",
-		PersistBesideMedia: persist,
-		ScanJobID:          jobID,
-	}
-	if err := s.Fetch.EnrichMediaItem(ctx, fresh, opts); err != nil {
-		log.Printf("enrich media %d: %v", item.ID, err)
+	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 0, "Matching…")
+	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID}
+	if err := s.Fetch.MatchItem(ctx, lib, item, opts); err != nil {
+		log.Printf("match media %d: %v", item.ID, err)
 		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
 		return
 	}
@@ -1806,18 +1807,23 @@ func (s *Server) handleSettingsIntegrations(w http.ResponseWriter, r *http.Reque
 	}
 	changed := s.Cfg.EnsureIntegrationDefaults()
 	if changed {
-		_ = s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml"))
+		_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
 	}
 	userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	var pluginPanels []plugins.PluginPanel
-	if s.PluginMgr != nil {
-		_ = s.PluginMgr.Rescan()
-		_ = plugins.ParsePluginTemplates(s.Templates, s.PluginMgr.DataDir)
-		pluginPanels = plugins.BuildPluginPanels(s.Templates, s.pluginSettingsViews())
+	secrets := map[string]bool{}
+	var secretKeys []string
+	if s.Meta != nil {
+		if st, err := s.Meta.SecretsStatus(); err == nil {
+			secrets = st
+			for k := range st {
+				secretKeys = append(secretKeys, k)
+			}
+			sort.Strings(secretKeys)
+		}
 	}
 	s.render(w, r, "settings_integrations.html", map[string]any{
 		"Config":            s.Cfg,
@@ -1825,27 +1831,9 @@ func (s *Server) handleSettingsIntegrations(w http.ResponseWriter, r *http.Reque
 		"WebhookKeyMasked":  webhooks.MaskKey(userWH.APIKey),
 		"NotificationTypes": webhooks.AllNotificationTypes,
 		"ItemTypes":         webhooks.AllItemTypes,
-		"PluginPanels":      pluginPanels,
+		"Secrets":           secrets,
+		"SecretKeys":        secretKeys,
 	})
-}
-
-func (s *Server) pluginSettingsViews() []plugins.SettingsView {
-	if s.PluginMgr == nil {
-		return nil
-	}
-	var views []plugins.SettingsView
-	for _, p := range s.PluginMgr.List() {
-		cfg := map[string]any{}
-		enabled := p.Enabled
-		if s.Cfg != nil {
-			if inst, ok := s.Cfg.Integrations.Plugins.Installed[p.Manifest.ID]; ok {
-				cfg = inst.Config
-				enabled = inst.Enabled
-			}
-		}
-		views = append(views, plugins.PluginSettingsView(p, cfg, enabled))
-	}
-	return views
 }
 
 func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -1864,103 +1852,28 @@ func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.savePluginConfigFromForm(r); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	if u.Role == db.RoleAdmin && s.Meta != nil {
+		updates := map[string]string{}
+		for k := range r.PostForm {
+			if !strings.HasPrefix(k, "secret_") {
+				continue
+			}
+			key := strings.TrimPrefix(k, "secret_")
+			if key == "" {
+				continue
+			}
+			if v := strings.TrimSpace(r.FormValue(k)); v != "" {
+				updates[key] = v
+			}
+		}
+		if len(updates) > 0 {
+			if err := s.Meta.SetSecrets(updates); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
 	}
 	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
-}
-
-func (s *Server) savePluginConfigFromForm(r *http.Request) error {
-	if s.Cfg == nil {
-		return nil
-	}
-	s.Cfg.EnsureIntegrationDefaults()
-	if s.Cfg.Integrations.Plugins.Installed == nil {
-		s.Cfg.Integrations.Plugins.Installed = map[string]config.PluginInstalledConfig{}
-	}
-	inst := s.Cfg.Integrations.Plugins.Installed["providers"]
-	inst.Enabled = r.FormValue("plugin_providers_enabled") == "on"
-	if inst.Config == nil {
-		inst.Config = map[string]any{}
-	}
-	omdb, _ := inst.Config["omdb"].(map[string]any)
-	if omdb == nil {
-		omdb = map[string]any{}
-	}
-	omdb["api_key"] = strings.TrimSpace(r.FormValue("plugin_providers_omdb_api_key"))
-	omdb["base_url"] = strings.TrimSpace(r.FormValue("plugin_providers_omdb_base_url"))
-	if v := strings.TrimSpace(r.FormValue("plugin_providers_omdb_rps")); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			omdb["rps"] = f
-		}
-	}
-	if v := strings.TrimSpace(r.FormValue("plugin_providers_omdb_daily")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			omdb["daily_limit"] = n
-		}
-	}
-	inst.Config["omdb"] = omdb
-	tv, _ := inst.Config["tvmaze"].(map[string]any)
-	if tv == nil {
-		tv = map[string]any{}
-	}
-	if v := strings.TrimSpace(r.FormValue("plugin_providers_tvmaze_rps")); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			tv["rps"] = f
-		}
-	}
-	if v := strings.TrimSpace(r.FormValue("plugin_providers_tvmaze_daily")); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			tv["daily_limit"] = n
-		}
-	}
-	inst.Config["tvmaze"] = tv
-	s.Cfg.Integrations.Plugins.Installed["providers"] = inst
-	if err := s.Cfg.Save(filepath.Join(s.Cfg.Store.Path, "config.yaml")); err != nil {
-		return err
-	}
-	if s.PluginMgr != nil {
-		s.PluginMgr.Refresh(s.Cfg)
-		return s.PluginMgr.Reload("providers")
-	}
-	return nil
-}
-
-func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
-	if s.PluginMgr == nil {
-		http.Error(w, "plugins unavailable", 500)
-		return
-	}
-	if err := r.ParseMultipartForm(install.MaxZipBytes); err != nil {
-		http.Error(w, "invalid upload", 400)
-		return
-	}
-	file, hdr, err := r.FormFile("archive")
-	if err != nil {
-		http.Error(w, "missing archive", 400)
-		return
-	}
-	defer file.Close()
-	b, err := io.ReadAll(io.LimitReader(file, install.MaxZipBytes+1))
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	if int64(len(b)) > install.MaxZipBytes {
-		http.Error(w, "archive too large", 400)
-		return
-	}
-	plug, err := s.PluginMgr.InstallZipBytes(b, false)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	_ = hdr
-	if err := plugins.ParsePluginTemplates(s.Templates, s.PluginMgr.DataDir); err != nil {
-		log.Printf("plugin templates: %v", err)
-	}
-	http.Redirect(w, r, "/settings/integrations?installed="+plug.ID, http.StatusFound)
 }
 
 func parseWebhookDestinationsFromForm(r *http.Request) []config.WebhookDestination {

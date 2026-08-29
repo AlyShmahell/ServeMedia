@@ -1,8 +1,0 @@
-services:
-  package:
-    build:
-      context: .
-      dockerfile: Containerfile
-      target: package
-    volumes:
-      - ./dist:/out

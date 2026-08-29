@@ -33,7 +33,7 @@ async function ensureTVLibrary(page) {
   }
   await page.click('#add-library-open');
   await page.fill('#library-name', 'TV');
-  await page.selectOption('select[name="type"]', 'tv');
+  await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
   await expect(page.locator('#library-path')).toHaveValue('/media', { timeout: 15000 });
   await page.locator('button.media-browser-dir', { hasText: 'TV' }).click();
   await expect(page.locator('#library-path')).toHaveValue('/media/TV', { timeout: 15000 });
@@ -69,6 +69,28 @@ test('sidebar primary nav and home sections', async ({ page }) => {
   await expect(page.locator('.home-section-continue')).toBeVisible();
   await expect(page.locator('.home-section-recent')).toBeVisible();
   await expect(page.locator('.home-section-libraries')).toBeVisible();
+});
+
+test('add library dialog has no type field', async ({ page }) => {
+  await ensureAdmin(page);
+  await page.goto('/');
+  await page.click('#add-library-open');
+  await expect(page.locator('#add-library-dialog')).toBeVisible();
+  await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
+  await expect(page.locator('#library-name')).toBeVisible();
+  await expect(page.locator('#library-path')).toBeVisible();
+});
+
+test('About shows version and license only', async ({ page }) => {
+  await ensureAdmin(page);
+  await page.goto('/about');
+  await expect(page.locator('h1')).toHaveText('About');
+  await expect(page.locator('.about-tile h2', { hasText: 'Version' })).toBeVisible();
+  await expect(page.locator('.about-tile h2', { hasText: 'License' })).toBeVisible();
+  await expect(page.locator('.about-tile')).toHaveCount(2);
+  await expect(page.getByRole('heading', { name: 'Author' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Copyright' })).toHaveCount(0);
+  await expect(page.locator('.about-tile p').first()).toContainText('0.0.1');
 });
 
 test('library cards fit libraries section height', async ({ page }) => {

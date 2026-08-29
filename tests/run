@@ -4,7 +4,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TESTS="$ROOT/tests"
-TOOLCHAINS="$ROOT/toolchains/compose.yaml"
 COMPOSE_FILE="$TESTS/compose.yaml"
 
 RED=$'\033[31m'; GREEN=$'\033[32m'; CYAN=$'\033[36m'; DIM=$'\033[2m'; REV=$'\033[7m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
@@ -14,7 +13,6 @@ if ! command -v podman >/dev/null 2>&1; then
   exit 1
 fi
 
-# Always run compose from tests/ so relative paths resolve.
 cd "$TESTS"
 COMPOSE_FILE="./compose.yaml"
 if command -v podman-compose >/dev/null 2>&1; then
@@ -24,34 +22,50 @@ else
   exit 1
 fi
 
-run_build_plugins() {
-  local PLUGINS="$ROOT/plugins"
-  mkdir -p "$PLUGINS/dist" "$ROOT/medora/bundled/plugins"
-  podman build -t localhost/medora-plugins-packager:latest -f "$PLUGINS/Containerfile" --target package "$PLUGINS"
-  local cid
-  cid=$(podman create localhost/medora-plugins-packager:latest)
-  podman cp "$cid:/out/providers.zip" "$PLUGINS/dist/providers.zip"
-  podman rm "$cid" >/dev/null
-  cp "$PLUGINS/dist/providers.zip" "$ROOT/medora/bundled/plugins/providers.zip"
+build_compose() {
+  if command -v podman-compose >/dev/null 2>&1; then
+    podman-compose -f "$1" "${@:2}"
+  elif podman compose version >/dev/null 2>&1; then
+    podman compose -f "$1" "${@:2}"
+  else
+    echo "${RED}need podman-compose or podman compose${RESET}" >&2
+    exit 1
+  fi
+}
+
+rebuild_dist() {
+  mkdir -p "$ROOT/build/dist" "$ROOT/build/cache"
+  : >"$ROOT/build/dist/.gitkeep"
+  : >"$ROOT/build/cache/.gitkeep"
+  (cd "$ROOT/build" && build_compose compose.yaml up --build --force-recreate --abort-on-container-exit)
+  if [[ ! -x "$ROOT/build/dist/medora" ]]; then
+    echo "${RED}build/dist/medora missing after rebuild${RESET}" >&2
+    exit 1
+  fi
+}
+
+run_unit() {
+  "${COMPOSE[@]}" build unit
+  "${COMPOSE[@]}" run --rm unit
+}
+
+run_smoke() {
+  "${COMPOSE[@]}" down -v 2>/dev/null || true
+  rebuild_dist
+  podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
+  podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
+  podman build -t localhost/tests_llama-stub:latest -f llama-stub/Containerfile llama-stub
+  podman build -t localhost/medora-runtime:latest -f runtime/Containerfile runtime
+  "${COMPOSE[@]}" up -d --build medora
+  "${COMPOSE[@]}" build smoke
+  "${COMPOSE[@]}" run --rm smoke
 }
 
 if [[ ! -t 0 || ! -t 1 ]]; then
   echo "Non-interactive: running unit then smoke"
-  if [[ -f "$ROOT/medora/.env" ]]; then
-    set -a
-    # shellcheck disable=SC1091
-    source "$ROOT/medora/.env"
-    set +a
-  fi
-  "${COMPOSE[@]}" build unit
-  "${COMPOSE[@]}" run --rm unit
+  run_unit
   "${COMPOSE[@]}" down -v 2>/dev/null || true
-  run_build_plugins
-  # Build OMDb stub with an explicit tag (compose short-name pulls fail without a TTY).
-  podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
-  podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
-  "${COMPOSE[@]}" up -d --build medora
-  "${COMPOSE[@]}" run --rm --build smoke
+  run_smoke
   exit 0
 fi
 
@@ -71,33 +85,20 @@ read_key() {
   else echo "$k"; fi
 }
 
-run_pull() {
+run_unit_tty() {
   stty sane; printf '\033[?25h'
-  podman compose -f "$TOOLCHAINS" --profile pull pull
+  run_unit
   read -r -p "Enter…"; stty -echo -icanon time 0 min 0; printf '\033[?25l'
 }
-run_unit() {
+run_smoke_tty() {
   stty sane; printf '\033[?25h'
-  "${COMPOSE[@]}" build unit
-  "${COMPOSE[@]}" run --rm unit
+  run_smoke
   read -r -p "Enter…"; stty -echo -icanon time 0 min 0; printf '\033[?25l'
 }
-run_smoke() {
-  stty sane; printf '\033[?25h'
-  "${COMPOSE[@]}" down -v 2>/dev/null || true
-  run_build_plugins
-  # Movie Meta uses the local OMDb stub (see tests/omdb-stub); no real API key required.
-  podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
-  podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
-  "${COMPOSE[@]}" up -d --build medora
-  "${COMPOSE[@]}" build smoke
-  "${COMPOSE[@]}" run --rm smoke
-  read -r -p "Enter…"; stty -echo -icanon time 0 min 0; printf '\033[?25l'
-}
-run_all() { run_unit; run_smoke; }
+run_all() { run_unit_tty; run_smoke_tty; }
 
 sel=0
-items=("Pull toolchains" "Run unit" "Run smoke" "Run all" "Quit")
+items=("Run unit" "Run smoke" "Run all" "Quit")
 while true; do
   clear
   echo "${CYAN}${BOLD}Medora tests${RESET} ${DIM}(Podman only)${RESET}"
@@ -110,16 +111,15 @@ while true; do
   echo; echo "${DIM}↑/↓ · Enter · Esc quit${RESET}"
   key="$(read_key)"
   case "$key" in
-    ESC[A) sel=$(( (sel+4)%5 ));;
-    ESC[B) sel=$(( (sel+1)%5 ));;
+    ESC[A) sel=$(( (sel+3)%4 ));;
+    ESC[B) sel=$(( (sel+1)%4 ));;
     ESC*) break ;;
     ENTER|SPACE)
       case $sel in
-        0) run_pull ;;
-        1) run_unit ;;
-        2) run_smoke ;;
-        3) run_all ;;
-        4) break ;;
+        0) run_unit_tty ;;
+        1) run_smoke_tty ;;
+        2) run_all ;;
+        3) break ;;
       esac
       ;;
   esac

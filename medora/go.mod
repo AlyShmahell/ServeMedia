@@ -1,9 +1,8 @@
 module github.com/alyshmahell/medora
 
-go 1.23
+go 1.26
 
 require (
-	github.com/alyshmahell/medora-plugin-sdk v0.0.0
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.17.11
@@ -12,11 +11,8 @@ require (
 	modernc.org/sqlite v1.34.5
 )
 
-replace github.com/alyshmahell/medora-plugin-sdk => ../plugins/sdk
-
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

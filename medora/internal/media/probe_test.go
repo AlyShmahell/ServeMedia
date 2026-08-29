@@ -15,6 +15,15 @@ func TestGuessDirectPlayByExt(t *testing.T) {
 	}
 }
 
+func TestStreamMIME(t *testing.T) {
+	if got := media.StreamMIME("/a/b.mp4"); got != "video/mp4" {
+		t.Fatalf("mp4 mime: %s", got)
+	}
+	if got := media.StreamMIME("/a/b.webm"); got != "video/webm" {
+		t.Fatalf("webm mime: %s", got)
+	}
+}
+
 func TestCanDirectPlay(t *testing.T) {
 	p := &media.Probe{}
 	p.Format.FormatName = "mov,mp4,m4a"

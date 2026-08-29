@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/alyshmahell/medora/internal/config"
+	"github.com/alyshmahell/medora/internal/ffbin"
 	"github.com/alyshmahell/medora/internal/media"
 )
 
@@ -84,7 +86,7 @@ func (m *Manager) probeVAAPI() {
 		return
 	}
 
-	out, err := exec.Command("ffmpeg", "-hide_banner", "-encoders").CombinedOutput()
+	out, err := exec.Command(ffbin.FFmpeg(), "-hide_banner", "-encoders").CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte("h264_vaapi")) {
 		log.Printf("transcode hwaccel=software (h264_vaapi unavailable)")
 		return
@@ -110,9 +112,9 @@ func (m *Manager) probeVAAPI() {
 			statFails++
 			continue
 		}
-		ok, partial, err := tryVAAPIDevice(dev)
+		ok, partial, _ := tryVAAPIDevice(dev)
 		if !ok {
-			log.Printf("transcode hwaccel: skip %s (smoke failed: %v)", dev, err)
+			log.Printf("transcode hwaccel: skip %s (vaapi smoke failed; using software if no other device)", dev)
 			continue
 		}
 		if partial {
@@ -254,14 +256,14 @@ func vaapiRealFileSmoke(dev, source string) error {
 	args = append(args, "-frames:v", "30", "-f", "null", "-")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, ffbin.FFmpeg(), args...)
 	return runFFmpegSmoke(cmd)
 }
 
 func vaapiSmokeTestFull(dev string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, "ffmpeg",
+	smoke := exec.CommandContext(ctx, ffbin.FFmpeg(),
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -276,7 +278,7 @@ func vaapiSmokeTestFull(dev string) error {
 func vaapiSmokeTest10BitDirect(dev, source string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, "ffmpeg",
+	smoke := exec.CommandContext(ctx, ffbin.FFmpeg(),
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -293,7 +295,7 @@ func vaapiSmokeTest10BitDirect(dev, source string) error {
 func vaapiSmokeTestFullHW(dev string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, "ffmpeg",
+	smoke := exec.CommandContext(ctx, ffbin.FFmpeg(),
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -309,7 +311,7 @@ func vaapiSmokeTestFullHW(dev string) error {
 func vaapiSmokeTestMinimal(dev string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, "ffmpeg",
+	smoke := exec.CommandContext(ctx, ffbin.FFmpeg(),
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.2",
@@ -321,19 +323,8 @@ func vaapiSmokeTestMinimal(dev string) error {
 }
 
 func runFFmpegSmoke(cmd *exec.Cmd) error {
-	var smokeErr bytes.Buffer
-	cmd.Stderr = &smokeErr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(smokeErr.String())
-		if len(msg) > 500 {
-			msg = msg[len(msg)-500:]
-		}
-		if msg != "" {
-			return fmt.Errorf("%w: %s", err, msg)
-		}
-		return err
-	}
-	return nil
+	cmd.Stderr = io.Discard
+	return cmd.Run()
 }
 
 // Start begins an HLS transcode. ownerKey identifies the client (e.g. user+IP);
@@ -439,7 +430,7 @@ func (m *Manager) startJob(source string, audioIndex, height, startSec int, owne
 	args := m.ffmpegArgs(source, out, pipeline, audioIndex, height, startSec)
 	log.Printf("transcode pipeline=%s job=%s", pipeline, id)
 	log.Printf("ffmpeg %s: %s", id, strings.Join(args, " "))
-	cmd := exec.CommandContext(jobCtx, "ffmpeg", args...)
+	cmd := exec.CommandContext(jobCtx, ffbin.FFmpeg(), args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	j.cmd = cmd
@@ -633,17 +624,18 @@ func (m *Manager) Get(id string) *Job {
 }
 
 func (m *Manager) cleanupLoop() {
-	t := time.NewTicker(30 * time.Minute)
+	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for range t.C {
+		idleCut := time.Now().Add(-10 * time.Minute)
 		hours := m.Cfg.Transcode.CleanupHours
 		if hours <= 0 {
 			hours = 24
 		}
-		cut := time.Now().Add(-time.Duration(hours) * time.Hour)
+		ageCut := time.Now().Add(-time.Duration(hours) * time.Hour)
 		m.mu.Lock()
 		for id, j := range m.jobs {
-			if j.LastAccess.Before(cut) {
+			if j.LastAccess.Before(idleCut) || j.LastAccess.Before(ageCut) {
 				m.removeJobLocked(id)
 			}
 		}
