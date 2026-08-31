@@ -1,4 +1,4 @@
-version: "0.0.1"
+version: "0.0.2"
 http:
   addr: ":7676"
 store:
@@ -30,7 +30,7 @@ integrations:
     destinations: []
 matchora:
   addr: "127.0.0.1:7680"
-  url: "https://github.com/AlyShmahell/matchora/releases/download/v0.0.3/matchora-0.0.3-linux-amd64.tar.gz"
+  url: "https://github.com/AlyShmahell/matchora/releases/download/v0.0.4/matchora-0.0.4-linux-amd64.tar.gz"
 vendor:
   htmx_url: "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
   htmx_license_url: "https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE"

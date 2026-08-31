@@ -14,6 +14,10 @@
       <option value="local" {{if not .MetaReady}}selected{{end}}>Scan local NFO/posters</option>
       <option value="matchora" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with Matchora</option>
     </select>
+    <div id="entry-scan-title-wrap" class="scan-title-field" hidden>
+      <label for="entry-scan-title">Title to match</label>
+      <input type="text" name="title" id="entry-scan-title" autocomplete="off">
+    </div>
     {{if not .MetaReady}}
     <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
     {{else if .MetaHint}}
@@ -38,17 +42,28 @@
   var dlg = document.getElementById('entry-scan-modal');
   if (!dlg) return;
   var form = document.getElementById('entry-scan-modal-form');
+  var mode = document.getElementById('entry-scan-mode');
+  var titleWrap = document.getElementById('entry-scan-title-wrap');
+  var titleInput = document.getElementById('entry-scan-title');
   function closeDlg() { dlg.close(); }
+  function syncTitleField() {
+    var show = mode && mode.value === 'matchora';
+    if (titleWrap) titleWrap.hidden = !show;
+    if (titleInput) titleInput.disabled = !show;
+  }
   var closeBtn = document.getElementById('entry-scan-modal-close');
   var cancelBtn = document.getElementById('entry-scan-modal-cancel');
   if (closeBtn) closeBtn.addEventListener('click', closeDlg);
   if (cancelBtn) cancelBtn.addEventListener('click', closeDlg);
+  if (mode) mode.addEventListener('change', syncTitleField);
   dlg.addEventListener('click', function (e) {
     if (e.target === dlg) closeDlg();
   });
-  window.openEntryScanModal = function (mediaId) {
+  window.openEntryScanModal = function (mediaId, title) {
     if (!form) return;
     form.setAttribute('hx-post', '/hx/media/' + mediaId + '/scan');
+    if (titleInput) titleInput.value = title || '';
+    syncTitleField();
     if (window.htmx) htmx.process(form);
     dlg.showModal();
   };

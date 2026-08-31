@@ -11,7 +11,7 @@
         <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
         <span class="play-icon" aria-hidden="true"></span>
       </a>
-      {{template "partials/card_actions.html" (mediaActions "movie" .Item.ID .MetaReady .MetaDisabledReason .Item.MatchStatus.String)}}
+      {{template "partials/card_actions.html" (mediaActions "movie" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String)}}
     </div>
     <div class="media-meta">
       <h1>{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>

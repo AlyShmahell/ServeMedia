@@ -21,27 +21,6 @@ services:
     expose:
       - "9090"
 
-  llama-stub:
-    image: localhost/tests_llama-stub:latest
-    build:
-      context: ./llama-stub
-      dockerfile: Containerfile
-    expose:
-      - "8080"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
-      interval: 2s
-      timeout: 2s
-      retries: 10
-
-  llm-stub:
-    image: localhost/tests_llama-stub:latest
-    build:
-      context: ./llama-stub
-      dockerfile: Containerfile
-    expose:
-      - "8080"
-
   medora:
     image: localhost/medora-runtime:latest
     build:
@@ -54,10 +33,6 @@ services:
       omdb-stub:
         condition: service_started
       webhook-stub:
-        condition: service_started
-      llama-stub:
-        condition: service_healthy
-      llm-stub:
         condition: service_started
     volumes:
       - ../build/dist:/app:z

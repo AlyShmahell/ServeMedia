@@ -10,10 +10,10 @@
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
   <h1>{{.Title}}</h1>
-  <p id="status" class="muted">Loading…</p>
   <div class="player-stage" id="stage">
     <video id="v" class="video-js vjs-big-play-centered medora-player" playsinline crossorigin="anonymous"></video>
   </div>
+  <p id="status" class="muted">Loading…</p>
 </main></div>
 <script>
 (async () => {
@@ -190,6 +190,7 @@
     controls: true,
     preload: 'auto',
     fluid: true,
+    inactivityTimeout: 5000,
     playbackRates: [0.75, 1, 1.25, 1.5, 2],
     html5: { nativeTextTracks: false, nativeAudioTracks: false, nativeVideoTracks: false },
     controlBar: {
@@ -236,6 +237,34 @@
   let ignoreSubChange = false;
   let textTrackSnapshot = { tracks: [], key: '' };
 
+  const nativeDuration = player.duration.bind(player);
+  const nativeCurrentTime = player.currentTime.bind(player);
+  let applyingNativeSeek = false;
+  player.duration = function () {
+    if (knownDuration > 0) return knownDuration;
+    const d = nativeDuration();
+    return isFinite(d) && d > 0 ? d : 0;
+  };
+  player.currentTime = function (t) {
+    if (typeof t === 'undefined') {
+      const rel = nativeCurrentTime() || 0;
+      if (knownDuration > 0) return timelineOffset + rel;
+      return rel;
+    }
+    if (applyingNativeSeek) return nativeCurrentTime(t);
+    seekTo(t);
+  };
+  function applyNativeSeek(rel) {
+    applyingNativeSeek = true;
+    try { nativeCurrentTime(rel); } catch (e) {}
+    applyingNativeSeek = false;
+  }
+  function bumpUserActive() { player.userActive(true); }
+  const playerEl = player.el();
+  ['pointermove', 'pointerdown', 'touchstart'].forEach((ev) => {
+    playerEl.addEventListener(ev, bumpUserActive, { passive: true });
+  });
+
   function videoEl() {
     return player.el().querySelector('video');
   }
@@ -245,7 +274,7 @@
     return isFinite(d) && d > 0 ? d : 0;
   }
   function mediaTime() {
-    return timelineOffset + (player.currentTime() || 0);
+    return timelineOffset + (nativeCurrentTime() || 0);
   }
   function hlsAvailableEnd() {
     let rel = 0;
@@ -268,7 +297,7 @@
   function seekWhenReady(t) {
     const target = t > 0 ? t : 0;
     if (!(target > 0)) return;
-    const apply = () => { try { player.currentTime(target); } catch (e) {} };
+    const apply = () => applyNativeSeek(target);
     if (player.readyState() >= 1) apply();
     else player.one('loadedmetadata', apply);
   }
@@ -279,11 +308,11 @@
     if (absoluteT > dur) absoluteT = dur;
     if (playbackMode === 'direct' || !hls) {
       timelineOffset = 0;
-      try { player.currentTime(absoluteT); } catch (e) {}
+      applyNativeSeek(absoluteT);
       return;
     }
     if (absoluteT <= hlsAvailableEnd() + 1) {
-      try { player.currentTime(Math.max(0, absoluteT - timelineOffset)); } catch (e) {}
+      applyNativeSeek(Math.max(0, absoluteT - timelineOffset));
       return;
     }
     if (switching) return;
@@ -537,6 +566,7 @@
     lastSessionCfg = cfg;
     if (cfg.duration > 0) knownDuration = Number(cfg.duration);
     else knownDuration = 0;
+    if (knownDuration > 0) player.trigger('durationchange');
     currentAudio = cfg.audio != null ? Number(cfg.audio) : -1;
     currentHeight = cfg.height != null ? Number(cfg.height) : 0;
     chapters = cfg.chapters || [];

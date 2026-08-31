@@ -22,7 +22,6 @@ COPY medora/share/config /dist/config
 COPY medora/share/applications /dist/share/applications
 COPY medora/web/static/app.css medora/web/static/app.js medora/web/static/logo.svg medora/web/static/placeholder.svg /dist/public/
 COPY LICENSE /dist/LICENSE
-COPY VERSION /dist/VERSION
 COPY build/build /build
 RUN chmod +x /build && /build vendor
 CMD ["/build", "stage"]

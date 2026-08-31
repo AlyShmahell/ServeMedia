@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -48,6 +47,7 @@ type Manager struct {
 	activeByKey map[string]string
 	useVAAPI    bool
 	vaapiDev    string
+	vaapiCodec  string // "h264" or "av1"
 }
 
 type Job struct {
@@ -86,9 +86,13 @@ func (m *Manager) probeVAAPI() {
 		return
 	}
 
+	ensureLibVADriversPath()
+
 	out, err := exec.Command(ffbin.FFmpeg(), "-hide_banner", "-encoders").CombinedOutput()
-	if err != nil || !bytes.Contains(out, []byte("h264_vaapi")) {
-		log.Printf("transcode hwaccel=software (h264_vaapi unavailable)")
+	hasH264 := err == nil && bytes.Contains(out, []byte("h264_vaapi"))
+	hasAV1 := err == nil && bytes.Contains(out, []byte("av1_vaapi"))
+	if err != nil || (!hasH264 && !hasAV1) {
+		log.Printf("transcode hwaccel=software (vaapi encoders unavailable)")
 		return
 	}
 
@@ -112,23 +116,41 @@ func (m *Manager) probeVAAPI() {
 			statFails++
 			continue
 		}
-		ok, partial, _ := tryVAAPIDevice(dev)
+		ok, partial, codec, err := tryVAAPIDevice(dev)
 		if !ok {
-			log.Printf("transcode hwaccel: skip %s (vaapi smoke failed; using software if no other device)", dev)
+			if err != nil {
+				log.Printf("transcode hwaccel: skip %s: %v", dev, err)
+			} else {
+				log.Printf("transcode hwaccel: skip %s (vaapi smoke failed; using software if no other device)", dev)
+			}
 			continue
 		}
-		if partial {
-			log.Printf("transcode hwaccel: %s passed minimal smoke only (full hybrid smoke failed); will try hybrid encode", dev)
+		if codec == "" {
+			codec = "h264"
 		}
 		m.useVAAPI = true
 		m.vaapiDev = dev
-		log.Printf("transcode hwaccel=vaapi device=%s", dev)
-		if clip := vaapiProbeClipPath(); clip != "" {
-			if p, err := media.Ffprobe(clip); err == nil && is10BitPixFmt(p.VideoPixFmt()) {
-				if err := vaapiSmokeTest10BitDirect(dev, clip); err == nil {
-					log.Printf("transcode hwaccel: %s 10-bit direct GPU convert OK (scale_vaapi)", dev)
+		m.vaapiCodec = codec
+		if codec == "av1" {
+			log.Printf("transcode hwaccel=vaapi device=%s codec=av1 (h264 encode unavailable)", dev)
+		} else {
+			log.Printf("transcode hwaccel=vaapi device=%s", dev)
+			if partial {
+				if err != nil {
+					log.Printf("transcode hwaccel: %s using hybrid encode (%v)", dev, err)
 				} else {
-					log.Printf("transcode hwaccel: %s 10-bit direct GPU convert unavailable (%v); will use hwdownload fallback", dev, err)
+					log.Printf("transcode hwaccel: %s passed minimal smoke only (full hybrid smoke failed); will try hybrid encode", dev)
+				}
+			}
+		}
+		if codec != "av1" {
+			if clip := vaapiProbeClipPath(); clip != "" {
+				if p, err := media.Ffprobe(clip); err == nil && is10BitPixFmt(p.VideoPixFmt()) {
+					if err := vaapiSmokeTest10BitDirect(dev, clip); err == nil {
+						log.Printf("transcode hwaccel: %s 10-bit direct GPU convert OK (scale_vaapi)", dev)
+					} else {
+						log.Printf("transcode hwaccel: %s 10-bit direct GPU convert unavailable (%v); will use hwdownload fallback", dev, err)
+					}
 				}
 			}
 		}
@@ -144,6 +166,9 @@ func (m *Manager) probeVAAPI() {
 // HWAccelStatus returns a short description of the active transcode path.
 func (m *Manager) HWAccelStatus() string {
 	if m.useVAAPI && m.vaapiDev != "" {
+		if m.vaapiCodec == "av1" {
+			return "vaapi " + m.vaapiDev + " av1"
+		}
 		return "vaapi " + m.vaapiDev
 	}
 	return "software"
@@ -166,6 +191,20 @@ func (m *Manager) ActiveTranscodeStatus() string {
 		return ""
 	}
 	return best.Pipeline
+}
+
+func ensureLibVADriversPath() {
+	if os.Getenv("LIBVA_DRIVERS_PATH") != "" {
+		return
+	}
+	for _, dir := range []string{"/usr/lib64/dri", "/usr/lib/dri"} {
+		st, err := os.Stat(dir)
+		if err == nil && st.IsDir() {
+			_ = os.Setenv("LIBVA_DRIVERS_PATH", dir)
+			log.Printf("transcode hwaccel: LIBVA_DRIVERS_PATH=%s", dir)
+			return
+		}
+	}
 }
 
 func listRenderNodes() []string {
@@ -216,22 +255,25 @@ func videoPixFmt(source, hint string) string {
 	return ""
 }
 
-func tryVAAPIDevice(dev string) (ok bool, partial bool, err error) {
+func tryVAAPIDevice(dev string) (ok bool, partial bool, codec string, err error) {
 	if err := vaapiSmokeTestFull(dev); err != nil {
 		if err2 := vaapiSmokeTestMinimal(dev); err2 == nil {
-			return true, true, err
+			return true, true, "h264", err
 		}
-		return false, false, err
+		if err3 := vaapiSmokeTestAV1(dev); err3 == nil {
+			return true, true, "av1", err
+		}
+		return false, false, "", err
 	}
 	if err := vaapiSmokeTestFullHW(dev); err != nil {
-		return true, true, err
+		return true, true, "h264", err
 	}
 	if clip := vaapiProbeClipPath(); clip != "" {
 		if err := vaapiRealFileSmoke(dev, clip); err != nil {
-			return false, false, fmt.Errorf("real-file smoke: %w", err)
+			return true, true, "h264", fmt.Errorf("real-file smoke: %w", err)
 		}
 	}
-	return true, false, nil
+	return true, false, "h264", nil
 }
 
 func vaapiProbeClipPath() string {
@@ -251,7 +293,7 @@ func vaapiRealFileSmoke(dev, source string) error {
 	if pipeline == PipelineSoftware {
 		pipeline = PipelineVAAPIHybrid
 	}
-	args := ffmpegArgsForPipeline(dev, source, pipeline, -1, 0, 0, config.Defaults())
+	args := ffmpegArgsForPipeline(dev, "h264", source, pipeline, -1, 0, 0, config.Defaults())
 	args = append([]string{"-hide_banner", "-loglevel", "error"}, args...)
 	args = append(args, "-frames:v", "30", "-f", "null", "-")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -322,9 +364,35 @@ func vaapiSmokeTestMinimal(dev string) error {
 	return runFFmpegSmoke(smoke)
 }
 
+func vaapiSmokeTestAV1(dev string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	smoke := exec.CommandContext(ctx, ffbin.FFmpeg(),
+		"-hide_banner", "-loglevel", "error",
+		"-init_hw_device", "vaapi=va:"+dev,
+		"-filter_hw_device", "va",
+		"-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2",
+		"-vf", "format=nv12,hwupload",
+		"-c:v", "av1_vaapi",
+		"-f", "null", "-",
+	)
+	return runFFmpegSmoke(smoke)
+}
+
 func runFFmpegSmoke(cmd *exec.Cmd) error {
-	cmd.Stderr = io.Discard
-	return cmd.Run()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			if len(msg) > 400 {
+				msg = msg[:400]
+			}
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+	}
+	return err
 }
 
 // Start begins an HLS transcode. ownerKey identifies the client (e.g. user+IP);
@@ -473,10 +541,10 @@ func (m *Manager) removeJobLocked(id string) {
 }
 
 func (m *Manager) ffmpegArgs(source, out string, pipeline Pipeline, audioIndex, height, startSec int) []string {
-	return ffmpegArgsForPipeline(m.vaapiDev, source, pipeline, audioIndex, height, startSec, m.Cfg, out)
+	return ffmpegArgsForPipeline(m.vaapiDev, m.vaapiCodec, source, pipeline, audioIndex, height, startSec, m.Cfg, out)
 }
 
-func ffmpegArgsForPipeline(vaapiDev, source string, pipeline Pipeline, audioIndex, height, startSec int, cfg config.Config, out ...string) []string {
+func ffmpegArgsForPipeline(vaapiDev, vaapiCodec, source string, pipeline Pipeline, audioIndex, height, startSec int, cfg config.Config, out ...string) []string {
 	seg := cfg.Transcode.SegmentSeconds
 	if seg <= 0 {
 		seg = 6
@@ -489,6 +557,7 @@ func ffmpegArgsForPipeline(vaapiDev, source string, pipeline Pipeline, audioInde
 
 	var hls []string
 	if len(out) > 0 && out[0] != "" {
+		segName := "seg_%03d.ts"
 		hls = []string{
 			"-c:a", "aac", "-ac", "2",
 			"-f", "hls",
@@ -496,9 +565,15 @@ func ffmpegArgsForPipeline(vaapiDev, source string, pipeline Pipeline, audioInde
 			"-hls_list_size", "0",
 			"-hls_playlist_type", "event",
 			"-hls_flags", "independent_segments",
-			"-hls_segment_filename", filepath.Join(out[0], "seg_%03d.ts"),
-			filepath.Join(out[0], "master.m3u8"),
 		}
+		if vaapiCodec == "av1" {
+			segName = "seg_%03d.m4s"
+			hls = append(hls, "-hls_segment_type", "fmp4")
+		}
+		hls = append(hls,
+			"-hls_segment_filename", filepath.Join(out[0], segName),
+			filepath.Join(out[0], "master.m3u8"),
+		)
 	}
 
 	ss := []string{}
@@ -532,11 +607,15 @@ func ffmpegArgsForPipeline(vaapiDev, source string, pipeline Pipeline, audioInde
 				"-vf", vf,
 			)
 		}
-		args = append(args,
-			"-c:v", "h264_vaapi",
-			"-profile:v", "high",
-			"-force_key_frames", forceKF,
-		)
+		vcodec := "h264_vaapi"
+		vextra := []string{"-profile:v", "high"}
+		if vaapiCodec == "av1" {
+			vcodec = "av1_vaapi"
+			vextra = nil
+		}
+		args = append(args, "-c:v", vcodec)
+		args = append(args, vextra...)
+		args = append(args, "-force_key_frames", forceKF)
 		if cfg.Transcode.CRF > 0 {
 			args = append(args, "-qp", fmt.Sprintf("%d", cfg.Transcode.CRF))
 		} else {

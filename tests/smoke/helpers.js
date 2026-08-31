@@ -1,3 +1,34 @@
+const { expect } = require('@playwright/test');
+
+async function libraryCard(page, name) {
+  return page.locator('.library-card').filter({
+    has: page.locator('.library-card-title', { hasText: name }),
+  }).first();
+}
+
+async function waitForLibraryIdle(page, name) {
+  await page.goto('/');
+  const card = await libraryCard(page, name);
+  await expect(card).toBeVisible({ timeout: 30000 });
+  await expect(card).not.toHaveClass(/is-scanning/, { timeout: 180000 });
+  return card;
+}
+
+async function openLibrary(page, name) {
+  const card = await waitForLibraryIdle(page, name);
+  await card.locator('.library-card-title').click();
+  await expect(page).toHaveURL(/\/libraries\/\d+/);
+}
+
+async function localScanLibrary(page, name) {
+  const card = await waitForLibraryIdle(page, name);
+  await card.locator('.library-action-scan').click();
+  await expect(page.locator('#scan-modal')).toBeVisible();
+  await page.selectOption('#scan-mode', 'local');
+  await page.locator('#scan-modal-form button[type="submit"]').click();
+  await expect(card).not.toHaveClass(/is-scanning/, { timeout: 180000 });
+}
+
 async function ensureAdmin(page) {
   await page.goto('/');
   const url = page.url();
@@ -54,4 +85,12 @@ async function ensureRegularUser(page, username = 'trackeruser', password = 'use
   await loginAs(page, username, password);
 }
 
-module.exports = { ensureAdmin, ensureRegularUser, loginAs };
+module.exports = {
+  ensureAdmin,
+  ensureRegularUser,
+  loginAs,
+  libraryCard,
+  waitForLibraryIdle,
+  openLibrary,
+  localScanLibrary,
+};

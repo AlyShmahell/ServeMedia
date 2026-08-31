@@ -136,7 +136,6 @@ func Defaults() Config {
 	c.Backup.Dir = "data/backups"
 	c.Scan.OnStartup = true
 	c.Matchora.Addr = "127.0.0.1:7680"
-	c.Version = "0.0.1"
 	return c
 }
 
@@ -168,6 +167,7 @@ func Load(path string) (Config, error) {
 	} else if !os.IsNotExist(err) {
 		return c, err
 	}
+	seedVersion := strings.TrimSpace(c.Version)
 	c.ExeDir = root
 	c.resolvePaths()
 	overlay := filepath.Join(root, "data", "config.yaml")
@@ -181,6 +181,7 @@ func Load(path string) (Config, error) {
 		c.OverlayPath = overlay
 		c.resolvePaths()
 	}
+	c.Version = seedVersion
 	applyEnv(&c)
 	c.ExeDir = root
 	c.resolvePaths()

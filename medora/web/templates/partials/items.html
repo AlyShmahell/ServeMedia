@@ -3,7 +3,7 @@
 <a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
   <div class="poster-wrap">
     <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
-    {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String)}}
+    {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID .Item.Title $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String)}}
     <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
   </div>
   <div class="t">{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</div>

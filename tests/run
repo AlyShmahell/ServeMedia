@@ -54,7 +54,6 @@ run_smoke() {
   rebuild_dist
   podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
   podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
-  podman build -t localhost/tests_llama-stub:latest -f llama-stub/Containerfile llama-stub
   podman build -t localhost/medora-runtime:latest -f runtime/Containerfile runtime
   "${COMPOSE[@]}" up -d --build medora
   "${COMPOSE[@]}" build smoke

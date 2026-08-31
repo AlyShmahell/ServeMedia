@@ -27,6 +27,7 @@ async function ensureTVLibrary(page) {
   }
   const tvLib = page.locator('.library-card').filter({ has: page.locator('.library-card-title', { hasText: 'TV' }) }).first();
   if (await tvLib.count()) {
+    await expect(tvLib).not.toHaveClass(/is-scanning/, { timeout: 180000 });
     await tvLib.locator('.library-card-title').click();
     await expect(page.getByRole('link', { name: /Sample Show/i })).toBeVisible({ timeout: 90000 });
     return;
@@ -40,13 +41,15 @@ async function ensureTVLibrary(page) {
   await page.locator('#add-library-dialog button[type="submit"]').click();
   await expect(page).toHaveURL(/scan=/);
   await page.goto('/');
-  await expect(page.locator('a[href^="/shows/"], .library-card').first()).toBeVisible({
-    timeout: 90000,
-  });
+  const created = page.locator('.library-card').filter({
+    has: page.locator('.library-card-title', { hasText: 'TV' }),
+  }).first();
+  await expect(created).toBeVisible({ timeout: 30000 });
+  await expect(created).not.toHaveClass(/is-scanning/, { timeout: 180000 });
   if (await page.getByRole('link', { name: /Sample Show/i }).count()) {
     return;
   }
-  await page.locator('.library-card-title', { hasText: 'TV' }).first().click();
+  await created.locator('.library-card-title').click();
   await expect(page.getByRole('link', { name: /Sample Show/i })).toBeVisible({ timeout: 90000 });
 }
 
@@ -78,7 +81,8 @@ test('add library dialog has no type field', async ({ page }) => {
   await expect(page.locator('#add-library-dialog')).toBeVisible();
   await expect(page.locator('#add-library-dialog select[name="type"]')).toHaveCount(0);
   await expect(page.locator('#library-name')).toBeVisible();
-  await expect(page.locator('#library-path')).toBeVisible();
+  await expect(page.locator('#library-path')).toHaveCount(1);
+  await expect(page.locator('#library-path-display')).toBeVisible();
 });
 
 test('About shows version and license only', async ({ page }) => {
@@ -90,7 +94,7 @@ test('About shows version and license only', async ({ page }) => {
   await expect(page.locator('.about-tile')).toHaveCount(2);
   await expect(page.getByRole('heading', { name: 'Author' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Copyright' })).toHaveCount(0);
-  await expect(page.locator('.about-tile p').first()).toContainText('0.0.1');
+  await expect(page.locator('.about-tile p').first()).toContainText(/\d+\.\d+\.\d+/);
 });
 
 test('library cards fit libraries section height', async ({ page }) => {

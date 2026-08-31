@@ -11,7 +11,7 @@ ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
 usage() {
   cat <<EOF
 Usage: curl -fsSL https://raw.githubusercontent.com/AlyShmahell/medora/main/install.sh | bash
-  Interactive TTY menu: pick a GitHub release, then slim or bundled.
+  Interactive TTY menu: pick a GitHub release.
   Installs into ~/.medora, links ~/.local/bin/medora, and installs a userscope .desktop.
 
   MEDORA_REPO   GitHub owner/name (default AlyShmahell/medora)
@@ -118,36 +118,30 @@ CHOICE=
 menu "${TAGS[@]}"
 TAG="${TAGS[$CHOICE]}"
 
-echo
-echo "Select archive for ${TAG}"
-CHOICE=
-menu "bundled (ffmpeg + llama)" "slim (run --prepare later)"
-case "$CHOICE" in
-  0) KIND=bundled ;;
-  *) KIND=slim ;;
-esac
-
 ASSET_URL="$(python3 -c '
 import json, sys
-tag, kind = sys.argv[2], sys.argv[3]
+tag = sys.argv[2]
 rels = json.load(open(sys.argv[1]))
 rel = next((r for r in rels if (r.get("tag_name") or "") == tag), None)
 if not rel:
     sys.exit(2)
 assets = rel.get("assets") or []
-want = []
+bundled, plain = [], []
 for a in assets:
     name = a.get("name") or ""
     url = a.get("browser_download_url") or ""
-    if kind == "bundled" and name.endswith("-linux-amd64-bundled.tar.gz"):
-        want.append(url)
-    if kind == "slim" and name.endswith("-linux-amd64.tar.gz") and "bundled" not in name:
-        want.append(url)
-if not want:
+    if name.endswith("-linux-amd64-bundled.tar.gz"):
+        bundled.append(url)
+    elif name.endswith("-linux-amd64.tar.gz") and "bundled" not in name:
+        plain.append(url)
+if bundled:
+    print(bundled[0])
+elif plain:
+    print(plain[0])
+else:
     sys.exit(3)
-print(want[0])
-' "$json_tmp" "$TAG" "$KIND")" || {
-  echo "error: ${KIND} tarball not found on ${TAG}" >&2
+' "$json_tmp" "$TAG")" || {
+  echo "error: linux-amd64 tarball not found on ${TAG}" >&2
   exit 1
 }
 
@@ -168,7 +162,7 @@ else
 fi
 
 mkdir -p "$DEST"
-for item in medora config public tools vendor share LICENSE VERSION; do
+for item in medora config public tools vendor share LICENSE; do
   if [[ -e "$src/$item" ]]; then
     rm -rf "$DEST/$item"
     cp -a "$src/$item" "$DEST/"
@@ -202,7 +196,7 @@ if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
 fi
 
-echo "Installed ${TAG} (${KIND}) to ${DEST}"
+echo "Installed ${TAG} to ${DEST}"
 echo "  ${BIN_DIR}/medora"
 echo "  ${desktop_dst}"
 echo "Add ${BIN_DIR} to PATH if medora is not found."

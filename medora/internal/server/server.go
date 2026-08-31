@@ -137,11 +137,18 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 			}
 			return strings.Join(out, ", ")
 		},
-		"mediaActions": func(scope string, id int64, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
-			return map[string]any{"Scope": scope, "ID": id, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus}
+		"js": func(v any) template.JS {
+			b, err := json.Marshal(v)
+			if err != nil {
+				return template.JS("null")
+			}
+			return template.JS(b)
 		},
-		"mediaActionsStatic": func(scope string, id int64, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
-			return map[string]any{"Scope": scope, "ID": id, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus, "Static": true}
+		"mediaActions": func(scope string, id int64, title string, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
+			return map[string]any{"Scope": scope, "ID": id, "Title": title, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus}
+		},
+		"mediaActionsStatic": func(scope string, id int64, title string, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
+			return map[string]any{"Scope": scope, "ID": id, "Title": title, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus, "Static": true}
 		},
 		"hasStr": func(list []string, want string) bool {
 			for _, v := range list {
@@ -1648,7 +1655,18 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	go s.runMediaScan(lib, it, jobID, mode, persist, overwrite)
+	queryTitle := ""
+	if mode == "matchora" {
+		queryTitle = strings.TrimSpace(r.FormValue("title"))
+		if queryTitle != "" {
+			_ = s.DB.UpdateMediaItemTitle(r.Context(), it.ID, queryTitle)
+			it.Title = queryTitle
+			it.SortTitle = queryTitle
+		} else {
+			queryTitle = strings.TrimSpace(it.Title)
+		}
+	}
+	go s.runMediaScan(lib, it, jobID, mode, persist, overwrite, queryTitle)
 	j, _ := s.DB.GetScanJob(r.Context(), jobID)
 	if j == nil {
 		j = &db.ScanJob{ID: jobID, Status: "running", ProgressPct: 0, LibraryID: sql.NullInt64{Int64: lib.ID, Valid: true}}
@@ -1657,7 +1675,7 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "partials/entry_scan_progress.html", map[string]any{"Job": j, "Poll": poll})
 }
 
-func (s *Server) runMediaScan(lib *db.Library, item *db.MediaItem, jobID int64, mode string, persist, overwrite bool) {
+func (s *Server) runMediaScan(lib *db.Library, item *db.MediaItem, jobID int64, mode string, persist, overwrite bool, queryTitle string) {
 	ctx := context.Background()
 	s.syncFetchClients()
 	if mode != "matchora" {
@@ -1670,7 +1688,7 @@ func (s *Server) runMediaScan(lib *db.Library, item *db.MediaItem, jobID int64, 
 		return
 	}
 	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 0, "Matching…")
-	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID}
+	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID, QueryTitle: strings.TrimSpace(queryTitle)}
 	if err := s.Fetch.MatchItem(ctx, lib, item, opts); err != nil {
 		log.Printf("match media %d: %v", item.ID, err)
 		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alyshmahell/medora/internal/config"
@@ -43,6 +44,13 @@ func TestVaapiSmokeTestMinimal(t *testing.T) {
 	dev := requireRenderNode(t)
 	if err := vaapiSmokeTestMinimal(dev); err != nil {
 		t.Fatalf("minimal smoke on %s: %v", dev, err)
+	}
+}
+
+func TestVaapiSmokeTestAV1(t *testing.T) {
+	dev := requireRenderNode(t)
+	if err := vaapiSmokeTestAV1(dev); err != nil {
+		t.Skipf("av1_vaapi smoke on %s: %v", dev, err)
 	}
 }
 
@@ -112,5 +120,24 @@ func TestIs10BitPixFmt(t *testing.T) {
 	}
 	if is10BitPixFmt("yuv420p") {
 		t.Fatal("expected 8-bit")
+	}
+}
+
+func TestEnsureLibVADriversPathKeepsExisting(t *testing.T) {
+	t.Setenv("LIBVA_DRIVERS_PATH", "/custom/dri")
+	ensureLibVADriversPath()
+	if got := os.Getenv("LIBVA_DRIVERS_PATH"); got != "/custom/dri" {
+		t.Fatalf("LIBVA_DRIVERS_PATH=%q", got)
+	}
+}
+
+func TestRunFFmpegSmokeIncludesStderr(t *testing.T) {
+	cmd := exec.Command("sh", "-c", "echo vaapi-boom >&2; exit 1")
+	err := runFFmpegSmoke(cmd)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "vaapi-boom") {
+		t.Fatalf("stderr not in error: %v", err)
 	}
 }

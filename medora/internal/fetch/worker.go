@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,9 +24,10 @@ type Worker struct {
 }
 
 type Opts struct {
-	Persist   bool
-	Overwrite bool
-	ScanJobID int64
+	Persist    bool
+	Overwrite  bool
+	ScanJobID  int64
+	QueryTitle string
 }
 
 func (w *Worker) progress(ctx context.Context, jobID int64, pct int, msg string) {
@@ -52,6 +54,9 @@ func (w *Worker) MatchItem(ctx context.Context, lib *db.Library, item *db.MediaI
 	if item == nil || lib == nil {
 		return fmt.Errorf("missing media item")
 	}
+	if title := strings.TrimSpace(opts.QueryTitle); title != "" {
+		return w.matchIngest(ctx, lib, item, title, opts)
+	}
 	scanPath := item.Path
 	if item.Kind == "movie" {
 		st, err := os.Stat(item.Path)
@@ -60,6 +65,36 @@ func (w *Worker) MatchItem(ctx context.Context, lib *db.Library, item *db.MediaI
 		}
 	}
 	return w.MatchPath(ctx, lib, scanPath, item, opts)
+}
+
+func (w *Worker) matchIngest(ctx context.Context, lib *db.Library, item *db.MediaItem, title string, opts Opts) error {
+	if w.Meta == nil {
+		return fmt.Errorf("metadata service unavailable")
+	}
+	st, err := w.Meta.Status()
+	if err != nil || !st.Ready {
+		return fmt.Errorf("metadata service unavailable")
+	}
+	w.progress(ctx, opts.ScanJobID, 5, "Matching titles…")
+	row := matchora.IngestRow{Title: title}
+	if year := ingestYear(item, title); year != "" {
+		row.Year = year
+	}
+	scanned, err := w.Meta.Ingest([]matchora.IngestRow{row})
+	if err != nil {
+		return err
+	}
+	return w.streamJobs(ctx, lib, scanned.Session, item, opts)
+}
+
+func ingestYear(item *db.MediaItem, title string) string {
+	if _, y := metadata.ParseTitleYear(title); y > 0 {
+		return strconv.Itoa(y)
+	}
+	if item != nil && item.Year.Valid && item.Year.Int64 > 0 {
+		return strconv.FormatInt(item.Year.Int64, 10)
+	}
+	return ""
 }
 
 func (w *Worker) MatchPath(ctx context.Context, lib *db.Library, scanPath string, only *db.MediaItem, opts Opts) error {
@@ -90,7 +125,7 @@ func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string
 		}
 		p, err := w.Meta.ScanStatus(session)
 		if err != nil {
-			return err
+			p = matchora.ScanProgress{}
 		}
 		jobs, err := w.Meta.Jobs(session)
 		if err != nil {
@@ -118,7 +153,7 @@ func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string
 			appliedOne = true
 			p, err = w.Meta.ScanStatus(session)
 			if err != nil {
-				return err
+				p = matchora.ScanProgress{}
 			}
 			w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
 			break
@@ -171,6 +206,9 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matcho
 	it, err := w.upsertFromJob(ctx, lib.ID, j, opts.Overwrite)
 	if err != nil {
 		return err
+	}
+	if it == nil && only != nil {
+		it = only
 	}
 	if it == nil {
 		log.Printf("matchora job %s path %s: no library item", j.ID, j.Path)
@@ -343,6 +381,18 @@ func kindFromJob(j matchora.Job, files []matchora.JobFile) string {
 func jobTouchesItem(j matchora.Job, item *db.MediaItem) bool {
 	if item == nil {
 		return true
+	}
+	if strings.TrimSpace(j.Path) == "" {
+		hasFile := false
+		for _, f := range j.Files {
+			if strings.TrimSpace(f.Path) != "" {
+				hasFile = true
+				break
+			}
+		}
+		if !hasFile {
+			return true
+		}
 	}
 	ip := filepath.Clean(item.Path)
 	jp := filepath.Clean(j.Path)

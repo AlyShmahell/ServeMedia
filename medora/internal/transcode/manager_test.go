@@ -61,6 +61,27 @@ func TestFFmpegArgsVAAPIHybrid(t *testing.T) {
 	}
 }
 
+func TestFFmpegArgsVAAPIAV1(t *testing.T) {
+	m := &Manager{
+		Cfg:        config.Defaults(),
+		vaapiDev:   "/dev/dri/renderD128",
+		vaapiCodec: "av1",
+	}
+	args := strings.Join(m.ffmpegArgs("/media/x.mkv", "/tmp/out", PipelineVAAPIHybrid, -1, 0, 0), " ")
+	if !strings.Contains(args, "av1_vaapi") {
+		t.Fatalf("expected av1_vaapi in %q", args)
+	}
+	if strings.Contains(args, "h264_vaapi") {
+		t.Fatalf("unexpected h264 in %q", args)
+	}
+	if !strings.Contains(args, "fmp4") {
+		t.Fatalf("expected fmp4 HLS for av1 in %q", args)
+	}
+	if strings.Contains(args, ".ts") {
+		t.Fatalf("av1 HLS should not use mpegts: %q", args)
+	}
+}
+
 func TestFFmpegArgsSoftware(t *testing.T) {
 	m := &Manager{Cfg: config.Defaults()}
 	args := strings.Join(m.ffmpegArgs("/media/x.mkv", "/tmp/out", PipelineSoftware, 0, 0, 0), " ")

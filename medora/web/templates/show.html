@@ -10,7 +10,7 @@
       <div class="poster-play static">
         <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
       </div>
-      {{template "partials/card_actions.html" (mediaActions "show" .Item.ID .MetaReady .MetaDisabledReason .Item.MatchStatus.String)}}
+      {{template "partials/card_actions.html" (mediaActions "show" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String)}}
     </div>
     <div class="media-meta">
       <h1>{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>

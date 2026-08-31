@@ -33,6 +33,9 @@ async function entryScanRefetch(page) {
   await scanBtn.click({ force: true });
   await expect(page.locator('#entry-scan-modal')).toBeVisible();
   await page.selectOption('#entry-scan-mode', 'matchora');
+  const titleInput = page.locator('#entry-scan-title');
+  await expect(titleInput).toBeVisible();
+  await expect(titleInput).toHaveValue(/Film Title/i);
   await page.locator('#entry-scan-modal-form input[name="overwrite"]').check();
   await page.locator('#entry-scan-modal-form button[type="submit"]').click();
   const panel = page.locator('#fetch-modal-body .job-progress');
@@ -68,4 +71,34 @@ test('Film Title entry Scan refetch matches 2016 anime', async ({ page }) => {
   expect(src).toMatch(/\/metadata\//);
   expect(src).not.toMatch(/placeholder/);
   expect(src).toMatch(/[?&]m=/);
+});
+
+test('Matchora rescan sends an edited title', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureAnimeLibrary(page);
+
+  const card = page.locator('#items a.card').filter({
+    has: page.locator('.t', { hasText: /Stray NFO Film/i }),
+  }).first();
+  await expect(card).toBeVisible({ timeout: 30000 });
+  await card.click();
+  await expect(page).toHaveURL(/\/movies\/\d+/);
+
+  const scanBtn = page.locator('.media-hero-poster .card-action', { hasText: 'Scan' }).first();
+  await scanBtn.click({ force: true });
+  await expect(page.locator('#entry-scan-modal')).toBeVisible();
+  await page.selectOption('#entry-scan-mode', 'matchora');
+  const titleInput = page.locator('#entry-scan-title');
+  await expect(titleInput).toBeVisible();
+  await expect(titleInput).toHaveValue(/Stray NFO Film/i);
+  await titleInput.fill('Custom Query Title');
+  await page.locator('#entry-scan-modal-form input[name="overwrite"]').check();
+  await page.locator('#entry-scan-modal-form button[type="submit"]').click();
+  const panel = page.locator('#fetch-modal-body .job-progress');
+  await expect(panel).toBeVisible({ timeout: 15000 });
+  await expect(panel.locator('.job-footer')).toContainText(/Finished|Failed/, { timeout: 180000 });
+  await expect(panel.locator('.job-footer')).toContainText('Finished');
+
+  await page.reload();
+  await expect(page.locator('h1')).toContainText('Custom Query Title');
 });

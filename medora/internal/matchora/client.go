@@ -29,6 +29,12 @@ type ScanResult struct {
 	Files   int    `json:"files"`
 }
 
+type IngestRow struct {
+	Title string `json:"title"`
+	Year  string `json:"year,omitempty"`
+	Type  string `json:"type,omitempty"`
+}
+
 type ScanProgress struct {
 	Files   int  `json:"files"`
 	Done    int  `json:"done"`
@@ -167,6 +173,35 @@ func (c *Client) Scan(path string) (ScanResult, error) {
 	}
 	if strings.TrimSpace(out.Session) == "" {
 		return ScanResult{}, fmt.Errorf("scan: missing session")
+	}
+	return out, nil
+}
+
+func (c *Client) Ingest(rows []IngestRow) (ScanResult, error) {
+	body, err := json.Marshal(rows)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	req, err := http.NewRequest(http.MethodPost, c.base()+"/v1/ingest", bytes.NewReader(body))
+	if err != nil {
+		return ScanResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpc().Do(req)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return ScanResult{}, fmt.Errorf("ingest: %s %s", resp.Status, strings.TrimSpace(string(b)))
+	}
+	var out ScanResult
+	if err := json.Unmarshal(b, &out); err != nil {
+		return ScanResult{}, err
+	}
+	if strings.TrimSpace(out.Session) == "" {
+		return ScanResult{}, fmt.Errorf("ingest: missing session")
 	}
 	return out, nil
 }

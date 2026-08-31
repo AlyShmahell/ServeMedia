@@ -577,3 +577,105 @@ func TestMatchPathPathOnlyJobs(t *testing.T) {
 		t.Fatalf("film dir must not be a show: %#v", got)
 	}
 }
+
+func TestMatchItemIngestAppliesToExisting(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filmDir := filepath.Join(media, "Wrong Folder")
+	filmPath := filepath.Join(filmDir, "Wrong Folder.mkv")
+	if err := os.MkdirAll(filmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filmPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Wrong Folder", SortTitle: "Wrong Folder", Path: filmPath, Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := d.GetMediaItem(ctx, id)
+	if err != nil || item == nil {
+		t.Fatal(err)
+	}
+
+	var ingestHits, scanHits atomic.Int32
+	var gotRows []map[string]any
+	const sess = "20260831T120000Z-aaaaaaaaaaaaaaaa"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		scanHits.Add(1)
+		http.Error(w, "scan should not run", 500)
+	})
+	mux.HandleFunc("/v1/ingest", func(w http.ResponseWriter, r *http.Request) {
+		ingestHits.Add(1)
+		_ = json.NewDecoder(r.Body).Decode(&gotRows)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `"}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"no grouping"}`, http.StatusNotFound)
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"id": "job-ingest", "status": "matched", "source": "ingest", "title": "Girls",
+				"match": map[string]any{"provider": "tmdb", "id": "55", "title": "Girls", "year": "2012"},
+			},
+		})
+	})
+	mux.HandleFunc("/v1/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = io.WriteString(w, "fakejpeg")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"provider": "tmdb", "id": "55", "title": "Girls", "year": "2012", "type": "movie",
+			"synopsis": "plot", "poster": "/v1/catalog/tmdb/55/poster.jpg",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	w := &Worker{DB: d, Store: store, Meta: &matchora.Client{Base: srv.URL}}
+	if err := w.MatchItem(ctx, lib, item, Opts{Persist: false, Overwrite: true, QueryTitle: "Girls (2012)"}); err != nil {
+		t.Fatal(err)
+	}
+	if scanHits.Load() != 0 {
+		t.Fatalf("scan hits %d", scanHits.Load())
+	}
+	if ingestHits.Load() != 1 {
+		t.Fatalf("ingest hits %d", ingestHits.Load())
+	}
+	if len(gotRows) != 1 || gotRows[0]["title"] != "Girls (2012)" || fmt.Sprint(gotRows[0]["year"]) != "2012" {
+		t.Fatalf("ingest rows %#v", gotRows)
+	}
+	got, err := d.GetMediaItem(ctx, id)
+	if err != nil || got == nil || got.Title != "Girls" || got.MetaID.String != "55" {
+		t.Fatalf("item %#v %v", got, err)
+	}
+}
+

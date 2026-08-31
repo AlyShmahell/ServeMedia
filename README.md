@@ -20,9 +20,9 @@ GPU transcode uses host Mesa/`libva` when available; software encode is the fall
 curl -fsSL https://raw.githubusercontent.com/AlyShmahell/medora/main/install.sh | bash
 ```
 
-Pick a GitHub release, then **bundled** (ffmpeg + llama included) or **slim** (run `medora --prepare` once afterward). The installer writes `~/.medora`, links `~/.local/bin/medora`, and adds a userscope desktop entry. Add `~/.local/bin` to `PATH` if `medora` is not found. Override the install prefix with `MEDORA_HOME`.
+Pick a GitHub release. The archive includes Matchora and vendor (htmx, video.js, hls.js, ffmpeg). The installer writes `~/.medora`, links `~/.local/bin/medora`, and adds a userscope desktop entry. Add `~/.local/bin` to `PATH` if `medora` is not found. Override the install prefix with `MEDORA_HOME`.
 
-Archives are also on [GitHub Releases](https://github.com/AlyShmahell/medora/releases): `medora-<ver>-linux-amd64-bundled.tar.gz` or the slim `medora-<ver>-linux-amd64.tar.gz`.
+Archives are also on [GitHub Releases](https://github.com/AlyShmahell/medora/releases): `medora-<ver>-linux-amd64.tar.gz`.
 
 ## Start
 

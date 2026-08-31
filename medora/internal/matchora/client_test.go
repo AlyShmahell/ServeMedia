@@ -103,6 +103,29 @@ func TestJobsSessionQuery(t *testing.T) {
 	}
 }
 
+func TestIngestJSON(t *testing.T) {
+	var got []IngestRow
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ingest" || r.Method != http.MethodPost {
+			t.Fatalf("got %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"20260829T122800Z-a1b2c3d4e5f6g7h8","jobs":1}`))
+	}))
+	defer srv.Close()
+	c := &Client{Base: srv.URL, HTTP: srv.Client()}
+	out, err := c.Ingest([]IngestRow{{Title: "Girls", Year: "2012"}})
+	if err != nil || out.Session != "20260829T122800Z-a1b2c3d4e5f6g7h8" {
+		t.Fatalf("got=%+v err=%v", out, err)
+	}
+	if len(got) != 1 || got[0].Title != "Girls" || got[0].Year != "2012" || got[0].Type != "" {
+		t.Fatalf("rows %#v", got)
+	}
+}
+
 func TestCommonRoot(t *testing.T) {
 	if got := CommonRoot([]string{"/media/movies", "/media/tv"}); got != "/media" {
 		t.Fatalf("got %q", got)
@@ -129,7 +152,7 @@ func TestWithinFilesystemRoot(t *testing.T) {
 
 func TestWriteOverlayMedoraKeysLast(t *testing.T) {
 	extra := filepath.Join(t.TempDir(), "extra.yaml")
-	if err := os.WriteFile(extra, []byte("browse_root: /media\nllama:\n  host: stub\n"), 0o644); err != nil {
+	if err := os.WriteFile(extra, []byte("browse_root: /media\nproviders:\n  omdb:\n    base: http://omdb-stub:8080\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("MEDORA_MATCHORA_OVERLAY", extra)
@@ -148,9 +171,11 @@ func TestWriteOverlayMedoraKeysLast(t *testing.T) {
 		HTTP       struct {
 			Addr string `yaml:"addr"`
 		} `yaml:"http"`
-		Llama struct {
-			Host string `yaml:"host"`
-		} `yaml:"llama"`
+		Providers struct {
+			OMDb struct {
+				Base string `yaml:"base"`
+			} `yaml:"omdb"`
+		} `yaml:"providers"`
 	}
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
@@ -158,8 +183,8 @@ func TestWriteOverlayMedoraKeysLast(t *testing.T) {
 	if cfg.BrowseRoot != "/" {
 		t.Fatalf("browse_root=%q want / (Medora key must win)", cfg.BrowseRoot)
 	}
-	if cfg.Llama.Host != "stub" {
-		t.Fatalf("llama.host=%q", cfg.Llama.Host)
+	if cfg.Providers.OMDb.Base != "http://omdb-stub:8080" {
+		t.Fatalf("omdb.base=%q", cfg.Providers.OMDb.Base)
 	}
 	if cfg.HTTP.Addr != "127.0.0.1:7680" {
 		t.Fatalf("http.addr=%q", cfg.HTTP.Addr)

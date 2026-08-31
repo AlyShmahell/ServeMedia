@@ -37,168 +37,13 @@ yaml_field() {
   ' "$file"
 }
 
-curl_get() {
-  curl -fsSL -A medora-packager --retry 3 --retry-delay 1 "$@"
-}
-
-try_get() {
-  local url="$1" dest="$2"
-  if curl_get -o "$dest" "$url" 2>/dev/null && [[ -s "$dest" ]]; then
-    return 0
-  fi
-  rm -f "$dest"
-  return 1
-}
-
-try_hf_license_files() {
-  local repo="$1" dest="$2"
-  local name url
-  for name in LICENSE LICENSE.md COPYING; do
-    url="https://huggingface.co/${repo}/resolve/main/${name}"
-    if try_get "$url" "$dest"; then
-      printf '%s\n' "$url"
-      return 0
-    fi
-  done
-  return 1
-}
-
-hf_ns_repo() {
-  local u="$1"
-  if [[ "$u" =~ huggingface\.co/([^/]+)/([^/]+) ]]; then
-    printf '%s/%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
-  fi
-}
-
-spdx_url() {
-  case "${1,,}" in
-    apache-2.0) printf '%s\n' "https://www.apache.org/licenses/LICENSE-2.0.txt" ;;
-    mit) printf '%s\n' "https://spdx.org/licenses/MIT.txt" ;;
-    bsd-3-clause) printf '%s\n' "https://spdx.org/licenses/BSD-3-Clause.txt" ;;
-    bsd-2-clause) printf '%s\n' "https://spdx.org/licenses/BSD-2-Clause.txt" ;;
-    *) printf '%s\n' "https://spdx.org/licenses/${1}.txt" ;;
-  esac
-}
-
-hf_api_fields() {
-  python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-cd = d.get("cardData") or {}
-lic = d.get("license") or cd.get("license") or ""
-bm = cd.get("base_model") or d.get("base_model") or ""
-if isinstance(bm, list):
-    bm = next((x for x in bm if isinstance(x, str) and x.strip()), "")
-elif not isinstance(bm, str):
-    bm = ""
-print(lic)
-print(bm)
-'
-}
-
-fetch_llama_license() {
-  local tarball_url="$1"
-  local dest="$DIR/dist/tools/matchora/vendor/llama.cpp/LICENSE"
-  local org repo tag url
-  if [[ "$tarball_url" =~ github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/ ]]; then
-    org="${BASH_REMATCH[1]}"
-    repo="${BASH_REMATCH[2]}"
-    tag="${BASH_REMATCH[3]}"
-    url="https://raw.githubusercontent.com/${org}/${repo}/${tag}/LICENSE"
-  else
-    echo "error: cannot derive llama.cpp LICENSE URL from $tarball_url" >&2
-    exit 1
-  fi
-  mkdir -p "$(dirname "$dest")"
-  if ! try_get "$url" "$dest"; then
-    echo "error: failed to fetch llama.cpp LICENSE from $url" >&2
-    exit 1
-  fi
-  printf '%s\n' "$url" >"$DIR/dist/tools/matchora/vendor/llama.cpp/LICENSE.NOTICE"
-}
-
-fetch_gguf_license() {
-  local model_url="$1" model_file="$2"
-  if [[ -z "$model_url" || -z "$model_file" ]]; then
-    return 0
-  fi
-  local repo dest notice src api_json hf_license hf_base spdx
-  repo="$(hf_ns_repo "$model_url")"
-  if [[ -z "$repo" ]]; then
-    echo "error: cannot derive Hugging Face repo from $model_url" >&2
-    exit 1
-  fi
-  dest="$DIR/dist/tools/matchora/vendor/llama.cpp/models/${model_file}.LICENSE"
-  notice="$DIR/dist/tools/matchora/vendor/llama.cpp/models/${model_file}.NOTICE"
-  mkdir -p "$(dirname "$dest")"
-  if src="$(try_hf_license_files "$repo" "$dest")"; then
-    printf '%s\n' "$src" >"$notice"
-    return 0
-  fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "error: python3 is required to parse Hugging Face license metadata for $model_file" >&2
-    exit 1
-  fi
-  api_json="$(curl_get "https://huggingface.co/api/models/${repo}")"
-  hf_license=""
-  hf_base=""
-  {
-    read -r hf_license
-    read -r hf_base
-  } < <(printf '%s' "$api_json" | hf_api_fields)
-  if [[ -n "$hf_base" ]]; then
-    if src="$(try_hf_license_files "$hf_base" "$dest")"; then
-      printf '%s\n' "$src" >"$notice"
-      return 0
-    fi
-  fi
-  if [[ -n "$hf_license" ]]; then
-    spdx="$(spdx_url "$hf_license")"
-    if try_get "$spdx" "$dest"; then
-      printf '%s\n' "$spdx" >"$notice"
-      return 0
-    fi
-  fi
-  echo "error: could not fetch license for $model_file ($repo)" >&2
-  exit 1
-}
-
-fetch_matchora_vendor_licenses() {
-  if ! command -v curl >/dev/null 2>&1; then
-    echo "error: curl is required to fetch third-party licenses" >&2
-    exit 1
-  fi
-  local cfg="$DIR/dist/tools/matchora/config/default.yaml"
-  if [[ ! -f "$cfg" ]]; then
-    echo "error: $cfg not found" >&2
-    exit 1
-  fi
-  local tarball_url embed_url instruct_url embed_file instruct_file
-  tarball_url="$(yaml_field tarball_url "$cfg")"
-  embed_url="$(yaml_field embed_url "$cfg")"
-  instruct_url="$(yaml_field instruct_url "$cfg")"
-  embed_file="$(yaml_field embed_file "$cfg")"
-  instruct_file="$(yaml_field instruct_file "$cfg")"
-  if [[ -z "$tarball_url" ]]; then
-    echo "error: llama.tarball_url missing from matchora config" >&2
-    exit 1
-  fi
-  fetch_llama_license "$tarball_url"
-  fetch_gguf_license "$embed_url" "$embed_file"
-  fetch_gguf_license "$instruct_url" "$instruct_file"
-}
-
 stage_package() {
   local staging="$1"
-  local include_vendor="${2:-0}"
   mkdir -p "$staging/medora"
   cp -a "$DIR/dist"/. "$staging/medora/"
   rm -f "$staging/medora/.gitkeep"
   rm -rf "$staging/medora/data"
-  if [[ "$include_vendor" != 1 ]]; then
-    rm -rf "$staging/medora/vendor"
-    rm -rf "$staging/medora/tools/matchora/vendor"
-  fi
+  rm -rf "$staging/medora/tools/matchora/vendor"
   if [[ ! -f "$DIR/../LICENSE" ]]; then
     echo "error: $DIR/../LICENSE not found" >&2
     exit 1
@@ -223,21 +68,11 @@ package() {
   version="$(yaml_field version "$DIR/dist/config/default.yaml")"
   version="${version:-0.0.0}"
 
-  staging="$(mktemp -d)"
-  stage_package "$staging" 0
-  write_tar "$staging" "medora-${version}-linux-amd64.tar.gz"
-  rm -rf "$staging"
-
   "$DIR/dist/medora" --prepare
-  if [[ ! -x "$DIR/dist/tools/matchora/vendor/llama.cpp/llama-server" ]]; then
-    echo "error: --prepare did not install llama-server" >&2
-    exit 1
-  fi
-  fetch_matchora_vendor_licenses
 
   staging="$(mktemp -d)"
-  stage_package "$staging" 1
-  write_tar "$staging" "medora-${version}-linux-amd64-bundled.tar.gz"
+  stage_package "$staging"
+  write_tar "$staging" "medora-${version}-linux-amd64.tar.gz"
   rm -rf "$staging"
 }
 

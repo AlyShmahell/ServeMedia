@@ -12,7 +12,6 @@ flowchart LR
     Dist --> Medora[medora :7676]
     Medora --> Matchora["tools/matchora :7680 localhost"]
     Medora --> FFmpeg["vendor/ffmpeg"]
-    Matchora --> Llama["tools/matchora/vendor/llama.cpp on demand"]
   end
 ```
 
@@ -31,20 +30,19 @@ flowchart LR
 | `{exeDir}/config` | Seed YAML (`-config` default `{exeDir}/config/default.yaml`) |
 | `{exeDir}/public` | First-party static copy in the dist tree (templates stay embedded) |
 | `{exeDir}/data` | SQLite store, transcode cache, backups, overlay `config.yaml`, Matchora `data/matchora` |
-| `{exeDir}/tools/matchora` | First-party Matchora v0.0.3 (binary, `config/`, `public/`, `LICENSE`) |
+| `{exeDir}/tools/matchora` | First-party Matchora v0.0.4 (binary, `config/`, `public/`, `LICENSE`) |
 | `{exeDir}/vendor` | Third-party only: htmx, video.js, hls.js, ffmpeg (+ licenses) |
 | `tests/` | Podman unit (`go test`) + Playwright smoke against bind-mounted dist |
 
-`tools/` is first-party helper programs. `vendor/` is third-party only. In the bundled tree, Matchora’s llama.cpp stays under `tools/matchora/vendor/` because that is Matchora’s own `{exeDir}` layout.
+`tools/` is first-party helper programs. `vendor/` is third-party only.
 
 ## Packages
 
-The packager writes two archives with root `medora/` and Medora’s `LICENSE`:
+The packager writes one archive with root `medora/` and Medora’s `LICENSE`:
 
 | Archive | Contents |
 |---------|----------|
-| `medora-<ver>-linux-amd64.tar.gz` | binary, `config/`, `public/`, `tools/matchora/` (slim Matchora, no llama). **No** `{exeDir}/vendor/` |
-| `medora-<ver>-linux-amd64-bundled.tar.gz` | same plus `{exeDir}/vendor/` (htmx, video.js, hls.js, ffmpeg + licenses) and `tools/matchora/vendor/llama.cpp` after `--prepare`, with llama/GGUF licenses fetched at pack time |
+| `medora-<ver>-linux-amd64.tar.gz` | binary, `config/`, `public/`, `tools/matchora/`, `{exeDir}/vendor/` (htmx, video.js, hls.js, ffmpeg + licenses) |
 
 ## HTTP
 
@@ -68,15 +66,15 @@ Playback uses **video.js** with **hls.js** attached to the video.js tech for HLS
 
 Libraries have a name and folder only — no movie/TV/anime type. **Local** scan uses one mixed disk walker: a directory is a show when it `looksLikeShowDir`, otherwise films. `media_items.kind` is `movie` or `show` from that detection.
 
-**Scan with Matchora** does not run Medora’s mixed library walker. Medora sends `POST /v1/scan` with the library or item directory (jailed by `media.path` roots) and receives `202 {"session","files"}`. Matchora groups titles and matches; v0.0.3 scan jobs set `path` to the grouped child (folder or movie file) and typically omit `files[]`. Medora inventories videos **under `job.path`**, classifies movie vs show with the same `LooksLikeShowDir` rules as local scan, and numbers show episodes with the local ingest (SxxExx / Season N / sequential). When `files[]` is present, only video paths are used — never a directory as an episode. Persist-beside-media NFO/art stays in Medora when checked. Scan modal: **Local** vs **With Matchora**; overwrite existing metadata is a checkbox.
+**Scan with Matchora** does not run Medora’s mixed library walker. Library scan sends `POST /v1/scan` with the library directory (jailed by `media.path` roots) and receives `202 {"session","files"}`. Per-item rescan sends `POST /v1/ingest` with the title from the scan modal (and year when known) so Matchora ranks that query; the existing library row is updated in place. Matchora groups library titles and matches; scan jobs set `path` to the grouped child (folder or movie file) and typically omit `files[]`. Medora inventories videos **under `job.path`**, classifies movie vs show with the same `LooksLikeShowDir` rules as local scan, and numbers show episodes with the local ingest (SxxExx / Season N / sequential). When `files[]` is present, only video paths are used — never a directory as an episode. Persist-beside-media NFO/art stays in Medora when checked. Scan modal: **Local** vs **With Matchora**; overwrite existing metadata is a checkbox. The per-title modal shows an editable title when Matchora is selected.
 
-Matchora scan jobs are untyped (`source: "scan"`). `job.path` is the grouped child (folder or movie file). Anime provider `prefer` does not apply on untyped scan jobs (Matchora limitation).
+Matchora scan jobs are untyped (`source: "scan"`). Per-item ingest jobs are also sent untyped so every provider can run. `job.path` is the grouped child (folder or movie file) for scans. Anime provider `prefer` does not apply on untyped jobs (Matchora limitation).
 
 ## Matchora
 
-On start Medora writes `tools/matchora/data/config.yaml` (optional `MEDORA_MATCHORA_OVERLAY` first, then `http.addr`, `data_dir: {exeDir}/data/matchora`, `browse_root` covering every `media.path` root — common ancestor, or `/` if disjoint) and spawns `{exeDir}/tools/matchora/matchora`. If a listener is already healthy, it is restarted so the new overlay loads. `Within("/")` treats every absolute path as inside the filesystem root. `--prepare` verifies that binary, fetches third-party `vendor/` if missing, runs `matchora --prepare` (llama.cpp under `tools/matchora/vendor/llama.cpp`), then exits.
+On start Medora writes `tools/matchora/data/config.yaml` (optional `MEDORA_MATCHORA_OVERLAY` first, then `http.addr`, `data_dir: {exeDir}/data/matchora`, `browse_root` covering every `media.path` root — common ancestor, or `/` if disjoint) and spawns `{exeDir}/tools/matchora/matchora`. If a listener is already healthy, it is restarted so the new overlay loads. `Within("/")` treats every absolute path as inside the filesystem root. Leftover `tools/matchora/vendor` from older llama.cpp installs is deleted on start. `--prepare` verifies the Matchora binary, fetches third-party `vendor/` if missing, then exits.
 
-Scan apply: `POST /v1/scan` `{"path":"<abs dir>"}` (must sit under `browse_root`) returns a session id (`<UTC datetime>-<16 hex chars>`). Poll `GET /v1/scan/status?session=` then `GET /v1/jobs?session=`. Jobs live in `{data_dir}/jobs-{session}.json` until `session.ttl_ms` (default and max 24h). Inventory is videos under `job.path` (or `files[]` video paths when Matchora sends them). **`matched`**: catalog fields from `GET /v1/catalog/{provider}/{id}?session=` (relative poster URLs are resolved against Matchora with the same query) joined by season-episode after Medora numbers files from the tree. **`manual`**: store the session and job id and still inventory the tree; Medora shows an orange `!` on the poster and a candidate picker (`POST /v1/jobs/{id}/select?session=`). **`unmatched` / `error`**: inventory only. Catalog episode stills are downloaded during apply; ffmpeg episode stills are not taken during Matchora apply (`-hide_banner -loglevel error`, seek retries). Provider keys come from Matchora `GET /v1/secrets` / `POST /v1/secrets` and are never stored in Medora YAML. Rows that have a job id but no session (pre-v0.0.3) need a rescan.
+Library scan apply: `POST /v1/scan` `{"path":"<abs dir>"}` (must sit under `browse_root`) returns a session id (`<UTC datetime>-<16 hex chars>`). Per-item Matchora scan: `POST /v1/ingest` JSON `[{title, year?}]` (no `type`, so ranking stays untyped). Poll `GET /v1/scan/status?session=` (ignored when ingest has no grouping run) then `GET /v1/jobs?session=`. Jobs live in `{data_dir}/jobs-{session}.json` until `session.ttl_ms` (default and max 24h). Inventory is videos under `job.path` (or `files[]` video paths when Matchora sends them); ingest jobs with no path apply onto the existing media row. **`matched`**: catalog fields from `GET /v1/catalog/{provider}/{id}?session=` (relative poster URLs are resolved against Matchora with the same query) joined by season-episode after Medora numbers files from the tree. **`manual`**: store the session and job id and still inventory the tree; Medora shows an orange `!` on the poster and a candidate picker (`POST /v1/jobs/{id}/select?session=`). **`unmatched` / `error`**: inventory only. Catalog episode stills are downloaded during apply; ffmpeg episode stills are not taken during Matchora apply (`-hide_banner -loglevel error`, seek retries). Provider keys come from Matchora `GET /v1/secrets` / `POST /v1/secrets` and are never stored in Medora YAML. Rows that have a job id but no session (pre-v0.0.3) need a rescan.
 
 Medora owns SQLite, playback, persist-beside-media, ffmpeg stills, and the candidate picker UI. Matchora owns browse jail, directory walk, grouping, matching, catalog bytes, and path→catalog mapping. Do not `DELETE /v1/jobs?session=` while a manual pick may still be needed.
 

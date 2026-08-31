@@ -1,7 +1,3 @@
-llama:
-  host: llama-stub
-  port: 8080
-  llm_base_url: "http://llm-stub:8080/v1"
 providers:
   omdb:
     base: "http://omdb-stub:8080"

@@ -19,26 +19,17 @@ type Proc struct {
 	cmd *exec.Cmd
 }
 
-func Start(exeDir, dataDir, addr, browseRoot string, prepare bool) (*Proc, error) {
+func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
 	bin := filepath.Join(exeDir, "tools", "matchora", "matchora")
 	if _, err := os.Stat(bin); err != nil {
 		return nil, fmt.Errorf("matchora binary: %w", err)
 	}
 	matchoraHome := filepath.Join(exeDir, "tools", "matchora")
+	_ = os.RemoveAll(filepath.Join(matchoraHome, "vendor"))
 	if err := writeOverlay(matchoraHome, dataDir, addr, browseRoot); err != nil {
 		return nil, err
 	}
 	base := "http://" + addr
-	if prepare {
-		cmd := exec.Command(bin, "--prepare")
-		cmd.Dir = matchoraHome
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("matchora --prepare: %w", err)
-		}
-		return nil, nil
-	}
 	if healthy(base) {
 		stopExisting(bin)
 		deadline := time.Now().Add(8 * time.Second)

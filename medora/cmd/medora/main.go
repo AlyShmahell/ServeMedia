@@ -34,7 +34,7 @@ func main() {
 		log.Fatal(err)
 	}
 	configPath := flag.String("config", "", "path to default.yaml")
-	doPrepare := flag.Bool("prepare", false, "fetch third-party vendor if missing, install matchora llama.cpp, then exit")
+	doPrepare := flag.Bool("prepare", false, "fetch third-party vendor if missing, then exit")
 	flag.Parse()
 	path := *configPath
 	if path == "" {
@@ -45,7 +45,7 @@ func main() {
 		log.Fatal(err)
 	}
 	ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
-	version.Init(cfg.ExeDir)
+	version.Init(cfg.Version)
 
 	matchoraData := filepath.Join(cfg.ExeDir, "data", "matchora")
 	if *doPrepare {
@@ -53,10 +53,6 @@ func main() {
 			log.Fatal(err)
 		}
 		if err := prepare.ThirdParty(cfg); err != nil {
-			log.Fatal(err)
-		}
-		ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
-		if _, err := matchora.Start(cfg.ExeDir, matchoraData, cfg.Matchora.Addr, matchora.CommonRoot(cfg.MediaRoots()), true); err != nil {
 			log.Fatal(err)
 		}
 		return
@@ -68,7 +64,7 @@ func main() {
 	_ = os.MkdirAll(cfg.Transcode.Path, 0o755)
 	_ = os.MkdirAll(cfg.Backup.Dir, 0o755)
 
-	proc, err := matchora.Start(cfg.ExeDir, matchoraData, cfg.Matchora.Addr, matchora.CommonRoot(cfg.MediaRoots()), false)
+	proc, err := matchora.Start(cfg.ExeDir, matchoraData, cfg.Matchora.Addr, matchora.CommonRoot(cfg.MediaRoots()))
 	if err != nil {
 		log.Printf("matchora: %v (metadata may be unavailable)", err)
 	}

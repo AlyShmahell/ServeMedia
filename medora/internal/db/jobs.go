@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 )
 
 func (d *DB) ListEpisodesByShow(ctx context.Context, showID int64) ([]Episode, error) {
@@ -40,6 +41,15 @@ func (d *DB) UpdateMediaItemMeta(ctx context.Context, id int64, title string, ye
 			meta_id=COALESCE(NULLIF(?,''), meta_id)
 		WHERE id=?`,
 		title, year, year, plot, poster, backdrop, nfo, rating, rating, metaProvider, metaID, id)
+	return err
+}
+
+func (d *DB) UpdateMediaItemTitle(ctx context.Context, id int64, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil
+	}
+	_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET title=?, sort_title=? WHERE id=?`, title, title, id)
 	return err
 }
 
