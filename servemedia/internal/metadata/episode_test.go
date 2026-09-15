@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/metadata"
+	"github.com/alyshmahell/servemedia/internal/metadata"
 )
 
 func TestParseEpisode_leadingSxxEyy(t *testing.T) {

@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/db"
-	"github.com/alyshmahell/medora/internal/fetch"
-	"github.com/alyshmahell/medora/internal/matchora"
-	"github.com/alyshmahell/medora/internal/scanner"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/internal/fetch"
+	"github.com/alyshmahell/servemedia/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/internal/scanner"
 )
 
-func TestRunLibraryScanMatchoraSkipsMixedWalk(t *testing.T) {
+func TestRunLibraryScanMatchMediaSkipsMixedWalk(t *testing.T) {
 	ctx := context.Background()
 	store := t.TempDir()
 	media := t.TempDir()
@@ -94,7 +94,7 @@ func TestRunLibraryScanMatchoraSkipsMixedWalk(t *testing.T) {
 	sc := &scanner.Scanner{DB: d, StorePath: store, MediaRoot: media}
 	cfg := &config.Config{}
 	cfg.Store.Path = store
-	meta := &matchora.Client{Base: stub.URL, HTTP: stub.Client()}
+	meta := &matchmedia.Client{Base: stub.URL, HTTP: stub.Client()}
 	s := &Server{
 		Cfg:     cfg,
 		DB:      d,
@@ -106,12 +106,12 @@ func TestRunLibraryScanMatchoraSkipsMixedWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.runLibraryScan(lib, jobID, "matchora", false, true)
+	s.runLibraryScan(lib, jobID, "matchmedia", false, true)
 	if sc.MixedWalks() != 0 {
 		t.Fatalf("mixed walks %d want 0", sc.MixedWalks())
 	}
 	if got, _ := d.GetMediaItemByPath(ctx, lib.ID, decoy); got != nil {
-		t.Fatal("matchora mode must not ingest walker-only files")
+		t.Fatal("matchmedia mode must not ingest walker-only files")
 	}
 	got, err := d.GetMediaItemByPath(ctx, lib.ID, real)
 	if err != nil || got == nil || got.Path != real {

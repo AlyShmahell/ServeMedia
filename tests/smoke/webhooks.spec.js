@@ -36,7 +36,7 @@ test('regular user can access integrations', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
 });
 
-test('test webhook delivers Medora webhook payload', async ({ page, request }) => {
+test('test webhook delivers ServeMedia webhook payload', async ({ page, request }) => {
   await ensureAdmin(page);
   await clearStubEvents(request);
 
@@ -54,12 +54,13 @@ test('test webhook delivers Medora webhook payload', async ({ page, request }) =
 
   const events = await waitForStubEvents(request, 1);
   const evt = events[events.length - 1];
-  expect(evt.body.ServerName).toBe('Medora');
+  expect(evt.body.ServerName).toBe('ServeMedia');
   expect(evt.body.NotificationType).toBe('Generic');
   expect(evt.body.Username).toBe('admin');
-  expect(evt.body.ClientName).toBe('Medora');
-  const keyHeader = evt.headers['X-Medora-Webhook-Key'] || evt.headers['x-medora-webhook-key'];
-  expect(keyHeader).toBeTruthy();
+  expect(evt.body.ClientName).toBe('ServeMedia');
+  const headers = evt.headers || {};
+  const keyHeader = Object.entries(headers).find(([k]) => String(k).toLowerCase() === 'x-servemedia-webhook-key');
+  expect(keyHeader && keyHeader[1]).toBeTruthy();
 });
 
 test('user deleted fires UserDeleted webhook to that user', async ({ page, request }) => {
@@ -75,7 +76,7 @@ test('user deleted fires UserDeleted webhook to that user', async ({ page, reque
   await page.locator('#add-user-submit').click();
   await page.waitForURL(/\/settings\/users$/);
 
-  await page.locator('form.logout button').click();
+  await page.locator('form.topbar-logout button').click();
   await page.waitForURL(/\/login$/);
   await page.fill('input[name="username"]', username);
   await page.fill('input[name="password"]', password);
@@ -92,7 +93,7 @@ test('user deleted fires UserDeleted webhook to that user', async ({ page, reque
   await page.getByRole('button', { name: 'Save' }).click();
   await expect(page).toHaveURL(/\/settings\/integrations$/);
 
-  await page.locator('form.logout button').click();
+  await page.locator('form.topbar-logout button').click();
   await page.waitForURL(/\/login$/);
   await page.fill('input[name="username"]', 'admin');
   await page.fill('input[name="password"]', 'adminpass');

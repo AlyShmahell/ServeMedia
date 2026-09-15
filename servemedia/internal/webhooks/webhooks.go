@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/config"
+	"github.com/alyshmahell/servemedia/internal/config"
 )
 
 const (

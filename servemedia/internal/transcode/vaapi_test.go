@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/ffbin"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/ffbin"
 )
 
 func requireRenderNode(t *testing.T) string {
@@ -90,7 +90,7 @@ func TestVaapiSmokeTest10BitDirect(t *testing.T) {
 	dev := requireRenderNode(t)
 	clip := vaapiProbeClipPath()
 	if clip == "" {
-		t.Skip("no /usr/share/medora/vaapi-probe.mkv")
+		t.Skip("no /usr/share/servemedia/vaapi-probe.mkv")
 	}
 	if err := vaapiSmokeTest10BitDirect(dev, clip); err != nil {
 		t.Fatalf("10-bit direct smoke on %s: %v", dev, err)

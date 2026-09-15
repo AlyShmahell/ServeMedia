@@ -12,7 +12,7 @@
     <label for="entry-scan-mode">What do you want to do?</label>
     <select name="mode" id="entry-scan-mode">
       <option value="local" {{if not .MetaReady}}selected{{end}}>Scan local NFO/posters</option>
-      <option value="matchora" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with Matchora</option>
+      <option value="matchmedia" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with MatchMedia</option>
     </select>
     <div id="entry-scan-title-wrap" class="scan-title-field" hidden>
       <label for="entry-scan-title">Title to match</label>
@@ -47,7 +47,7 @@
   var titleInput = document.getElementById('entry-scan-title');
   function closeDlg() { dlg.close(); }
   function syncTitleField() {
-    var show = mode && mode.value === 'matchora';
+    var show = mode && mode.value === 'matchmedia';
     if (titleWrap) titleWrap.hidden = !show;
     if (titleInput) titleInput.disabled = !show;
   }

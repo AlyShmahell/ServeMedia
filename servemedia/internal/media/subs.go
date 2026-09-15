@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alyshmahell/medora/internal/ffbin"
+	"github.com/alyshmahell/servemedia/internal/ffbin"
 )
 
 // SubtitleVTTPath returns a cache path for a WebVTT extract of stream index.

@@ -1,4 +1,4 @@
-package matchora
+package matchmedia
 
 import (
 	"fmt"
@@ -20,13 +20,13 @@ type Proc struct {
 }
 
 func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
-	bin := filepath.Join(exeDir, "tools", "matchora", "matchora")
+	bin := filepath.Join(exeDir, "tools", "matchmedia", "matchmedia")
 	if _, err := os.Stat(bin); err != nil {
-		return nil, fmt.Errorf("matchora binary: %w", err)
+		return nil, fmt.Errorf("matchmedia binary: %w", err)
 	}
-	matchoraHome := filepath.Join(exeDir, "tools", "matchora")
-	_ = os.RemoveAll(filepath.Join(matchoraHome, "vendor"))
-	if err := writeOverlay(matchoraHome, dataDir, addr, browseRoot); err != nil {
+	matchmediaHome := filepath.Join(exeDir, "tools", "matchmedia")
+	_ = os.RemoveAll(filepath.Join(matchmediaHome, "vendor"))
+	if err := writeOverlay(matchmediaHome, dataDir, addr, browseRoot); err != nil {
 		return nil, err
 	}
 	base := "http://" + addr
@@ -38,7 +38,7 @@ func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
 		}
 	}
 	cmd := exec.Command(bin)
-	cmd.Dir = matchoraHome
+	cmd.Dir = matchmediaHome
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -49,7 +49,7 @@ func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
 	go func() {
 		err := cmd.Wait()
 		if err != nil {
-			log.Printf("matchora exited: %v", err)
+			log.Printf("matchmedia exited: %v", err)
 		}
 	}()
 	deadline := time.Now().Add(120 * time.Second)
@@ -60,7 +60,7 @@ func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
 		time.Sleep(300 * time.Millisecond)
 	}
 	_ = p.Stop()
-	return nil, fmt.Errorf("matchora did not become healthy on %s", addr)
+	return nil, fmt.Errorf("matchmedia did not become healthy on %s", addr)
 }
 
 func (p *Proc) Stop() error {
@@ -118,8 +118,8 @@ func within(root, path string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
-func writeOverlay(matchoraHome, dataDir, addr, browseRoot string) error {
-	overlayDir := filepath.Join(matchoraHome, "data")
+func writeOverlay(matchmediaHome, dataDir, addr, browseRoot string) error {
+	overlayDir := filepath.Join(matchmediaHome, "data")
 	if err := os.MkdirAll(overlayDir, 0o755); err != nil {
 		return err
 	}
@@ -130,13 +130,13 @@ func writeOverlay(matchoraHome, dataDir, addr, browseRoot string) error {
 		browseRoot = "/"
 	}
 	out := map[string]any{}
-	if extra := strings.TrimSpace(os.Getenv("MEDORA_MATCHORA_OVERLAY")); extra != "" {
+	if extra := strings.TrimSpace(os.Getenv("SERVEMEDIA_MATCHMEDIA_OVERLAY")); extra != "" {
 		more, err := os.ReadFile(extra)
 		if err != nil {
-			return fmt.Errorf("matchora overlay: %w", err)
+			return fmt.Errorf("matchmedia overlay: %w", err)
 		}
 		if err := yaml.Unmarshal(more, &out); err != nil {
-			return fmt.Errorf("matchora overlay: %w", err)
+			return fmt.Errorf("matchmedia overlay: %w", err)
 		}
 		if out == nil {
 			out = map[string]any{}

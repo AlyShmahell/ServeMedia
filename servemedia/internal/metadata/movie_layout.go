@@ -185,15 +185,15 @@ func FindMovieSidecar(dir, base string, bareOK bool, names ...string) string {
 	return ""
 }
 
-// QuarantineMedoraRejected renames path to path.medora-rejected if it exists.
-func QuarantineMedoraRejected(path string) {
+// QuarantineServeMediaRejected renames path to path.servemedia-rejected if it exists.
+func QuarantineServeMediaRejected(path string) {
 	if path == "" {
 		return
 	}
 	if _, err := os.Stat(path); err != nil {
 		return
 	}
-	dst := path + ".medora-rejected"
+	dst := path + ".servemedia-rejected"
 	_ = os.Rename(path, dst)
 }
 

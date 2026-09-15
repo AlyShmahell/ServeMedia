@@ -4,8 +4,6 @@
 <title>Server — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
-  <p class="back-link"><a href="/settings">← Settings</a></p>
-  <h1>Server</h1>
   <div class="page-main-card">
     <p class="muted">Transcode: H.264 CRF {{.Config.Transcode.CRF}}, max height {{.Config.Transcode.MaxHeight}}p</p>
     <p class="muted">Hardware acceleration: {{.TranscodeHW}}</p>

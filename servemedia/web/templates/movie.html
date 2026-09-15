@@ -1,17 +1,16 @@
 {{define "movie.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Item.Title}} — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
+<title>{{.Item.Title}} — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content hero-meta">
-  <p class="back-link"><a href="/libraries/{{.Item.LibraryID}}">← Back</a></p>
   <div class="media-hero">
     <div class="poster-wrap media-hero-poster">
       <a class="poster-play" href="/play/movie/{{.Item.ID}}" title="Play">
         <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
         <span class="play-icon" aria-hidden="true"></span>
       </a>
-      {{template "partials/card_actions.html" (mediaActions "movie" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String)}}
+      {{template "partials/card_actions.html" (mediaActions "movie" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
     </div>
     <div class="media-meta">
       <h1>{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>

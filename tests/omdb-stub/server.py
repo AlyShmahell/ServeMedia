@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal OMDb-compatible stub for Medora smoke tests (no real API key / quota)."""
+"""Minimal OMDb-compatible stub for ServeMedia smoke tests (no real API key / quota)."""
 from __future__ import annotations
 
 import json
@@ -22,7 +22,7 @@ JPEG = bytes([
 
 HOST = "0.0.0.0"
 PORT = 8080
-# Reachable from the medora container on the compose network.
+# Reachable from the servemedia container on the compose network.
 POSTER = f"http://omdb-stub:{PORT}/poster.jpg"
 
 FILM_TITLE_2016 = {

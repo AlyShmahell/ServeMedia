@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/db"
+	"github.com/alyshmahell/servemedia/internal/db"
 )
 
 func touch(t *testing.T, path string) {

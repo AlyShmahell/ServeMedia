@@ -1,5 +1,5 @@
 {
-  "name": "medora-smoke",
+  "name": "servemedia-smoke",
   "private": true,
   "dependencies": {
     "@playwright/test": "1.49.1"

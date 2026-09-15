@@ -304,3 +304,38 @@ test('seek bar click jumps toward that time', async ({ page }) => {
   }
   expect(ratio).toBeGreaterThan(0.2);
 });
+
+test('backward seek after forward seek lands near the target', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureMovieLibrary(page);
+  await openSampleMoviePlayer(page);
+  await forceControlBar(page);
+  const bar = page.locator('.vjs-progress-holder').first();
+  await expect(bar).toBeVisible({ timeout: 15000 });
+  const box = await bar.boundingBox();
+  expect(box).toBeTruthy();
+  const y = Math.max(1, Math.floor(box.height / 2));
+  const timeRatio = () => page.evaluate(() => {
+    const el = document.getElementById('v');
+    const p = el && el.player;
+    const vid = document.querySelector('.video-js video') || document.querySelector('video');
+    const dur = (p && p.duration && p.duration()) || (vid && vid.duration) || 0;
+    const t = (p && p.currentTime && p.currentTime()) || (vid && vid.currentTime) || 0;
+    if (!(dur > 0.5)) return null;
+    return t / dur;
+  });
+  await bar.click({ position: { x: Math.max(1, Math.floor(box.width * 0.7)), y } });
+  try {
+    await expect.poll(timeRatio, { timeout: 15000 }).not.toBeNull();
+  } catch {
+    return;
+  }
+  await expect.poll(timeRatio, { timeout: 20000 }).toBeGreaterThan(0.45);
+  await bar.click({ position: { x: Math.max(1, Math.floor(box.width * 0.2)), y } });
+  await expect.poll(timeRatio, { timeout: 25000 }).toBeLessThan(0.45);
+  const back = await timeRatio();
+  if (back == null) {
+    return;
+  }
+  expect(back).toBeGreaterThan(0.05);
+});

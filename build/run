@@ -39,27 +39,27 @@ yaml_field() {
 
 stage_package() {
   local staging="$1"
-  mkdir -p "$staging/medora"
-  cp -a "$DIR/dist"/. "$staging/medora/"
-  rm -f "$staging/medora/.gitkeep"
-  rm -rf "$staging/medora/data"
-  rm -rf "$staging/medora/tools/matchora/vendor"
+  mkdir -p "$staging/servemedia"
+  cp -a "$DIR/dist"/. "$staging/servemedia/"
+  rm -f "$staging/servemedia/.gitkeep"
+  rm -rf "$staging/servemedia/data"
+  rm -rf "$staging/servemedia/tools/matchmedia/vendor"
   if [[ ! -f "$DIR/../LICENSE" ]]; then
     echo "error: $DIR/../LICENSE not found" >&2
     exit 1
   fi
-  cp "$DIR/../LICENSE" "$staging/medora/LICENSE"
+  cp "$DIR/../LICENSE" "$staging/servemedia/LICENSE"
 }
 
 write_tar() {
   local staging="$1" name="$2"
-  tar -C "$staging" -czf "$DIR/package/$name" medora
+  tar -C "$staging" -czf "$DIR/package/$name" servemedia
   echo "wrote $DIR/package/$name"
 }
 
 package() {
-  if [[ ! -x "$DIR/dist/medora" ]]; then
-    echo "error: build/dist/medora not found; rebuild first" >&2
+  if [[ ! -x "$DIR/dist/servemedia" ]]; then
+    echo "error: build/dist/servemedia not found; rebuild first" >&2
     exit 1
   fi
   mkdir -p "$DIR/package"
@@ -68,20 +68,20 @@ package() {
   version="$(yaml_field version "$DIR/dist/config/default.yaml")"
   version="${version:-0.0.0}"
 
-  "$DIR/dist/medora" --prepare
+  "$DIR/dist/servemedia" --prepare
 
   staging="$(mktemp -d)"
   stage_package "$staging"
-  write_tar "$staging" "medora-${version}-linux-amd64.tar.gz"
+  write_tar "$staging" "servemedia-${version}-linux-amd64.tar.gz"
   rm -rf "$staging"
 }
 
 start() {
-  if [[ ! -x "$DIR/dist/medora" ]]; then
-    echo "error: build/dist/medora not found; pick a rebuild option" >&2
+  if [[ ! -x "$DIR/dist/servemedia" ]]; then
+    echo "error: build/dist/servemedia not found; pick a rebuild option" >&2
     exit 1
   fi
-  exec "$DIR/dist/medora" "$@"
+  exec "$DIR/dist/servemedia" "$@"
 }
 
 menu() {

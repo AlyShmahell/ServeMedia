@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
-mkdir -p /app/data/matchora
-if [ ! -f /app/data/matchora/secrets ]; then
-  printf 'omdb: test\n' > /app/data/matchora/secrets
+mkdir -p /app/data/matchmedia
+if [ ! -f /app/data/matchmedia/secrets ]; then
+  printf 'omdb: test\n' > /app/data/matchmedia/secrets
 fi
-export MEDORA_NO_BROWSER=1
-exec /app/medora "$@"
+export SERVEMEDIA_NO_BROWSER=1
+exec /app/servemedia "$@"

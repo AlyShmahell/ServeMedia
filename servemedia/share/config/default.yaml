@@ -1,4 +1,4 @@
-version: "0.0.2"
+version: "0.0.3"
 http:
   addr: ":7676"
 store:
@@ -28,9 +28,9 @@ integrations:
     server_id: ""
     api_key: ""
     destinations: []
-matchora:
+matchmedia:
   addr: "127.0.0.1:7680"
-  url: "https://github.com/AlyShmahell/matchora/releases/download/v0.0.4/matchora-0.0.4-linux-amd64.tar.gz"
+  url: "https://github.com/AlyShmahell/MatchMedia/releases/download/v0.0.5/matchmedia-0.0.5-linux-amd64.tar.gz"
 vendor:
   htmx_url: "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
   htmx_license_url: "https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE"

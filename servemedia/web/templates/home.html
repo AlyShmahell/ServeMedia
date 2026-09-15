@@ -1,10 +1,9 @@
 {{define "home.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Home — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js"></script><script src="/static/app.js" defer></script></head>
+<title>Home — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js"></script><script src="/static/app.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content home-page">
-  <h1>Home</h1>
   <section class="home-section home-section-libraries">
     <div class="section-head">
       <h2>Libraries</h2>
@@ -37,7 +36,7 @@
           <a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
             <div class="poster-wrap">
               <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
-              {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID .Item.Title $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String)}}
+              {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID .Item.Title $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
               <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
             </div>
             <div class="t">{{.Item.Title}}</div>

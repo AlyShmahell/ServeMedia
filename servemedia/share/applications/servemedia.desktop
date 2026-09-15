@@ -1,8 +1,8 @@
 [Desktop Entry]
-Name=Medora
+Name=ServeMedia
 Comment=Self-hosted media library
-Exec=medora
-Icon=medora
+Exec=servemedia
+Icon=servemedia
 Terminal=false
 Type=Application
 Categories=AudioVideo;

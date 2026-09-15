@@ -3,7 +3,7 @@ package version_test
 import (
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/version"
+	"github.com/alyshmahell/servemedia/internal/version"
 )
 
 func TestInit(t *testing.T) {

@@ -55,17 +55,24 @@ async function ensureTVLibrary(page) {
 
 test.describe.configure({ mode: 'serial' });
 
-test('sidebar primary nav and home sections', async ({ page }) => {
+test('top bar primary nav and home sections', async ({ page }) => {
   await ensureAdmin(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/');
 
-  const sidebar = page.locator('.sidebar');
-  await expect(sidebar.getByRole('link', { name: 'Home' }).first()).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'Settings' })).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'About' })).toBeVisible();
-  await expect(page.locator('.nav-libraries-card')).toBeVisible();
-  await expect(page.locator('.nav-libraries')).toBeVisible();
+  const topbar = page.locator('.topbar');
+  await expect(topbar).toBeVisible();
+  await expect(topbar.locator('.topbar-title')).toHaveText('Home');
+  await expect(topbar.locator('.topbar-back')).toHaveCount(0);
+  await expect(topbar.getByRole('link', { name: 'Settings' })).toBeVisible();
+  await expect(topbar.getByRole('link', { name: 'About' })).toBeVisible();
+  await expect(topbar.locator('.topbar-logo')).toHaveAttribute('href', '/');
+  await expect(topbar.locator('.topbar-logo')).toHaveAttribute('title', 'Return to Home Page');
+  await expect(topbar.locator('.topbar-logo-name')).toHaveText('ServeMedia');
+  await expect(topbar.locator('.topbar-signout')).toContainText('admin');
+  await expect(page.getByRole('link', { name: 'Home', exact: true })).toHaveCount(0);
+  await expect(page.locator('.sidebar')).toHaveCount(0);
+  await expect(page.locator('.nav-libraries')).toHaveCount(0);
 
   await expect(page.locator('.home-section')).toHaveCount(3);
   await expect(page.locator('.home-split')).toBeVisible();
@@ -88,7 +95,7 @@ test('add library dialog has no type field', async ({ page }) => {
 test('About shows version and license only', async ({ page }) => {
   await ensureAdmin(page);
   await page.goto('/about');
-  await expect(page.locator('h1')).toHaveText('About');
+  await expect(page.locator('.topbar-title')).toHaveText('About');
   await expect(page.locator('.about-tile h2', { hasText: 'Version' })).toBeVisible();
   await expect(page.locator('.about-tile h2', { hasText: 'License' })).toBeVisible();
   await expect(page.locator('.about-tile')).toHaveCount(2);
@@ -140,7 +147,7 @@ test('TV show season and episode cards', async ({ page }) => {
   }
   await show.click();
   await expect(page).toHaveURL(/\/shows\/\d+$/);
-  await expect(page.locator('.back-link a[href^="/libraries/"]')).toBeVisible();
+  await expect(page.locator('.topbar-back[href^="/libraries/"]')).toBeVisible();
   await expect(page.locator('.season-card .poster-progress').first()).toBeVisible();
 
   const seasonCard = page.locator('.season-card').first();

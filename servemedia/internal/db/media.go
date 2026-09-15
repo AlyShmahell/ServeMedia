@@ -34,11 +34,13 @@ type MediaItem struct {
 	Rating         sql.NullFloat64
 	MetaProvider      sql.NullString
 	MetaID            sql.NullString
-	MatchoraSessionID sql.NullString
-	MatchoraJobID     sql.NullString
+	MatchMediaSessionID sql.NullString
+	MatchMediaJobID     sql.NullString
 	MatchStatus       sql.NullString
+	MatchError        sql.NullString
 	Mtime             int64
 	DateAdded         string
+	ParentID          sql.NullInt64
 }
 
 type Season struct {
@@ -324,6 +326,115 @@ func (d *DB) UserOwnsEpisode(ctx context.Context, userID, episodeID int64) (bool
 	return n > 0, err
 }
 
+// GetMediaItemByMeta returns the canonical show in a library with this catalog id, or nil.
+func (d *DB) GetMediaItemByMeta(ctx context.Context, libraryID int64, provider, id string) (*MediaItem, error) {
+	provider = strings.TrimSpace(provider)
+	id = strings.TrimSpace(id)
+	if provider == "" || id == "" {
+		return nil, nil
+	}
+	rows, err := d.SQL.QueryContext(ctx, `
+		SELECT id FROM media_items
+		WHERE library_id=? AND kind='show' AND meta_provider=? AND meta_id=?
+		ORDER BY id`, libraryID, provider, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var itemID int64
+		if err := rows.Scan(&itemID); err != nil {
+			return nil, err
+		}
+		ids = append(ids, itemID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var best *MediaItem
+	bestEps := -1
+	bestSpecial := true
+	for _, itemID := range ids {
+		it, err := d.GetMediaItem(ctx, itemID)
+		if err != nil || it == nil {
+			continue
+		}
+		n, _ := d.CountEpisodesByShow(ctx, it.ID)
+		special := extrasFolderPath(it.Path)
+		better := false
+		if best == nil {
+			better = true
+		} else if bestSpecial && !special {
+			better = true
+		} else if bestSpecial == special && n > bestEps {
+			better = true
+		}
+		if better {
+			best = it
+			bestEps = n
+			bestSpecial = special
+		}
+	}
+	return best, nil
+}
+
+func extrasFolderPath(path string) bool {
+	base := strings.ToLower(strings.TrimSpace(filepath.Base(path)))
+	switch base {
+	case "specials", "special", "ova", "ovas", "movies", "movie", "films", "film":
+		return true
+	}
+	return strings.Contains(base, "special") || strings.Contains(base, "ova") ||
+		strings.Contains(base, "movies") || strings.Contains(base, "films")
+}
+
+// ListShows returns show rows in a library, oldest first.
+func (d *DB) ListShows(ctx context.Context, libraryID int64) ([]MediaItem, error) {
+	items, err := d.ListMediaItems(ctx, libraryID, "", "")
+	if err != nil {
+		return nil, err
+	}
+	var out []MediaItem
+	for _, it := range items {
+		if it.Kind == "show" {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
+
+func (d *DB) CountEpisodesByShow(ctx context.Context, showID int64) (int, error) {
+	var n int
+	err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM episodes WHERE show_id=?`, showID).Scan(&n)
+	return n, err
+}
+
+func (d *DB) MaxEpisodeNumber(ctx context.Context, showID int64, season int) (int, error) {
+	var n sql.NullInt64
+	err := d.SQL.QueryRowContext(ctx, `
+		SELECT MAX(e.episode_number) FROM episodes e
+		JOIN seasons s ON s.id = e.season_id
+		WHERE e.show_id=? AND s.season_number=?`, showID, season).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	if !n.Valid {
+		return 0, nil
+	}
+	return int(n.Int64), nil
+}
+
+func (d *DB) DeleteMediaItem(ctx context.Context, id int64) error {
+	_, err := d.SQL.ExecContext(ctx, `DELETE FROM media_items WHERE id=?`, id)
+	return err
+}
+
+func (d *DB) UpdateMediaItemPath(ctx context.Context, id int64, path string) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET path=? WHERE id=?`, path, id)
+	return err
+}
+
 // GetMediaItemByPath returns the media item for a library path, or nil.
 func (d *DB) GetMediaItemByPath(ctx context.Context, libraryID int64, path string) (*MediaItem, error) {
 	var id int64
@@ -361,6 +472,16 @@ func (d *DB) EpisodeExistsAtPath(ctx context.Context, showID int64, path string)
 	return err == nil, err
 }
 
+func (d *DB) DeleteEpisodesUnderPath(ctx context.Context, showID int64, root string) error {
+	root = filepath.Clean(strings.TrimSpace(root))
+	if showID <= 0 || root == "" || root == "." {
+		return nil
+	}
+	_, err := d.SQL.ExecContext(ctx, `DELETE FROM episodes WHERE show_id=? AND (path=? OR path LIKE ?)`,
+		showID, root, root+string(os.PathSeparator)+"%")
+	return err
+}
+
 func (d *DB) UpsertMediaItem(ctx context.Context, it MediaItem) (int64, error) {
 	var id int64
 	err := d.SQL.QueryRowContext(ctx, `SELECT id FROM media_items WHERE library_id = ? AND path = ?`, it.LibraryID, it.Path).Scan(&id)
@@ -383,29 +504,41 @@ func (d *DB) UpsertMediaItem(ctx context.Context, it MediaItem) (int64, error) {
 	return id, err
 }
 
+// showPosterSQL coalesces a media row's poster with the first season poster
+// (S1, then other numbered seasons, then S0). Movies have no seasons, so this
+// is the item poster.
+func showPosterSQL(alias string) string {
+	idCol, posterCol := "media_items.id", "media_items.poster_path"
+	if alias != "" {
+		idCol = alias + ".id"
+		posterCol = alias + ".poster_path"
+	}
+	return `COALESCE(NULLIF(` + posterCol + `,''),(SELECT s.poster_path FROM seasons s WHERE s.show_id=` + idCol + ` AND s.poster_path IS NOT NULL AND s.poster_path!='' ORDER BY CASE WHEN s.season_number=1 THEN 0 WHEN s.season_number=0 THEN 2 ELSE 1 END, s.season_number LIMIT 1))`
+}
+
 func (d *DB) GetMediaItem(ctx context.Context, id int64) (*MediaItem, error) {
 	it := &MediaItem{}
 	err := d.SQL.QueryRowContext(ctx, `
-		SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, poster_path, backdrop_path, nfo_path,
-			meta_provider, meta_id, matchora_session_id, matchora_job_id, match_status, mtime, date_added
+		SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, `+showPosterSQL("")+`, backdrop_path, nfo_path,
+			meta_provider, meta_id, matchmedia_session_id, matchmedia_job_id, match_status, match_error, mtime, date_added, parent_id
 		FROM media_items WHERE id = ?`, id).
 		Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
-			&it.MetaProvider, &it.MetaID, &it.MatchoraSessionID, &it.MatchoraJobID, &it.MatchStatus, &it.Mtime, &it.DateAdded)
+			&it.MetaProvider, &it.MetaID, &it.MatchMediaSessionID, &it.MatchMediaJobID, &it.MatchStatus, &it.MatchError, &it.Mtime, &it.DateAdded, &it.ParentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return it, err
 }
 
-func (d *DB) SetMatchoraMatch(ctx context.Context, id int64, session, jobID, status string) error {
+func (d *DB) SetMatchMediaMatch(ctx context.Context, id int64, session, jobID, status, matchErr string) error {
 	_, err := d.SQL.ExecContext(ctx, `
-		UPDATE media_items SET matchora_session_id=NULLIF(?,''), matchora_job_id=NULLIF(?,''), match_status=NULLIF(?, '') WHERE id=?`,
-		session, jobID, status, id)
+		UPDATE media_items SET matchmedia_session_id=NULLIF(?,''), matchmedia_job_id=NULLIF(?,''), match_status=NULLIF(?, ''), match_error=NULLIF(?, '') WHERE id=?`,
+		session, jobID, status, matchErr, id)
 	return err
 }
 
-func (d *DB) ClearMatchoraMatch(ctx context.Context, id int64) error {
-	return d.SetMatchoraMatch(ctx, id, "", "", "")
+func (d *DB) ClearMatchMediaMatch(ctx context.Context, id int64) error {
+	return d.SetMatchMediaMatch(ctx, id, "", "", "", "")
 }
 
 func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string, error) {
@@ -480,13 +613,15 @@ func (d *DB) ListMediaItems(ctx context.Context, libraryID int64, sort, q string
 	case "year":
 		order = `year DESC, title COLLATE NOCASE`
 	}
-	query := `SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, poster_path, backdrop_path, nfo_path,
-			meta_provider, meta_id, matchora_session_id, matchora_job_id, match_status, mtime, date_added
+	query := `SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, ` + showPosterSQL("") + `, backdrop_path, nfo_path,
+			meta_provider, meta_id, matchmedia_session_id, matchmedia_job_id, match_status, match_error, mtime, date_added, parent_id
 		FROM media_items WHERE library_id = ?`
 	args := []any{libraryID}
 	if q != "" {
 		query += ` AND title LIKE ?`
 		args = append(args, "%"+q+"%")
+	} else {
+		query += ` AND parent_id IS NULL`
 	}
 	query += ` ORDER BY ` + order
 	rows, err := d.SQL.QueryContext(ctx, query, args...)
@@ -498,7 +633,7 @@ func (d *DB) ListMediaItems(ctx context.Context, libraryID int64, sort, q string
 	for rows.Next() {
 		var it MediaItem
 		if err := rows.Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
-			&it.MetaProvider, &it.MetaID, &it.MatchoraSessionID, &it.MatchoraJobID, &it.MatchStatus, &it.Mtime, &it.DateAdded); err != nil {
+			&it.MetaProvider, &it.MetaID, &it.MatchMediaSessionID, &it.MatchMediaJobID, &it.MatchStatus, &it.MatchError, &it.Mtime, &it.DateAdded, &it.ParentID); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -506,13 +641,74 @@ func (d *DB) ListMediaItems(ctx context.Context, libraryID int64, sort, q string
 	return out, rows.Err()
 }
 
+func (d *DB) ListAllMediaItems(ctx context.Context, libraryID int64) ([]MediaItem, error) {
+	rows, err := d.SQL.QueryContext(ctx, `
+		SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, `+showPosterSQL("")+`, backdrop_path, nfo_path,
+			meta_provider, meta_id, matchmedia_session_id, matchmedia_job_id, match_status, match_error, mtime, date_added, parent_id
+		FROM media_items WHERE library_id=? ORDER BY id`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MediaItem
+	for rows.Next() {
+		var it MediaItem
+		if err := rows.Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
+			&it.MetaProvider, &it.MetaID, &it.MatchMediaSessionID, &it.MatchMediaJobID, &it.MatchStatus, &it.MatchError, &it.Mtime, &it.DateAdded, &it.ParentID); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) ListChildMediaItems(ctx context.Context, parentID int64) ([]MediaItem, error) {
+	rows, err := d.SQL.QueryContext(ctx, `
+		SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, `+showPosterSQL("")+`, backdrop_path, nfo_path,
+			meta_provider, meta_id, matchmedia_session_id, matchmedia_job_id, match_status, match_error, mtime, date_added, parent_id
+		FROM media_items WHERE parent_id=? ORDER BY title COLLATE NOCASE`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MediaItem
+	for rows.Next() {
+		var it MediaItem
+		if err := rows.Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
+			&it.MetaProvider, &it.MetaID, &it.MatchMediaSessionID, &it.MatchMediaJobID, &it.MatchStatus, &it.MatchError, &it.Mtime, &it.DateAdded, &it.ParentID); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) SetMediaItemParent(ctx context.Context, id, parentID int64) error {
+	if id <= 0 || id == parentID {
+		return nil
+	}
+	if parentID <= 0 {
+		_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET parent_id=NULL WHERE id=?`, id)
+		return err
+	}
+	parent, err := d.GetMediaItem(ctx, parentID)
+	if err != nil || parent == nil {
+		return err
+	}
+	if parent.ParentID.Valid && parent.ParentID.Int64 == id {
+		return nil
+	}
+	_, err = d.SQL.ExecContext(ctx, `UPDATE media_items SET parent_id=? WHERE id=?`, parentID, id)
+	return err
+}
+
 func (d *DB) RecentlyAdded(ctx context.Context, userID int64, limit int) ([]MediaItem, error) {
 	rows, err := d.SQL.QueryContext(ctx, `
-		SELECT m.id, m.library_id, m.kind, m.title, COALESCE(m.sort_title,''), m.year, m.path, m.runtime_seconds, m.plot, m.poster_path, m.backdrop_path, m.nfo_path,
-			m.meta_provider, m.meta_id, m.matchora_session_id, m.matchora_job_id, m.match_status, m.mtime, m.date_added
+		SELECT m.id, m.library_id, m.kind, m.title, COALESCE(m.sort_title,''), m.year, m.path, m.runtime_seconds, m.plot, `+showPosterSQL("m")+`, m.backdrop_path, m.nfo_path,
+			m.meta_provider, m.meta_id, m.matchmedia_session_id, m.matchmedia_job_id, m.match_status, m.match_error, m.mtime, m.date_added, m.parent_id
 		FROM media_items m
 		JOIN libraries l ON l.id = m.library_id
-		WHERE l.user_id = ?
+		WHERE l.user_id = ? AND m.parent_id IS NULL
 		ORDER BY m.date_added DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err
@@ -522,7 +718,7 @@ func (d *DB) RecentlyAdded(ctx context.Context, userID int64, limit int) ([]Medi
 	for rows.Next() {
 		var it MediaItem
 		if err := rows.Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
-			&it.MetaProvider, &it.MetaID, &it.MatchoraSessionID, &it.MatchoraJobID, &it.MatchStatus, &it.Mtime, &it.DateAdded); err != nil {
+			&it.MetaProvider, &it.MetaID, &it.MatchMediaSessionID, &it.MatchMediaJobID, &it.MatchStatus, &it.MatchError, &it.Mtime, &it.DateAdded, &it.ParentID); err != nil {
 			return nil, err
 		}
 		out = append(out, it)

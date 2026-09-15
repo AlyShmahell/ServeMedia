@@ -1,7 +1,10 @@
 {{define "partials/entry_scan_progress.html"}}
 <div class="fetch-panel job-progress{{if .Poll}} is-running{{end}}"
+  data-media-id="{{.MediaID}}"
+  {{if .NeedPick}}data-need-pick="1"{{end}}
+  {{if .Reload}}data-scan-reload="1"{{end}}
   {{if and .Poll .Job}}
-  hx-get="/hx/scan/{{.Job.ID}}/entry-status"
+  hx-get="/hx/scan/{{.Job.ID}}/entry-status?media={{.MediaID}}{{if .MatchMedia}}&matchmedia=1{{end}}"
   hx-trigger="every 1s"
   hx-swap="outerHTML"
   {{end}}

@@ -18,23 +18,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/backup"
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/db"
-	"github.com/alyshmahell/medora/internal/fetch"
-	"github.com/alyshmahell/medora/internal/matchora"
-	"github.com/alyshmahell/medora/internal/media"
-	"github.com/alyshmahell/medora/internal/metadata"
-	"github.com/alyshmahell/medora/internal/scanner"
-	"github.com/alyshmahell/medora/internal/stream"
-	"github.com/alyshmahell/medora/internal/transcode"
-	"github.com/alyshmahell/medora/internal/webhooks"
-	"github.com/alyshmahell/medora/internal/version"
+	"github.com/alyshmahell/servemedia/internal/backup"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/internal/fetch"
+	"github.com/alyshmahell/servemedia/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/internal/media"
+	"github.com/alyshmahell/servemedia/internal/metadata"
+	"github.com/alyshmahell/servemedia/internal/scanner"
+	"github.com/alyshmahell/servemedia/internal/stream"
+	"github.com/alyshmahell/servemedia/internal/transcode"
+	"github.com/alyshmahell/servemedia/internal/webhooks"
+	"github.com/alyshmahell/servemedia/internal/version"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-const sessionCookie = "medora_session"
+const sessionCookie = "servemedia_session"
 
 type Server struct {
 	Cfg       *config.Config
@@ -44,7 +44,7 @@ type Server struct {
 	Fetch     *fetch.Worker
 	Transcode *transcode.Manager
 	Webhooks  *webhooks.Service
-	Meta      *matchora.Client
+	Meta      *matchmedia.Client
 	Templates *template.Template
 	Static    fs.FS
 	reopen    func() error
@@ -54,7 +54,7 @@ type ctxKey int
 
 const userKey ctxKey = 1
 
-func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.Scanner, tr *transcode.Manager, webFS fs.FS, meta *matchora.Client, reopen func() error) (*Server, error) {
+func New(cfg *config.Config, database *db.DB, bak *backup.Service, sc *scanner.Scanner, tr *transcode.Manager, webFS fs.FS, meta *matchmedia.Client, reopen func() error) (*Server, error) {
 	tplFS, err := fs.Sub(webFS, "templates")
 	if err != nil {
 		return nil, err
@@ -144,11 +144,11 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 			}
 			return template.JS(b)
 		},
-		"mediaActions": func(scope string, id int64, title string, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
-			return map[string]any{"Scope": scope, "ID": id, "Title": title, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus}
+		"mediaActions": func(scope string, id int64, title string, metaReady bool, metaDisabledReason, matchStatus, matchError string) map[string]any {
+			return map[string]any{"Scope": scope, "ID": id, "Title": title, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus, "MatchError": matchError}
 		},
-		"mediaActionsStatic": func(scope string, id int64, title string, metaReady bool, metaDisabledReason, matchStatus string) map[string]any {
-			return map[string]any{"Scope": scope, "ID": id, "Title": title, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus, "Static": true}
+		"mediaActionsStatic": func(scope string, id int64, title string, metaReady bool, metaDisabledReason, matchStatus, matchError string) map[string]any {
+			return map[string]any{"Scope": scope, "ID": id, "Title": title, "MetaReady": metaReady, "MetaDisabledReason": metaDisabledReason, "MatchStatus": matchStatus, "MatchError": matchError, "Static": true}
 		},
 		"hasStr": func(list []string, want string) bool {
 			for _, v := range list {
@@ -365,10 +365,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data["MetaReady"] = ready
 	data["MetaDisabledReason"] = reason
 	data["MetaHint"] = hint
-	if u != nil {
-		libs, _ := s.DB.ListLibraries(r.Context(), u.ID)
-		data["NavLibraries"] = libs
-	}
+	applyNav(name, data)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.Templates.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("template %s: %v", name, err)
@@ -663,10 +660,17 @@ func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
 	cards := make([]seasonCard, 0, len(seasons))
 	for _, se := range seasons {
 		n, _ := s.DB.CountEpisodes(r.Context(), se.ID)
+		if n <= 0 {
+			continue
+		}
 		pct, _ := s.DB.SeasonWatchProgressPct(r.Context(), u.ID, se.ID)
 		cards = append(cards, seasonCard{Season: se, EpisodeCount: n, ProgressPct: pct})
 	}
-	s.render(w, r, "show.html", map[string]any{"Item": it, "SeasonCards": cards, "NFO": s.loadShowNFO(it)})
+	children, _ := s.DB.ListChildMediaItems(r.Context(), id)
+	s.render(w, r, "show.html", map[string]any{
+		"Item": it, "SeasonCards": cards, "ChildItems": s.mediaItemCards(r.Context(), u.ID, children),
+		"NFO": s.loadShowNFO(it),
+	})
 }
 
 func (s *Server) handleSeason(w http.ResponseWriter, r *http.Request) {
@@ -714,7 +718,10 @@ func (s *Server) handlePlayEpisode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := ep.Title.String
-	s.render(w, r, "player.html", map[string]any{"Kind": "episode", "ID": id, "Title": title, "SessionURL": fmt.Sprintf("/play/episode/%d/session", id)})
+	s.render(w, r, "player.html", map[string]any{
+		"Kind": "episode", "ID": id, "Title": title, "ShowID": ep.ShowID,
+		"SessionURL": fmt.Sprintf("/play/episode/%d/session", id),
+	})
 }
 
 func (s *Server) playMediaPath(r *http.Request) (path string, ok bool) {
@@ -1360,7 +1367,7 @@ func (s *Server) handleCreateLibrary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	jobID, err := s.startLibraryScan(lib, "matchora", true, false)
+	jobID, err := s.startLibraryScan(lib, "matchmedia", true, false)
 	if err != nil {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -1538,7 +1545,7 @@ func (s *Server) startLibraryScan(lib *db.Library, mode string, persist, overwri
 
 func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persist, overwrite bool) {
 	ctx := context.Background()
-	if mode != "matchora" {
+	if mode != "matchmedia" {
 		s.Scanner.ScanLibrary(ctx, lib, jobID)
 		return
 	}
@@ -1576,7 +1583,7 @@ func (s *Server) handleScanLibrary(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	mode := r.FormValue("mode")
 	switch mode {
-	case "local", "matchora":
+	case "local", "matchmedia":
 	default:
 		mode = "local"
 	}
@@ -1630,7 +1637,7 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	mode := r.FormValue("mode")
 	switch mode {
-	case "local", "matchora":
+	case "local", "matchmedia":
 	default:
 		mode = "local"
 	}
@@ -1640,7 +1647,7 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 		persist = false
 		overwrite = false
 	}
-	if mode == "matchora" {
+	if mode == "matchmedia" {
 		ready, reason, _ := s.metaStatus()
 		if !ready {
 			if reason == "" {
@@ -1656,7 +1663,7 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	queryTitle := ""
-	if mode == "matchora" {
+	if mode == "matchmedia" {
 		queryTitle = strings.TrimSpace(r.FormValue("title"))
 		if queryTitle != "" {
 			_ = s.DB.UpdateMediaItemTitle(r.Context(), it.ID, queryTitle)
@@ -1672,13 +1679,13 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 		j = &db.ScanJob{ID: jobID, Status: "running", ProgressPct: 0, LibraryID: sql.NullInt64{Int64: lib.ID, Valid: true}}
 	}
 	poll := j.Status == "running"
-	s.render(w, r, "partials/entry_scan_progress.html", map[string]any{"Job": j, "Poll": poll})
+	s.render(w, r, "partials/entry_scan_progress.html", entryScanProgressData(j, poll, it.ID, mode == "matchmedia", it.MatchStatus.String))
 }
 
 func (s *Server) runMediaScan(lib *db.Library, item *db.MediaItem, jobID int64, mode string, persist, overwrite bool, queryTitle string) {
 	ctx := context.Background()
 	s.syncFetchClients()
-	if mode != "matchora" {
+	if mode != "matchmedia" {
 		if err := s.Scanner.RescanMediaItem(ctx, lib, item, jobID); err != nil {
 			log.Printf("rescan media %d: %v", item.ID, err)
 			_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
@@ -1710,8 +1717,32 @@ func (s *Server) handleEntryScanStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	mediaID, _ := strconv.ParseInt(r.URL.Query().Get("media"), 10, 64)
+	matchMedia := r.URL.Query().Get("matchmedia") == "1"
+	matchStatus := ""
+	if mediaID > 0 {
+		if it := s.ownedMediaItem(r, mediaID); it != nil {
+			matchStatus = it.MatchStatus.String
+		}
+	}
 	poll := j.Status == "running"
-	s.render(w, r, "partials/entry_scan_progress.html", map[string]any{"Job": j, "Poll": poll})
+	s.render(w, r, "partials/entry_scan_progress.html", entryScanProgressData(j, poll, mediaID, matchMedia, matchStatus))
+}
+
+func entryScanProgressData(j *db.ScanJob, poll bool, mediaID int64, matchMedia bool, matchStatus string) map[string]any {
+	needPick := false
+	reload := false
+	if j != nil && j.Status == "done" {
+		if matchMedia && mediaID > 0 && (matchStatus == "manual" || matchStatus == "unmatched") {
+			needPick = true
+		} else {
+			reload = true
+		}
+	}
+	return map[string]any{
+		"Job": j, "Poll": poll, "MediaID": mediaID, "MatchMedia": matchMedia,
+		"NeedPick": needPick, "Reload": reload,
+	}
 }
 
 func (s *Server) handleBackupNow(w http.ResponseWriter, r *http.Request) {

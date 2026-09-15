@@ -1,5 +1,5 @@
 (function () {
-  var PREFIX = 'medora:scroll:';
+  var PREFIX = 'servemedia:scroll:';
 
   function storageKey(el) {
     var id = el.getAttribute('data-scroll-key');
@@ -68,7 +68,7 @@
 })();
 
 (function () {
-  var STATE_PREFIX = 'medora:state:';
+  var STATE_PREFIX = 'servemedia:state:';
   var restored = {};
 
   function stateKey(form) {
@@ -243,6 +243,22 @@
   };
 
   window.pickMatchCandidate = function (itemId, provider, id) {
+    var dlg = document.getElementById('match-pick-dialog');
+    if (dlg && dlg.classList.contains('is-busy')) return;
+    function setBusy(on) {
+      if (!dlg) return;
+      dlg.classList.toggle('is-busy', on);
+      if (on) {
+        dlg.setAttribute('aria-busy', 'true');
+      } else {
+        dlg.removeAttribute('aria-busy');
+      }
+      var cands = dlg.querySelectorAll('.cand');
+      for (var i = 0; i < cands.length; i++) {
+        cands[i].disabled = on;
+      }
+    }
+    setBusy(true);
     var body = new URLSearchParams();
     body.set('provider', provider);
     body.set('id', id);
@@ -251,14 +267,43 @@
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body,
-    }).then(function (r) {
-      if (r.ok) {
-        location.reload();
-        return;
-      }
-      return r.text().then(function (t) {
-        alert(t || r.statusText);
+    })
+      .then(function (r) {
+        if (r.ok) {
+          location.reload();
+          return;
+        }
+        return r.text().then(function (t) {
+          setBusy(false);
+          alert(t || r.statusText);
+        });
+      })
+      .catch(function (err) {
+        setBusy(false);
+        alert(err.message || String(err));
       });
-    });
   };
+
+  function afterEntryScanPanel(root) {
+    var el = root;
+    if (!el || !el.classList) return;
+    if (!el.classList.contains('job-progress')) {
+      el = el.querySelector ? el.querySelector('.job-progress') : null;
+    }
+    if (!el) return;
+    var mediaId = el.getAttribute('data-media-id');
+    if (el.getAttribute('data-need-pick') === '1' && mediaId) {
+      var fetchDlg = document.getElementById('fetch-modal');
+      if (fetchDlg && fetchDlg.close) fetchDlg.close();
+      if (window.openMatchModal) openMatchModal(mediaId);
+      return;
+    }
+    if (el.getAttribute('data-scan-reload') === '1') {
+      location.reload();
+    }
+  }
+
+  document.addEventListener('htmx:afterSwap', function (e) {
+    afterEntryScanPanel(e.detail && e.detail.elt);
+  });
 })();

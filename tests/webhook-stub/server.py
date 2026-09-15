@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake webhook consumer for Medora smoke tests."""
+"""Fake webhook consumer for ServeMedia smoke tests."""
 from __future__ import annotations
 
 import json

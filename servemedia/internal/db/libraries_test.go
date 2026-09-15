@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/db"
+	"github.com/alyshmahell/servemedia/internal/db"
 )
 
 func TestPerUserLibraries(t *testing.T) {
@@ -45,8 +45,15 @@ func TestPerUserLibraries(t *testing.T) {
 	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='tmdb_id'`).Scan(&tmdbCol); err != nil || tmdbCol != 0 {
 		t.Fatalf("media_items.tmdb_id should be gone: %d %v", tmdbCol, err)
 	}
-	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='matchora_session_id'`).Scan(&sessCol); err != nil || sessCol != 1 {
-		t.Fatalf("media_items.matchora_session_id missing: %d %v", sessCol, err)
+	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='matchmedia_session_id'`).Scan(&sessCol); err != nil || sessCol != 1 {
+		t.Fatalf("media_items.matchmedia_session_id missing: %d %v", sessCol, err)
+	}
+	var parentCol, errCol int
+	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='parent_id'`).Scan(&parentCol); err != nil || parentCol != 1 {
+		t.Fatalf("media_items.parent_id missing: %d %v", parentCol, err)
+	}
+	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='match_error'`).Scan(&errCol); err != nil || errCol != 1 {
+		t.Fatalf("media_items.match_error missing: %d %v", errCol, err)
 	}
 
 	alist, err := d.ListLibraries(ctx, a.ID)

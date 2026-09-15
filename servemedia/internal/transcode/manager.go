@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/ffbin"
-	"github.com/alyshmahell/medora/internal/media"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/ffbin"
+	"github.com/alyshmahell/servemedia/internal/media"
 )
 
 type Pipeline int
@@ -158,7 +158,7 @@ func (m *Manager) probeVAAPI() {
 	}
 
 	if statFails == len(devs) {
-		log.Printf("transcode hwaccel: render nodes present but not accessible; add host user to render/video group or set group_add in compose (see medora/.env.example)")
+		log.Printf("transcode hwaccel: render nodes present but not accessible; add host user to render/video group or set group_add in compose (see servemedia/.env.example)")
 	}
 	log.Printf("transcode hwaccel=software (no render node passed vaapi smoke test)")
 }
@@ -277,7 +277,7 @@ func tryVAAPIDevice(dev string) (ok bool, partial bool, codec string, err error)
 }
 
 func vaapiProbeClipPath() string {
-	const path = "/usr/share/medora/vaapi-probe.mkv"
+	const path = "/usr/share/servemedia/vaapi-probe.mkv"
 	if st, err := os.Stat(path); err == nil && st.Size() > 0 {
 		return path
 	}

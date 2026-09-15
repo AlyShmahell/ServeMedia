@@ -38,7 +38,7 @@ type IntegrationsConfig struct {
 	Webhooks WebhooksConfig `yaml:"webhooks"`
 }
 
-type MatchoraConfig struct {
+type MatchMediaConfig struct {
 	Addr string `yaml:"addr"`
 	URL  string `yaml:"url"`
 }
@@ -86,7 +86,7 @@ type Config struct {
 		OnStartup bool `yaml:"on_startup"`
 	} `yaml:"scan"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
-	Matchora     MatchoraConfig     `yaml:"matchora"`
+	MatchMedia   MatchMediaConfig   `yaml:"matchmedia"`
 	Vendor       VendorConfig       `yaml:"vendor"`
 	Version      string             `yaml:"version"`
 
@@ -135,7 +135,7 @@ func Defaults() Config {
 	c.Backup.Retain = 7
 	c.Backup.Dir = "data/backups"
 	c.Scan.OnStartup = true
-	c.Matchora.Addr = "127.0.0.1:7680"
+	c.MatchMedia.Addr = "127.0.0.1:7680"
 	return c
 }
 
@@ -232,8 +232,8 @@ func (c *Config) resolvePaths() {
 		}
 		c.Media.Path = strings.Join(parts, ",")
 	}
-	if strings.TrimSpace(c.Matchora.Addr) == "" {
-		c.Matchora.Addr = "127.0.0.1:7680"
+	if strings.TrimSpace(c.MatchMedia.Addr) == "" {
+		c.MatchMedia.Addr = "127.0.0.1:7680"
 	}
 }
 
@@ -256,16 +256,16 @@ func (c Config) Save(path string) error {
 }
 
 func applyEnv(c *Config) {
-	if v := os.Getenv("MEDORA_HTTP_ADDR"); v != "" {
+	if v := os.Getenv("SERVEMEDIA_HTTP_ADDR"); v != "" {
 		c.HTTP.Addr = v
 	}
-	if v := os.Getenv("MEDORA_STORE_PATH"); v != "" {
+	if v := os.Getenv("SERVEMEDIA_STORE_PATH"); v != "" {
 		c.Store.Path = v
 	}
-	if v := os.Getenv("MEDORA_MEDIA_PATH"); v != "" {
+	if v := os.Getenv("SERVEMEDIA_MEDIA_PATH"); v != "" {
 		c.Media.Path = v
 	}
-	if v := os.Getenv("MEDORA_FFMPEG"); v != "" {
+	if v := os.Getenv("SERVEMEDIA_FFMPEG"); v != "" {
 		c.Transcode.FFmpeg = v
 	}
 }
@@ -277,8 +277,8 @@ func (c Config) OverlaySavePath() string {
 	return filepath.Join(c.ExeDir, "data", "config.yaml")
 }
 
-func (c Config) MatchoraBin() string {
-	return filepath.Join(c.ExeDir, "tools", "matchora", "matchora")
+func (c Config) MatchMediaBin() string {
+	return filepath.Join(c.ExeDir, "tools", "matchmedia", "matchmedia")
 }
 
 func (c Config) VendorDir() string {

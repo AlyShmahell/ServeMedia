@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alyshmahell/medora/internal/fetch"
-	"github.com/alyshmahell/medora/internal/matchora"
+	"github.com/alyshmahell/servemedia/internal/fetch"
+	"github.com/alyshmahell/servemedia/internal/matchmedia"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -28,16 +28,16 @@ func (s *Server) handleMatchGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncFetchClients()
-	var job matchora.Job
+	var job matchmedia.Job
 	var jobErr string
 	session := ""
-	if it.MatchoraSessionID.Valid {
-		session = strings.TrimSpace(it.MatchoraSessionID.String)
+	if it.MatchMediaSessionID.Valid {
+		session = strings.TrimSpace(it.MatchMediaSessionID.String)
 	}
-	if s.Meta != nil && it.MatchoraJobID.Valid && it.MatchoraJobID.String != "" && session != "" {
-		j, err := s.Meta.Job(session, it.MatchoraJobID.String)
+	if s.Meta != nil && it.MatchMediaJobID.Valid && it.MatchMediaJobID.String != "" && session != "" {
+		j, err := s.Meta.Job(session, it.MatchMediaJobID.String)
 		if err != nil {
-			jobErr = "no Matchora job for this title — rescan to match again"
+			jobErr = "no MatchMedia job for this title — rescan to match again"
 		} else {
 			job = j
 			for i := range job.Candidates {
@@ -45,9 +45,9 @@ func (s *Server) handleMatchGet(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	} else {
-		jobErr = "no Matchora job for this title — rescan to match again"
+		jobErr = "no MatchMedia job for this title — rescan to match again"
 	}
-	cands := append([]matchora.Candidate(nil), job.Candidates...)
+	cands := append([]matchmedia.Candidate(nil), job.Candidates...)
 	sort.Slice(cands, func(i, j int) bool { return cands[i].Score > cands[j].Score })
 	s.render(w, r, "partials/match_dialog.html", map[string]any{
 		"Item": it, "Job": job, "Candidates": cands, "Error": jobErr,
@@ -78,7 +78,7 @@ func (s *Server) handleMatchPost(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// RefreshFetchConfig re-syncs the Matchora-backed fetch worker after config save / reopen.
+// RefreshFetchConfig re-syncs the MatchMedia-backed fetch worker after config save / reopen.
 func (s *Server) RefreshFetchConfig() {
 	s.syncFetchClients()
 }

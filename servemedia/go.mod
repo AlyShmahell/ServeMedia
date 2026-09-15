@@ -1,4 +1,4 @@
-module github.com/alyshmahell/medora
+module github.com/alyshmahell/servemedia
 
 go 1.26
 

@@ -15,17 +15,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/backup"
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/db"
-	"github.com/alyshmahell/medora/internal/ffbin"
-	"github.com/alyshmahell/medora/internal/matchora"
-	"github.com/alyshmahell/medora/internal/prepare"
-	"github.com/alyshmahell/medora/internal/scanner"
-	"github.com/alyshmahell/medora/internal/server"
-	"github.com/alyshmahell/medora/internal/transcode"
-	"github.com/alyshmahell/medora/internal/version"
-	"github.com/alyshmahell/medora/web"
+	"github.com/alyshmahell/servemedia/internal/backup"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/internal/ffbin"
+	"github.com/alyshmahell/servemedia/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/internal/prepare"
+	"github.com/alyshmahell/servemedia/internal/scanner"
+	"github.com/alyshmahell/servemedia/internal/server"
+	"github.com/alyshmahell/servemedia/internal/transcode"
+	"github.com/alyshmahell/servemedia/internal/version"
+	"github.com/alyshmahell/servemedia/web"
 )
 
 func main() {
@@ -47,9 +47,9 @@ func main() {
 	ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
 	version.Init(cfg.Version)
 
-	matchoraData := filepath.Join(cfg.ExeDir, "data", "matchora")
+	matchmediaData := filepath.Join(cfg.ExeDir, "data", "matchmedia")
 	if *doPrepare {
-		if _, err := os.Stat(cfg.MatchoraBin()); err != nil {
+		if _, err := os.Stat(cfg.MatchMediaBin()); err != nil {
 			log.Fatal(err)
 		}
 		if err := prepare.ThirdParty(cfg); err != nil {
@@ -64,14 +64,14 @@ func main() {
 	_ = os.MkdirAll(cfg.Transcode.Path, 0o755)
 	_ = os.MkdirAll(cfg.Backup.Dir, 0o755)
 
-	proc, err := matchora.Start(cfg.ExeDir, matchoraData, cfg.Matchora.Addr, matchora.CommonRoot(cfg.MediaRoots()))
+	proc, err := matchmedia.Start(cfg.ExeDir, matchmediaData, cfg.MatchMedia.Addr, matchmedia.CommonRoot(cfg.MediaRoots()))
 	if err != nil {
-		log.Printf("matchora: %v (metadata may be unavailable)", err)
+		log.Printf("matchmedia: %v (metadata may be unavailable)", err)
 	}
 
 	var database *db.DB
 	openDB := func() error {
-		dbPath := filepath.Join(cfg.Store.Path, "medora.db")
+		dbPath := filepath.Join(cfg.Store.Path, "servemedia.db")
 		var err error
 		database, err = db.Open(dbPath)
 		return err
@@ -83,7 +83,7 @@ func main() {
 	sc := &scanner.Scanner{DB: database, StorePath: cfg.Store.Path, MediaRoot: cfg.PrimaryMediaRoot()}
 	tr := transcode.NewManager(cfg)
 	bak := &backup.Service{Cfg: &cfg, DB: database, StorePath: cfg.Store.Path, DataRoot: filepath.Dir(cfg.Store.Path)}
-	meta := &matchora.Client{Base: "http://" + cfg.Matchora.Addr}
+	meta := &matchmedia.Client{Base: "http://" + cfg.MatchMedia.Addr}
 
 	var srv *server.Server
 	reopen := func() error {
@@ -155,7 +155,7 @@ func main() {
 		log.Fatal(err)
 	}
 	go func() {
-		log.Printf("medora listening on %s", cfg.HTTP.Addr)
+		log.Printf("servemedia listening on %s", cfg.HTTP.Addr)
 		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
@@ -186,7 +186,7 @@ func publicURL(addr string) string {
 }
 
 func shouldOpenBrowser() bool {
-	if strings.TrimSpace(os.Getenv("MEDORA_NO_BROWSER")) != "" {
+	if strings.TrimSpace(os.Getenv("SERVEMEDIA_NO_BROWSER")) != "" {
 		return false
 	}
 	return os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != ""

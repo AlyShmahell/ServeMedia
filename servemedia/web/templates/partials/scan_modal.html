@@ -12,7 +12,7 @@
     <label for="scan-mode">What do you want to do?</label>
     <select name="mode" id="scan-mode">
       <option value="local" {{if not .MetaReady}}selected{{end}}>Scan local NFO/posters</option>
-      <option value="matchora" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with Matchora</option>
+      <option value="matchmedia" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with MatchMedia</option>
     </select>
     {{if not .MetaReady}}
     <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>

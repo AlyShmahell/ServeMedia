@@ -1,4 +1,4 @@
-package matchora
+package matchmedia
 
 import (
 	"encoding/json"
@@ -118,11 +118,22 @@ func TestIngestJSON(t *testing.T) {
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
 	out, err := c.Ingest([]IngestRow{{Title: "Girls", Year: "2012"}})
-	if err != nil || out.Session != "20260829T122800Z-a1b2c3d4e5f6g7h8" {
+	if err != nil || out.Session != "20260829T122800Z-a1b2c3d4e5f6g7h8" || out.Jobs != 1 {
 		t.Fatalf("got=%+v err=%v", out, err)
 	}
 	if len(got) != 1 || got[0].Title != "Girls" || got[0].Year != "2012" || got[0].Type != "" {
 		t.Fatalf("rows %#v", got)
+	}
+}
+
+func TestScanResultJobsArrayOrCount(t *testing.T) {
+	got, err := decodeScanResult([]byte(`{"session":"s1","files":2,"jobs":[{"id":"a"},{"id":"b"}]}`))
+	if err != nil || got.Session != "s1" || got.Files != 2 || got.Jobs != 2 {
+		t.Fatalf("array: %+v %v", got, err)
+	}
+	got, err = decodeScanResult([]byte(`{"session":"s1","files":2,"jobs":3}`))
+	if err != nil || got.Jobs != 3 {
+		t.Fatalf("count: %+v %v", got, err)
 	}
 }
 
@@ -150,12 +161,12 @@ func TestWithinFilesystemRoot(t *testing.T) {
 	}
 }
 
-func TestWriteOverlayMedoraKeysLast(t *testing.T) {
+func TestWriteOverlayServeMediaKeysLast(t *testing.T) {
 	extra := filepath.Join(t.TempDir(), "extra.yaml")
 	if err := os.WriteFile(extra, []byte("browse_root: /media\nproviders:\n  omdb:\n    base: http://omdb-stub:8080\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("MEDORA_MATCHORA_OVERLAY", extra)
+	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", extra)
 	home := t.TempDir()
 	data := t.TempDir()
 	if err := writeOverlay(home, data, "127.0.0.1:7680", "/"); err != nil {
@@ -181,7 +192,7 @@ func TestWriteOverlayMedoraKeysLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	if cfg.BrowseRoot != "/" {
-		t.Fatalf("browse_root=%q want / (Medora key must win)", cfg.BrowseRoot)
+		t.Fatalf("browse_root=%q want / (ServeMedia key must win)", cfg.BrowseRoot)
 	}
 	if cfg.Providers.OMDb.Base != "http://omdb-stub:8080" {
 		t.Fatalf("omdb.base=%q", cfg.Providers.OMDb.Base)

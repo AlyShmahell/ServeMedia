@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/alyshmahell/medora/internal/config"
+	"github.com/alyshmahell/servemedia/internal/config"
 )
 
 func (s *Service) Dispatch(ctx context.Context, wh *config.WebhooksConfig, serverID, notificationType string, extra map[string]any) {
@@ -31,7 +31,7 @@ func (s *Service) DispatchTest(ctx context.Context, wh *config.WebhooksConfig, s
 		return 0, []string{"webhooks disabled"}
 	}
 	payload := MergePayload(BasePayload(serverID, wh.ServerURL, NotificationGeneric), map[string]any{
-		"Message":  "Medora webhook test",
+		"Message":  "ServeMedia webhook test",
 		"Username": username,
 	})
 	return s.DispatchSync(*wh, NotificationGeneric, "", payload)
@@ -75,7 +75,7 @@ func (s *Service) DispatchSync(wh config.WebhooksConfig, notificationType, itemT
 			req.Header.Set("Content-Type", "application/json")
 		}
 		if wh.APIKey != "" {
-			req.Header.Set("X-Medora-Webhook-Key", wh.APIKey)
+			req.Header.Set("X-ServeMedia-Webhook-Key", wh.APIKey)
 		}
 		resp, err := s.hc.Do(req)
 		if err != nil {

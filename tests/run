@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Medora tests driver — Podman only. No host Go/Node/Playwright.
+# ServeMedia tests driver — Podman only. No host Go/Node/Playwright.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -38,8 +38,8 @@ rebuild_dist() {
   : >"$ROOT/build/dist/.gitkeep"
   : >"$ROOT/build/cache/.gitkeep"
   (cd "$ROOT/build" && build_compose compose.yaml up --build --force-recreate --abort-on-container-exit)
-  if [[ ! -x "$ROOT/build/dist/medora" ]]; then
-    echo "${RED}build/dist/medora missing after rebuild${RESET}" >&2
+  if [[ ! -x "$ROOT/build/dist/servemedia" ]]; then
+    echo "${RED}build/dist/servemedia missing after rebuild${RESET}" >&2
     exit 1
   fi
 }
@@ -54,8 +54,8 @@ run_smoke() {
   rebuild_dist
   podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
   podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
-  podman build -t localhost/medora-runtime:latest -f runtime/Containerfile runtime
-  "${COMPOSE[@]}" up -d --build medora
+  podman build -t localhost/servemedia-runtime:latest -f runtime/Containerfile runtime
+  "${COMPOSE[@]}" up -d --build servemedia
   "${COMPOSE[@]}" build smoke
   "${COMPOSE[@]}" run --rm smoke
 }
@@ -100,7 +100,7 @@ sel=0
 items=("Run unit" "Run smoke" "Run all" "Quit")
 while true; do
   clear
-  echo "${CYAN}${BOLD}Medora tests${RESET} ${DIM}(Podman only)${RESET}"
+  echo "${CYAN}${BOLD}ServeMedia tests${RESET} ${DIM}(Podman only)${RESET}"
   echo
   i=0
   for it in "${items[@]}"; do
