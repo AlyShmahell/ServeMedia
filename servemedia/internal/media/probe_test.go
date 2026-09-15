@@ -3,7 +3,7 @@ package media_test
 import (
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/media"
+	"github.com/alyshmahell/servemedia/internal/media"
 )
 
 func TestGuessDirectPlayByExt(t *testing.T) {

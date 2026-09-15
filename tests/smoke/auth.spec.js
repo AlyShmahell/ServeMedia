@@ -9,7 +9,7 @@ test('bootstrap admin register and home', async ({ page }) => {
     await page.fill('input[name="password"]', 'adminpass');
     await page.click('button[type="submit"]');
   } else {
-    await expect(page.getByRole('heading', { name: 'Medora' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'ServeMedia' })).toBeVisible();
     await page.fill('input[name="username"]', 'admin');
     await page.fill('input[name="password"]', 'adminpass');
     await page.fill('input[name="confirm"]', 'adminpass');

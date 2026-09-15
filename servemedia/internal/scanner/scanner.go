@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/alyshmahell/medora/internal/db"
-	"github.com/alyshmahell/medora/internal/metadata"
+	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/internal/metadata"
 )
 
 type Scanner struct {
@@ -159,7 +159,7 @@ func (s *Scanner) ingestMovie(ctx context.Context, lib *db.Library, path string)
 	if nfoSrc != "" {
 		if n, err := metadata.ReadMovieNFO(nfoSrc); err == nil {
 			if n.Title != "" && !metadata.MovieNFOMatchesPath(n.Title, pathTitle) {
-				metadata.QuarantineMedoraRejected(nfoSrc)
+				metadata.QuarantineServeMediaRejected(nfoSrc)
 				nfoSrc = ""
 			} else {
 				if n.Title != "" {
@@ -176,8 +176,8 @@ func (s *Scanner) ingestMovie(ctx context.Context, lib *db.Library, path string)
 	}
 	// Quarantine shared bare NFO in flat dirs even if unused for this file.
 	if !bareOK {
-		metadata.QuarantineMedoraRejected(filepath.Join(dir, "movie.nfo"))
-		metadata.QuarantineMedoraRejected(filepath.Join(dir, "poster.jpg"))
+		metadata.QuarantineServeMediaRejected(filepath.Join(dir, "movie.nfo"))
+		metadata.QuarantineServeMediaRejected(filepath.Join(dir, "poster.jpg"))
 	}
 	cacheDir := filepath.Join(s.StorePath, "metadata", "movies", sanitize(titleYear(title, year)))
 	_ = os.MkdirAll(cacheDir, 0o755)
@@ -369,18 +369,89 @@ func (s *Scanner) IngestShowEpisodes(ctx context.Context, showID int64, showPath
 	return s.ingestAnimeEpisodes(ctx, showID, showPath, collectShowVideos(showPath))
 }
 
+// IngestShowEpisodePaths numbers the given videos as if they sat under root.
+func (s *Scanner) IngestShowEpisodePaths(ctx context.Context, showID int64, root string, paths []string) error {
+	return s.ingestAnimeEpisodes(ctx, showID, root, paths)
+}
+
+// IngestVideosAsSeason0 appends videos as the next season-0 episodes.
+func (s *Scanner) IngestVideosAsSeason0(ctx context.Context, showID int64, paths []string) error {
+	next := 1
+	if n, err := s.DB.MaxEpisodeNumber(ctx, showID, 0); err == nil {
+		next = n + 1
+	}
+	seen := map[string]bool{}
+	for _, path := range paths {
+		if path == "" || seen[path] || !metadata.IsVideo(filepath.Base(path)) {
+			continue
+		}
+		if ok, _ := s.DB.EpisodeExistsAtPath(ctx, showID, path); ok {
+			seen[path] = true
+			continue
+		}
+		if err := s.ingestEpisodeAt(ctx, showID, path, 0, next); err != nil {
+			return err
+		}
+		seen[path] = true
+		next++
+	}
+	return nil
+}
+
 // collectShowVideos lists all videos under a show (including Movies/ packs and
 // root films). Those become season 0 episodes at ingest — not library movies.
 func collectShowVideos(showPath string) []string {
+	showPath = filepath.Clean(showPath)
 	var episodes []string
 	_ = filepath.WalkDir(showPath, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || !metadata.IsVideo(d.Name()) {
+		if err != nil {
 			return err
+		}
+		if d.IsDir() {
+			if skipNestedTitleDir(showPath, path) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !metadata.IsVideo(d.Name()) {
+			return nil
 		}
 		episodes = append(episodes, path)
 		return nil
 	})
 	return episodes
+}
+
+// skipNestedTitleDir reports an immediate child that is its own show or film
+// (Handa-kun, Explosion, a sibling movie folder), not Season N / Specials / Movies.
+func skipNestedTitleDir(showPath, dir string) bool {
+	showPath = filepath.Clean(showPath)
+	dir = filepath.Clean(dir)
+	if dir == showPath || filepath.Dir(dir) != showPath {
+		return false
+	}
+	if metadata.IsSeasonFolderName(filepath.Base(dir)) {
+		return false
+	}
+	if isSingleVideoFilmDir(dir) {
+		return true
+	}
+	if !looksLikeShowDir(dir) {
+		return false
+	}
+	if fileExists(filepath.Join(dir, "tvshow.nfo")) {
+		return true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() && metadata.IsSeasonFolderName(e.Name()) {
+			return true
+		}
+	}
+	return false
 }
 
 // looksLikeShowDir is anime-only show detection.
@@ -658,10 +729,16 @@ func (s *Scanner) ingestAnimeEpisodes(ctx context.Context, showID int64, showPat
 // ingestShowFilmsAsSeason0 stores Movies/ pack videos and root films beside
 // Season folders as season 0 specials (not separate library movie cards).
 func (s *Scanner) ingestShowFilmsAsSeason0(ctx context.Context, showID int64, showPath string, paths []string, seen map[string]bool) error {
+	show, _ := s.DB.GetMediaItem(ctx, showID)
 	var films []string
 	for _, path := range paths {
 		if seen[path] || metadata.IsEpisodeExtra(path) || !metadata.IsVideo(filepath.Base(path)) {
 			continue
+		}
+		if show != nil {
+			if owner, err := s.DB.GetMediaItemByPath(ctx, show.LibraryID, path); err == nil && owner != nil && owner.ID != showID {
+				continue
+			}
 		}
 		if isUnderShowFilm(path, showPath) {
 			films = append(films, path)
@@ -800,7 +877,58 @@ func (s *Scanner) ingestShow(ctx context.Context, lib *db.Library, showPath stri
 		it.ID = id
 		s.Webhooks.DispatchItemAdded(ctx, lib.UserID, &it)
 	}
-	return id, err
+	if err != nil {
+		return id, err
+	}
+	if nestErr := s.ingestNestedTitleChildren(ctx, lib, id, showPath); nestErr != nil {
+		return id, nestErr
+	}
+	return id, nil
+}
+
+func (s *Scanner) ingestNestedTitleChildren(ctx context.Context, lib *db.Library, showID int64, showPath string) error {
+	entries, err := os.ReadDir(showPath)
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		full := filepath.Join(showPath, e.Name())
+		if !skipNestedTitleDir(showPath, full) {
+			continue
+		}
+		if isSingleVideoFilmDir(full) {
+			var video string
+			_ = filepath.WalkDir(full, func(path string, d os.DirEntry, err error) error {
+				if err != nil || d.IsDir() || !metadata.IsVideo(d.Name()) {
+					return err
+				}
+				video = path
+				return filepath.SkipAll
+			})
+			if video == "" {
+				continue
+			}
+			if err := s.ingestMovie(ctx, lib, video); err != nil {
+				return err
+			}
+			if child, _ := s.DB.GetMediaItemByPath(ctx, lib.ID, video); child != nil {
+				_ = s.DB.SetMediaItemParent(ctx, child.ID, showID)
+			}
+			continue
+		}
+		childID, err := s.ingestShow(ctx, lib, full)
+		if err != nil {
+			return err
+		}
+		if err := s.ingestAnimeEpisodes(ctx, childID, full, collectShowVideos(full)); err != nil {
+			return err
+		}
+		_ = s.DB.SetMediaItemParent(ctx, childID, showID)
+	}
+	return nil
 }
 
 // resolveTVEpisode maps a video under a TV show dir to season/episode.
@@ -969,7 +1097,14 @@ func (s *Scanner) ensureSeason(ctx context.Context, showID int64, seasonNum int,
 		}
 	}
 	if title == "" {
-		title = fmt.Sprintf("Season %d", seasonNum)
+		existing, _ := s.DB.GetSeasonByShowNum(ctx, showID, seasonNum)
+		if existing == nil {
+			if seasonNum == 0 {
+				title = "Specials"
+			} else {
+				title = fmt.Sprintf("Season %d", seasonNum)
+			}
+		}
 	}
 	return s.DB.UpsertSeason(ctx, showID, seasonNum, title, posterRel, plot)
 }

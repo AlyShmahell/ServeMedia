@@ -1,4 +1,4 @@
-package matchora
+package matchmedia
 
 import (
 	"bytes"
@@ -27,6 +27,46 @@ type Client struct {
 type ScanResult struct {
 	Session string `json:"session"`
 	Files   int    `json:"files"`
+	Jobs    int    `json:"-"`
+}
+
+// jobsFlex accepts MatchMedia's jobs count (int) or an inline jobs array.
+type jobsFlex int
+
+func (n *jobsFlex) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		*n = 0
+		return nil
+	}
+	if b[0] == '[' {
+		var arr []json.RawMessage
+		if err := json.Unmarshal(b, &arr); err != nil {
+			return err
+		}
+		*n = jobsFlex(len(arr))
+		return nil
+	}
+	var v int
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*n = jobsFlex(v)
+	return nil
+}
+
+type scanResultJSON struct {
+	Session string   `json:"session"`
+	Files   int      `json:"files"`
+	Jobs    jobsFlex `json:"jobs"`
+}
+
+func decodeScanResult(b []byte) (ScanResult, error) {
+	var raw scanResultJSON
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return ScanResult{}, err
+	}
+	return ScanResult{Session: raw.Session, Files: raw.Files, Jobs: int(raw.Jobs)}, nil
 }
 
 type IngestRow struct {
@@ -61,6 +101,7 @@ type Job struct {
 	Match      *Candidate  `json:"match,omitempty"`
 	Candidates []Candidate `json:"candidates,omitempty"`
 	Catalog    []Season    `json:"catalog,omitempty"`
+	Ranker     string      `json:"ranker,omitempty"`
 }
 
 type Candidate struct {
@@ -143,7 +184,7 @@ func (c *Client) Status() (Status, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return Status{DisabledReason: "metadata service unavailable"}, fmt.Errorf("matchora health %s", resp.Status)
+		return Status{DisabledReason: "metadata service unavailable"}, fmt.Errorf("matchmedia health %s", resp.Status)
 	}
 	return Status{Ready: true}, nil
 }
@@ -163,12 +204,12 @@ func (c *Client) Scan(path string) (ScanResult, error) {
 		return ScanResult{}, err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return ScanResult{}, fmt.Errorf("scan: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	var out ScanResult
-	if err := json.Unmarshal(b, &out); err != nil {
+	out, err := decodeScanResult(b)
+	if err != nil {
 		return ScanResult{}, err
 	}
 	if strings.TrimSpace(out.Session) == "" {
@@ -196,8 +237,8 @@ func (c *Client) Ingest(rows []IngestRow) (ScanResult, error) {
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return ScanResult{}, fmt.Errorf("ingest: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	var out ScanResult
-	if err := json.Unmarshal(b, &out); err != nil {
+	out, err := decodeScanResult(b)
+	if err != nil {
 		return ScanResult{}, err
 	}
 	if strings.TrimSpace(out.Session) == "" {
@@ -230,7 +271,7 @@ func (c *Client) Job(session, id string) (Job, error) {
 			return j, nil
 		}
 	}
-	return Job{}, fmt.Errorf("matchora job %s not found", id)
+	return Job{}, fmt.Errorf("matchmedia job %s not found", id)
 }
 
 func (c *Client) Select(session, jobID, provider, id string) (Job, error) {
@@ -414,5 +455,5 @@ func waitHealth(hc *http.Client, base string, timeout time.Duration) error {
 		resp.Body.Close()
 		return nil
 	}
-	return fmt.Errorf("matchora did not become healthy")
+	return fmt.Errorf("matchmedia did not become healthy")
 }

@@ -80,7 +80,7 @@ async function ensureRegularUser(page, username = 'trackeruser', password = 'use
     await page.waitForURL(/\/settings\/users$/, { timeout: 15000 });
   }
 
-  await page.locator('form.logout button').click();
+  await page.locator('form.topbar-logout button').click();
   await page.waitForURL(/\/login$/);
   await loginAs(page, username, password);
 }

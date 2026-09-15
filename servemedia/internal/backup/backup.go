@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/db"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/db"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -110,7 +110,7 @@ func (s *Service) doBackup(ctx context.Context) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmpDB := filepath.Join(dir, ".medora-backup-tmp.db")
+	tmpDB := filepath.Join(dir, ".servemedia-backup-tmp.db")
 	_ = os.Remove(tmpDB)
 	if err := vacuumInto(s.DB.SQL, tmpDB); err != nil {
 		return fmt.Errorf("sqlite snapshot: %w", err)
@@ -118,7 +118,7 @@ func (s *Service) doBackup(ctx context.Context) error {
 	defer os.Remove(tmpDB)
 
 	ts := time.Now().UTC().Format("20060102T150405")
-	final := filepath.Join(dir, "medora-metadata-"+ts+".tar.zst")
+	final := filepath.Join(dir, "servemedia-metadata-"+ts+".tar.zst")
 	partial := final + ".partial"
 	f, err := os.Create(partial)
 	if err != nil {
@@ -156,8 +156,8 @@ func (s *Service) doBackup(ctx context.Context) error {
 			return tw.WriteHeader(hdr)
 		}
 		// replace live db with snapshot
-		if filepath.Base(path) == "medora.db" || strings.HasSuffix(path, "medora.db-wal") || strings.HasSuffix(path, "medora.db-shm") {
-			if filepath.Base(path) != "medora.db" {
+		if filepath.Base(path) == "servemedia.db" || strings.HasSuffix(path, "servemedia.db-wal") || strings.HasSuffix(path, "servemedia.db-shm") {
+			if filepath.Base(path) != "servemedia.db" {
 				return nil
 			}
 			st, err := os.Stat(tmpDB)
@@ -168,7 +168,7 @@ func (s *Service) doBackup(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			hdr.Name = "store/medora.db"
+			hdr.Name = "store/servemedia.db"
 			if err := tw.WriteHeader(hdr); err != nil {
 				return err
 			}
@@ -231,7 +231,7 @@ func (s *Service) applyRetention(dir string) error {
 	if retain <= 0 {
 		retain = 7
 	}
-	matches, err := filepath.Glob(filepath.Join(dir, "medora-metadata-*.tar.zst"))
+	matches, err := filepath.Glob(filepath.Join(dir, "servemedia-metadata-*.tar.zst"))
 	if err != nil {
 		return err
 	}
@@ -245,7 +245,7 @@ func (s *Service) applyRetention(dir string) error {
 
 func (s *Service) List() ([]string, error) {
 	dir := s.Cfg.Backup.Dir
-	matches, err := filepath.Glob(filepath.Join(dir, "medora-metadata-*.tar.zst"))
+	matches, err := filepath.Glob(filepath.Join(dir, "servemedia-metadata-*.tar.zst"))
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +265,7 @@ func (s *Service) List() ([]string, error) {
 
 func (s *Service) Delete(name string) error {
 	name = filepath.Base(name)
-	ok := strings.HasPrefix(name, "medora-metadata-") && strings.HasSuffix(name, ".tar.zst")
+	ok := strings.HasPrefix(name, "servemedia-metadata-") && strings.HasSuffix(name, ".tar.zst")
 	if !ok {
 		return fmt.Errorf("invalid backup name")
 	}
@@ -378,7 +378,7 @@ func extractArchive(archive, dataParent, restoringStore string) error {
 			if err != nil {
 				return err
 			}
-			if rel == "medora.db" {
+			if rel == "servemedia.db" {
 				foundDB = true
 			}
 			if rel == "config.yaml" {
@@ -388,7 +388,7 @@ func extractArchive(archive, dataParent, restoringStore string) error {
 	}
 	_ = dataParent
 	if !foundDB || !foundCfg {
-		return fmt.Errorf("archive missing medora.db or config.yaml")
+		return fmt.Errorf("archive missing servemedia.db or config.yaml")
 	}
 	return nil
 }

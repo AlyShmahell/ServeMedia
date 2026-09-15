@@ -288,6 +288,22 @@ const migrationV13 = `
 DROP TABLE IF EXISTS async_jobs;
 `
 
+const migrationV14 = `
+ALTER TABLE media_items ADD COLUMN matchmedia_session_id TEXT;
+ALTER TABLE media_items ADD COLUMN matchmedia_job_id TEXT;
+UPDATE media_items SET matchmedia_session_id = matchora_session_id, matchmedia_job_id = matchora_job_id;
+ALTER TABLE media_items DROP COLUMN matchora_session_id;
+ALTER TABLE media_items DROP COLUMN matchora_job_id;
+`
+
+const migrationV15 = `
+ALTER TABLE media_items ADD COLUMN parent_id INTEGER REFERENCES media_items(id) ON DELETE SET NULL;
+`
+
+const migrationV16 = `
+ALTER TABLE media_items ADD COLUMN match_error TEXT;
+`
+
 const migrationV4 = `
 CREATE TABLE IF NOT EXISTS playback_prefs (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -432,6 +448,33 @@ func (d *DB) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration v13: %w", err)
 		}
 		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (13, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 13
+	}
+	if ver < 14 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV14); err != nil {
+			return fmt.Errorf("migration v14: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (14, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 14
+	}
+	if ver < 15 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV15); err != nil {
+			return fmt.Errorf("migration v15: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (15, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 15
+	}
+	if ver < 16 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV16); err != nil {
+			return fmt.Errorf("migration v16: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (16, ?)`, now()); err != nil {
 			return err
 		}
 	}

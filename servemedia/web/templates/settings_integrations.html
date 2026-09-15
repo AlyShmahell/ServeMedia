@@ -4,8 +4,6 @@
 <title>Integrations — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
-  <p class="back-link"><a href="/settings">← Settings</a></p>
-  <h1>Integrations</h1>
   <div class="page-main-card">
     <div class="settings-tabs" role="tablist">
       <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-tab="webhooks">Webhooks</button>
@@ -16,11 +14,11 @@
         <section class="page-sub-card">
           <h2>Webhooks</h2>
           <div class="page-sub-card-body-scroll">
-            <p class="muted">Send outbound notifications in standard webhook JSON. <code>ServerName</code> is always <strong>Medora</strong>.</p>
+            <p class="muted">Send outbound notifications in standard webhook JSON. <code>ServerName</code> is always <strong>ServeMedia</strong>.</p>
 
             <label><input type="checkbox" name="webhook_enabled" {{if .UserWebhooks.Enabled}}checked{{end}}> Enable webhooks</label>
             <label>Server URL</label>
-            <input name="webhook_server_url" value="{{.UserWebhooks.ServerURL}}" placeholder="https://medora.example.com">
+            <input name="webhook_server_url" value="{{.UserWebhooks.ServerURL}}" placeholder="https://servemedia.example.com">
             <label>Server ID</label>
             <input value="{{.Config.Integrations.Webhooks.ServerID}}" readonly>
             <label>Webhook API key</label>
@@ -29,7 +27,7 @@
               <button type="button" class="secondary" id="webhook-copy-key">Copy</button>
               <button type="submit" class="secondary" formaction="/hx/integrations/webhooks/regenerate-key" formmethod="post" onclick="return confirm('Regenerate webhook API key? Update receivers with the new key.')">Regenerate</button>
             </div>
-            <p class="muted">Displayed masked in UI: {{.WebhookKeyMasked}}. Outbound requests include header <code>X-Medora-Webhook-Key</code>.</p>
+            <p class="muted">Displayed masked in UI: {{.WebhookKeyMasked}}. Outbound requests include header <code>X-ServeMedia-Webhook-Key</code>.</p>
 
             <h3>Destinations</h3>
             <div class="webhook-destinations" id="webhook-destinations">
@@ -105,11 +103,11 @@
             <h3>Default payload example</h3>
             <pre class="webhook-example">{
   "ServerId": "{{.Config.Integrations.Webhooks.ServerID}}",
-  "ServerName": "Medora",
+  "ServerName": "ServeMedia",
   "ServerVersion": "{{.Version}}",
   "ServerUrl": "{{.UserWebhooks.ServerURL}}",
   "NotificationType": "PlaybackStart",
-  "ClientName": "Medora",
+  "ClientName": "ServeMedia",
   "Name": "Example Movie",
   "ItemType": "Movie",
   "ItemId": "42",
@@ -129,12 +127,12 @@
       <section class="page-sub-card">
         <h2>Metadata keys</h2>
         <div class="page-sub-card-body-scroll">
-          <p class="muted">Provider keys are stored by Matchora, not in Medora config. Leave a field blank to keep the current value.</p>
+          <p class="muted">Provider keys are stored by MatchMedia, not in ServeMedia config. Leave a field blank to keep the current value.</p>
           {{range .SecretKeys}}
           <label>{{if eq . "omdb"}}OMDb{{else if eq . "tmdb"}}TMDB{{else}}{{.}}{{end}} API key {{if index $.Secrets .}}<span class="muted">(set)</span>{{else}}<span class="muted">(not set)</span>{{end}}</label>
           <input type="password" name="secret_{{.}}" id="secret-{{.}}" placeholder="Leave blank to keep current" autocomplete="off">
           {{else}}
-          <p class="muted">No Matchora secret keys available.</p>
+          <p class="muted">No MatchMedia secret keys available.</p>
           {{end}}
         </div>
       </section>

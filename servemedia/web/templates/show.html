@@ -1,16 +1,15 @@
 {{define "show.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.Item.Title}} — Medora</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
+<title>{{.Item.Title}} — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"><script src="/static/vendor/htmx.min.js" defer></script><script src="/static/app.js" defer></script></head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content hero-meta show-page">
-  <p class="back-link"><a href="/libraries/{{.Item.LibraryID}}">← Back</a></p>
   <div class="media-hero show-hero-card" data-scroll-key="show-hero">
     <div class="poster-wrap media-hero-poster">
       <div class="poster-play static">
         <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
       </div>
-      {{template "partials/card_actions.html" (mediaActions "show" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String)}}
+      {{template "partials/card_actions.html" (mediaActions "show" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
     </div>
     <div class="media-meta">
       <h1>{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>
@@ -44,10 +43,11 @@
     </div>
   </div>
   <div class="show-seasons-panel">
-    <h2>Seasons</h2>
-    <div class="show-seasons-body" data-scroll-key="show-seasons">
+    <h2>Titles</h2>
+    <div class="show-seasons-body" data-scroll-key="show-titles">
       <div class="season-grid">
         {{range .SeasonCards}}
+        {{if gt .EpisodeCount 0}}
         <a class="season-card" href="/shows/{{$.Item.ID}}/seasons/{{.Season.SeasonNumber}}">
           <div class="poster-wrap season-poster-wrap">
             <img class="poster" src="{{if .Season.PosterPath.Valid}}{{posterURL .Season.PosterPath.String $.Item.MetaID.String}}{{else}}{{posterURL $.Item.PosterPath.String $.Item.MetaID.String}}{{end}}" alt="">
@@ -56,11 +56,23 @@
           <div class="season-card-body">
             <h3>{{if .Season.Title.Valid}}{{.Season.Title.String}}{{else}}Season {{.Season.SeasonNumber}}{{end}}</h3>
             <p class="muted">{{.EpisodeCount}} episode{{if ne .EpisodeCount 1}}s{{end}}</p>
-            {{if .Season.Plot.Valid}}<p class="plot">{{.Season.Plot.String}}</p>{{else}}<p class="muted">No synopsis</p>{{end}}
+            {{if .Season.Plot.Valid}}<p class="plot">{{.Season.Plot.String}}</p>{{end}}
           </div>
         </a>
-        {{else}}
-        <p class="muted">No seasons</p>
+        {{end}}
+        {{end}}
+        {{range .ChildItems}}
+        <a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
+          <div class="poster-wrap">
+            <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
+            {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID .Item.Title $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
+            <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
+          </div>
+          <div class="t">{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</div>
+        </a>
+        {{end}}
+        {{if and (not .SeasonCards) (not .ChildItems)}}
+        <p class="muted">No titles</p>
         {{end}}
       </div>
     </div>

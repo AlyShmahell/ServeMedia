@@ -35,8 +35,6 @@ async function ensureAnimeLibrary(page) {
     await page.locator('#add-library-dialog button[type="submit"]').click();
     await expect(page).toHaveURL(/scan=/);
   }
-  // Matchora 0.0.4 grouping emits extra sibling-folder titles. A local rescan
-  // restores disk titles (Dual Show, Season Pack Show, …) without deleting extras.
   await localScanLibrary(page, 'Anime');
   await openLibrary(page, 'Anime');
   await expect(page.locator('#items .card').first()).toBeVisible({ timeout: 90000 });

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/db"
+	"github.com/alyshmahell/servemedia/internal/db"
 )
 
 func TestRunningScanForLibrary(t *testing.T) {

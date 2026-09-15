@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/alyshmahell/medora/internal/ffbin"
+	"github.com/alyshmahell/servemedia/internal/ffbin"
 )
 
 var sidecarLangRe = regexp.MustCompile(`(?i)^(.+)\.([a-z]{2,3}(?:-[a-z]{2,4})?)\.(srt|vtt|ass|ssa)$`)

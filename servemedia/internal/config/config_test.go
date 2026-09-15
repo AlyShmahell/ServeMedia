@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/config"
+	"github.com/alyshmahell/servemedia/internal/config"
 )
 
 func TestEnsureIntegrationDefaults(t *testing.T) {

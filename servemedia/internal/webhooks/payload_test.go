@@ -3,16 +3,16 @@ package webhooks_test
 import (
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/db"
-	"github.com/alyshmahell/medora/internal/webhooks"
+	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/internal/webhooks"
 )
 
 func TestBasePayload(t *testing.T) {
-	p := webhooks.BasePayload("server-uuid", "https://medora.test", webhooks.NotificationPlaybackStart)
+	p := webhooks.BasePayload("server-uuid", "https://servemedia.test", webhooks.NotificationPlaybackStart)
 	if p["ServerId"] != "server-uuid" {
 		t.Fatalf("ServerId = %v", p["ServerId"])
 	}
-	if p["ServerUrl"] != "https://medora.test" {
+	if p["ServerUrl"] != "https://servemedia.test" {
 		t.Fatalf("ServerUrl = %v", p["ServerUrl"])
 	}
 	if p["NotificationType"] != webhooks.NotificationPlaybackStart {

@@ -3,6 +3,10 @@
 {{if $needPick}}
 <button type="button" class="match-bang" title="Choose match" aria-label="Choose match"
   onclick="event.preventDefault(); event.stopPropagation(); openMatchModal({{.ID}})">!</button>
+{{else if eq .MatchStatus "error"}}
+{{$err := .MatchError}}{{if not $err}}{{$err = "Match failed"}}{{end}}
+<span class="match-fail" title="{{$err}}" aria-label="{{$err}}"
+  onclick="event.preventDefault(); event.stopPropagation();">×</span>
 {{end}}
 <div class="card-actions{{if .Static}} is-static{{end}}" onclick="event.preventDefault(); event.stopPropagation();">
   <button type="button" class="card-action card-action-scan" title="Scan"

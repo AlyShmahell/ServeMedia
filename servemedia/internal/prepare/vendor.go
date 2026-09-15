@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/config"
+	"github.com/alyshmahell/servemedia/internal/config"
 )
 
 // ThirdParty fetches htmx, video.js, and hls.js into {exeDir}/vendor when missing.
@@ -62,7 +62,7 @@ func download(rawURL, dest string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "medora-prepare")
+	req.Header.Set("User-Agent", "servemedia-prepare")
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

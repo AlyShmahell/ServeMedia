@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/medora/internal/db"
-	"github.com/alyshmahell/medora/internal/version"
+	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/internal/version"
 )
 
 func BasePayload(serverID, serverURL, notificationType string) map[string]any {
@@ -18,12 +18,12 @@ func BasePayload(serverID, serverURL, notificationType string) map[string]any {
 	now := time.Now()
 	return map[string]any{
 		"ServerId":         serverID,
-		"ServerName":       "Medora",
+		"ServerName":       "ServeMedia",
 		"ServerVersion":    version.Version,
 		"ServerUrl":        serverURL,
 		"NotificationType": notificationType,
-		"ClientName":       "Medora",
-		"Client":           "Medora",
+		"ClientName":       "ServeMedia",
+		"Client":           "ServeMedia",
 		"Timestamp":        now.Format(time.RFC3339),
 		"UtcTimestamp":     now.UTC().Format(time.RFC3339),
 	}

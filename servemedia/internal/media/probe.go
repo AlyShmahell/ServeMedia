@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alyshmahell/medora/internal/ffbin"
+	"github.com/alyshmahell/servemedia/internal/ffbin"
 )
 
 type Probe struct {

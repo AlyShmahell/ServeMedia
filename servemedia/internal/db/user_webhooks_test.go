@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/db"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/db"
 )
 
 func TestUserWebhooksDefaultsAndSave(t *testing.T) {
@@ -72,7 +72,7 @@ func TestImportLegacyWebhooks(t *testing.T) {
 	}
 	legacy := config.WebhooksConfig{
 		Enabled:   true,
-		ServerURL: "https://medora.test",
+		ServerURL: "https://servemedia.test",
 		APIKey:    "legacy-key",
 		Destinations: []config.WebhookDestination{{
 			Name: "Legacy", URL: "http://example/hook", Enabled: true,

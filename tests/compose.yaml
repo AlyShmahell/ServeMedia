@@ -1,4 +1,4 @@
-# Medora test stack — Podman only (see docs/dev/workflow.md and ./tests/run)
+# ServeMedia test stack — Podman only (see docs/dev/workflow.md and ./tests/run)
 services:
   unit:
     build:
@@ -21,14 +21,14 @@ services:
     expose:
       - "9090"
 
-  medora:
-    image: localhost/medora-runtime:latest
+  servemedia:
+    image: localhost/servemedia-runtime:latest
     build:
       context: ./runtime
       dockerfile: Containerfile
     environment:
-      MEDORA_MEDIA_PATH: /media
-      MEDORA_MATCHORA_OVERLAY: /overlay/matchora.yaml
+      SERVEMEDIA_MEDIA_PATH: /media
+      SERVEMEDIA_MATCHMEDIA_OVERLAY: /overlay/matchmedia.yaml
     depends_on:
       omdb-stub:
         condition: service_started
@@ -36,9 +36,9 @@ services:
         condition: service_started
     volumes:
       - ../build/dist:/app:z
-      - medora-test-data:/app/data:Z
+      - servemedia-test-data:/app/data:Z
       - ./fixtures/media:/media:ro,z
-      - ./matchora-overlay.yaml:/overlay/matchora.yaml:ro,z
+      - ./matchmedia-overlay.yaml:/overlay/matchmedia.yaml:ro,z
     working_dir: /app
     expose:
       - "7676"
@@ -54,13 +54,13 @@ services:
       context: ..
       dockerfile: tests/smoke/Containerfile
     depends_on:
-      medora:
+      servemedia:
         condition: service_healthy
     environment:
-      MEDORA_BASE_URL: http://medora:7676
+      SERVEMEDIA_BASE_URL: http://servemedia:7676
       WEBHOOK_STUB_URL: http://webhook-stub:9090
     volumes:
       - ./smoke:/tests:ro
 
 volumes:
-  medora-test-data:
+  servemedia-test-data:

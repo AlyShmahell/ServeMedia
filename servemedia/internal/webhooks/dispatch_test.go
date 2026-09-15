@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/alyshmahell/medora/internal/config"
-	"github.com/alyshmahell/medora/internal/webhooks"
+	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/internal/webhooks"
 )
 
 func testWebhooksConfig() config.WebhooksConfig {
@@ -19,11 +19,11 @@ func testWebhooksConfig() config.WebhooksConfig {
 	}
 }
 
-func TestDispatchSyncSendsMedoraPayload(t *testing.T) {
+func TestDispatchSyncSendsServeMediaPayload(t *testing.T) {
 	var gotBody map[string]any
 	var gotKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotKey = r.Header.Get("X-Medora-Webhook-Key")
+		gotKey = r.Header.Get("X-ServeMedia-Webhook-Key")
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &gotBody)
 		w.WriteHeader(http.StatusOK)
@@ -38,7 +38,7 @@ func TestDispatchSyncSendsMedoraPayload(t *testing.T) {
 	}}
 	svc := webhooks.New(nil)
 	payload := webhooks.MergePayload(
-		webhooks.BasePayload("server-uuid", "https://medora.test", webhooks.NotificationGeneric),
+		webhooks.BasePayload("server-uuid", "https://servemedia.test", webhooks.NotificationGeneric),
 		map[string]any{"Message": "hello"},
 	)
 	sent, errs := svc.DispatchSync(wh, webhooks.NotificationGeneric, "", payload)
@@ -48,7 +48,7 @@ func TestDispatchSyncSendsMedoraPayload(t *testing.T) {
 	if sent != 1 {
 		t.Fatalf("sent = %d", sent)
 	}
-	if gotBody["ServerName"] != "Medora" {
+	if gotBody["ServerName"] != "ServeMedia" {
 		t.Fatalf("ServerName = %v", gotBody["ServerName"])
 	}
 	if gotKey != wh.APIKey {
@@ -124,7 +124,7 @@ func TestDispatchSyncCustomTemplate(t *testing.T) {
 	if len(errs) != 0 || sent != 1 {
 		t.Fatalf("sent=%d errs=%v", sent, errs)
 	}
-	if raw != `{"server":"Medora","type":"Generic"}` {
+	if raw != `{"server":"ServeMedia","type":"Generic"}` {
 		t.Fatalf("body = %s", raw)
 	}
 }

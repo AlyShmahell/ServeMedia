@@ -13,7 +13,7 @@
 *.so
 *.dylib
 *.test
-medora/medora
+servemedia/servemedia
 
 # Test / coverage
 *.out
@@ -29,7 +29,7 @@ go.work.sum
 .env
 /data/
 !data/.gitkeep
-medora/.env
+servemedia/.env
 
 # Editor
 .idea/

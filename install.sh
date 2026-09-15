@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Install a published Medora release into ~/.medora (userscope desktop + bin).
+# Install a published ServeMedia release into ~/.servemedia (userscope desktop + bin).
 set -euo pipefail
 
-REPO="${MEDORA_REPO:-AlyShmahell/medora}"
-DEST="${MEDORA_HOME:-$HOME/.medora}"
+REPO="${SERVEMEDIA_REPO:-AlyShmahell/servemedia}"
+DEST="${SERVEMEDIA_HOME:-$HOME/.servemedia}"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
 
 usage() {
   cat <<EOF
-Usage: curl -fsSL https://raw.githubusercontent.com/AlyShmahell/medora/main/install.sh | bash
+Usage: curl -fsSL https://raw.githubusercontent.com/AlyShmahell/servemedia/main/install.sh | bash
   Interactive TTY menu: pick a GitHub release.
-  Installs into ~/.medora, links ~/.local/bin/medora, and installs a userscope .desktop.
+  Installs into ~/.servemedia, links ~/.local/bin/servemedia, and installs a userscope .desktop.
 
-  MEDORA_REPO   GitHub owner/name (default AlyShmahell/medora)
-  MEDORA_HOME   Install prefix (default ~/.medora)
+  SERVEMEDIA_REPO   GitHub owner/name (default AlyShmahell/servemedia)
+  SERVEMEDIA_HOME   Install prefix (default ~/.servemedia)
 EOF
 }
 
@@ -88,7 +88,7 @@ menu() {
 
 json_tmp="$(mktemp)"
 trap 'rm -f "$json_tmp"' EXIT
-if ! curl -fsSL -A medora-install -H "Accept: application/vnd.github+json" \
+if ! curl -fsSL -A servemedia-install -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/${REPO}/releases" >"$json_tmp"; then
   echo "error: could not list releases for ${REPO}" >&2
   exit 1
@@ -113,7 +113,7 @@ if [[ ${#TAGS[@]} -eq 0 ]]; then
   exit 1
 fi
 
-echo "Select a Medora release (${REPO})"
+echo "Select a ServeMedia release (${REPO})"
 CHOICE=
 menu "${TAGS[@]}"
 TAG="${TAGS[$CHOICE]}"
@@ -147,14 +147,14 @@ else:
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work" "$json_tmp"' EXIT
-tarball="$work/medora.tar.gz"
+tarball="$work/servemedia.tar.gz"
 echo "Downloading ${ASSET_URL}"
-curl -fL -A medora-install --retry 3 --retry-delay 1 -o "$tarball" "$ASSET_URL"
+curl -fL -A servemedia-install --retry 3 --retry-delay 1 -o "$tarball" "$ASSET_URL"
 tar -xzf "$tarball" -C "$work"
 src=""
-if [[ -x "$work/medora/medora" ]]; then
-  src="$work/medora"
-elif [[ -x "$work/medora" && -d "$work/config" ]]; then
+if [[ -x "$work/servemedia/servemedia" ]]; then
+  src="$work/servemedia"
+elif [[ -x "$work/servemedia" && -d "$work/config" ]]; then
   src="$work"
 else
   echo "error: unexpected archive layout" >&2
@@ -162,41 +162,41 @@ else
 fi
 
 mkdir -p "$DEST"
-for item in medora config public tools vendor share LICENSE; do
+for item in servemedia config public tools vendor share LICENSE; do
   if [[ -e "$src/$item" ]]; then
     rm -rf "$DEST/$item"
     cp -a "$src/$item" "$DEST/"
   fi
 done
-chmod +x "$DEST/medora"
+chmod +x "$DEST/servemedia"
 
 mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
-ln -sfn "$DEST/medora" "$BIN_DIR/medora"
+ln -sfn "$DEST/servemedia" "$BIN_DIR/servemedia"
 
 icon_src="$DEST/public/logo.svg"
 if [[ -f "$icon_src" ]]; then
-  cp -a "$icon_src" "$ICON_DIR/medora.svg"
+  cp -a "$icon_src" "$ICON_DIR/servemedia.svg"
 fi
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICON_DIR")")" >/dev/null 2>&1 || true
 fi
 
-desktop_src="$DEST/share/applications/medora.desktop"
-desktop_dst="$APP_DIR/medora.desktop"
+desktop_src="$DEST/share/applications/servemedia.desktop"
+desktop_dst="$APP_DIR/servemedia.desktop"
 if [[ ! -f "$desktop_src" ]]; then
   echo "error: desktop file missing from release" >&2
   exit 1
 fi
-icon_path="$ICON_DIR/medora.svg"
+icon_path="$ICON_DIR/servemedia.svg"
 if [[ ! -f "$icon_path" ]]; then
   icon_path="$icon_src"
 fi
-sed -e "s|^Exec=.*|Exec=${DEST}/medora|" -e "s|^Icon=.*|Icon=${icon_path}|" "$desktop_src" >"$desktop_dst"
+sed -e "s|^Exec=.*|Exec=${DEST}/servemedia|" -e "s|^Icon=.*|Icon=${icon_path}|" "$desktop_src" >"$desktop_dst"
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
 fi
 
 echo "Installed ${TAG} to ${DEST}"
-echo "  ${BIN_DIR}/medora"
+echo "  ${BIN_DIR}/servemedia"
 echo "  ${desktop_dst}"
-echo "Add ${BIN_DIR} to PATH if medora is not found."
+echo "Add ${BIN_DIR} to PATH if servemedia is not found."

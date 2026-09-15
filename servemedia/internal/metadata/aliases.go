@@ -14,6 +14,29 @@ func aliasKey(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// AliasKey is the exported form of the title key used for merge/attach.
+func AliasKey(s string) string {
+	return aliasKey(s)
+}
+
+var titleStop = map[string]bool{
+	"a": true, "an": true, "the": true, "of": true, "to": true, "in": true, "on": true,
+	"at": true, "is": true, "and": true, "or": true, "my": true, "for": true, "with": true,
+	"from": true, "as": true, "by": true,
+}
+
+// ContentTokens are aliasKey fields after dropping stop words and tokens shorter than 3.
+func ContentTokens(s string) []string {
+	var out []string
+	for _, t := range strings.Fields(aliasKey(s)) {
+		if len(t) < 3 || titleStop[t] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 var movieTitleSuffixRe = regexp.MustCompile(`(?i)\s*(?:-\s*)?(?:the\s+)?movie\s*$`)
 
 // StripMovieTitleSuffix removes a trailing " - The Movie" / "Movie" style suffix
