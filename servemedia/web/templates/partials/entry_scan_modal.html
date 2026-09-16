@@ -13,16 +13,19 @@
     <select name="mode" id="entry-scan-mode">
       <option value="local" {{if not .MetaReady}}selected{{end}}>Scan local NFO/posters</option>
       <option value="matchmedia" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with MatchMedia</option>
+      <option value="dissociate">Dissociate current NFO+poster</option>
     </select>
     <div id="entry-scan-title-wrap" class="scan-title-field" hidden>
       <label for="entry-scan-title">Title to match</label>
       <input type="text" name="title" id="entry-scan-title" autocomplete="off">
     </div>
     {{if not .MetaReady}}
-    <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
+    <p class="muted scan-modal-hint" id="entry-scan-meta-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
     {{else if .MetaHint}}
-    <p class="muted scan-modal-hint">{{.MetaHint}}</p>
+    <p class="muted scan-modal-hint" id="entry-scan-meta-hint">{{.MetaHint}}</p>
     {{end}}
+    <p class="muted scan-modal-hint" id="entry-scan-dissociate-hint" hidden>Removes this title’s NFO and posters (including files next to the video). Library MatchMedia scans will skip it until you match it again from here.</p>
+    <div id="entry-scan-opts">
     <label class="scan-persist">
       <input type="checkbox" name="overwrite" value="1">
       Overwrite existing metadata
@@ -31,6 +34,7 @@
       <input type="checkbox" name="persist" value="1" checked>
       Save NFO/posters next to media files
     </label>
+    </div>
     <footer class="modal-foot">
       <button type="button" class="secondary" id="entry-scan-modal-cancel">Cancel</button>
       <button type="submit">Start</button>
@@ -45,17 +49,24 @@
   var mode = document.getElementById('entry-scan-mode');
   var titleWrap = document.getElementById('entry-scan-title-wrap');
   var titleInput = document.getElementById('entry-scan-title');
+  var opts = document.getElementById('entry-scan-opts');
+  var dissHint = document.getElementById('entry-scan-dissociate-hint');
+  var metaHint = document.getElementById('entry-scan-meta-hint');
   function closeDlg() { dlg.close(); }
-  function syncTitleField() {
-    var show = mode && mode.value === 'matchmedia';
-    if (titleWrap) titleWrap.hidden = !show;
-    if (titleInput) titleInput.disabled = !show;
+  function syncModeFields() {
+    var mm = mode && mode.value === 'matchmedia';
+    var diss = mode && mode.value === 'dissociate';
+    if (titleWrap) titleWrap.hidden = !mm;
+    if (titleInput) titleInput.disabled = !mm;
+    if (opts) opts.hidden = !!diss;
+    if (dissHint) dissHint.hidden = !diss;
+    if (metaHint) metaHint.hidden = !!diss;
   }
   var closeBtn = document.getElementById('entry-scan-modal-close');
   var cancelBtn = document.getElementById('entry-scan-modal-cancel');
   if (closeBtn) closeBtn.addEventListener('click', closeDlg);
   if (cancelBtn) cancelBtn.addEventListener('click', closeDlg);
-  if (mode) mode.addEventListener('change', syncTitleField);
+  if (mode) mode.addEventListener('change', syncModeFields);
   dlg.addEventListener('click', function (e) {
     if (e.target === dlg) closeDlg();
   });
@@ -63,7 +74,7 @@
     if (!form) return;
     form.setAttribute('hx-post', '/hx/media/' + mediaId + '/scan');
     if (titleInput) titleInput.value = title || '';
-    syncTitleField();
+    syncModeFields();
     if (window.htmx) htmx.process(form);
     dlg.showModal();
   };

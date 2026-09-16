@@ -20,7 +20,7 @@ WORKDIR /dist
 COPY --from=go /out/servemedia /dist/servemedia
 COPY servemedia/share/config /dist/config
 COPY servemedia/share/applications /dist/share/applications
-COPY servemedia/web/static/app.css servemedia/web/static/app.js servemedia/web/static/logo.svg servemedia/web/static/placeholder.svg /dist/public/
+COPY servemedia/web/static/app.css servemedia/web/static/app.js servemedia/web/static/controls.js servemedia/web/static/logo.svg servemedia/web/static/placeholder.svg /dist/public/
 COPY LICENSE /dist/LICENSE
 COPY build/build /build
 RUN chmod +x /build && /build vendor

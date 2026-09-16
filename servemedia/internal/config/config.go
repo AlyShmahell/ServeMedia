@@ -39,8 +39,9 @@ type IntegrationsConfig struct {
 }
 
 type MatchMediaConfig struct {
-	Addr string `yaml:"addr"`
-	URL  string `yaml:"url"`
+	Addr    string `yaml:"addr"`
+	Version string `yaml:"version"`
+	URL     string `yaml:"url"`
 }
 
 type VendorConfig struct {

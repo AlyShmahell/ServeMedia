@@ -445,6 +445,27 @@ func TestKindFromJobUsesFiles(t *testing.T) {
 	}
 }
 
+func TestSplitJobFileNumbers(t *testing.T) {
+	numbered, loose := splitJobFileNumbers([]matchmedia.JobFile{
+		{Path: "/m/s1.mkv", Season: "1", Episode: "2"},
+		{Path: "/m/s0.mkv", Season: "0", Episode: "1"},
+		{Path: "/m/loose.mkv"},
+		{Path: "/m/padded.mkv", Season: "01", Episode: "03"},
+	})
+	if len(numbered) != 3 || len(loose) != 1 || loose[0] != "/m/loose.mkv" {
+		t.Fatalf("numbered %#v loose %#v", numbered, loose)
+	}
+	if numbered[0].Season != 1 || numbered[0].Episode != 2 {
+		t.Fatalf("s1 %#v", numbered[0])
+	}
+	if numbered[1].Season != 0 || numbered[1].Episode != 1 {
+		t.Fatalf("s0 %#v", numbered[1])
+	}
+	if numbered[2].Season != 1 || numbered[2].Episode != 3 {
+		t.Fatalf("padded %#v", numbered[2])
+	}
+}
+
 func TestMatchPathPathOnlyJobs(t *testing.T) {
 	ctx := context.Background()
 	store := t.TempDir()
@@ -1552,7 +1573,7 @@ func TestFillMissingArtCopiesShowPosterWithoutOverwrite(t *testing.T) {
 	if it.PosterPath.Valid && it.PosterPath.String != "" {
 		t.Fatalf("setup poster %#v", it.PosterPath)
 	}
-	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j1", Status: "matched"}, Opts{Overwrite: false, ManualSelect: true}, sess); err != nil {
+	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j1", Status: "matched"}, Opts{Overwrite: false}, sess); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.GetMediaItem(ctx, id)
@@ -1620,7 +1641,7 @@ func TestFillMissingArtCopiesMoviePosterWithoutOverwrite(t *testing.T) {
 	if it.PosterPath.Valid && it.PosterPath.String != "" {
 		t.Fatalf("setup poster %#v", it.PosterPath)
 	}
-	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j1", Status: "matched"}, Opts{Overwrite: false, ManualSelect: true}, sess); err != nil {
+	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j1", Status: "matched"}, Opts{Overwrite: false}, sess); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.GetMediaItem(ctx, id)
@@ -1690,7 +1711,7 @@ func TestFillMissingArtUsesStoredSessionWhenJobSessionDiffers(t *testing.T) {
 	if err != nil || it == nil {
 		t.Fatal(err)
 	}
-	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j-new", Status: "matched"}, Opts{Overwrite: false, ManualSelect: true}, newSess); err != nil {
+	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j-new", Status: "matched"}, Opts{Overwrite: false}, newSess); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.GetMediaItem(ctx, id)
@@ -1739,7 +1760,7 @@ func TestFillMissingArtCopiesLocalMatchMediaCatalogPoster(t *testing.T) {
 	if err != nil || it == nil {
 		t.Fatal(err)
 	}
-	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j1", Status: "matched"}, Opts{Overwrite: false, ManualSelect: true}, "20260915T140000Z-deaddeaddeaddead"); err != nil {
+	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j1", Status: "matched"}, Opts{Overwrite: false}, "20260915T140000Z-deaddeaddeaddead"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.GetMediaItem(ctx, id)
@@ -1850,6 +1871,383 @@ func TestApplyJobUnmatchedStaysUnmatched(t *testing.T) {
 	}
 	if got.MatchError.Valid && got.MatchError.String != "" {
 		t.Fatalf("unmatched must not store match_error %#v", got.MatchError)
+	}
+}
+
+func TestMatchPathNumberedFilesKeepsExtrasOnParent(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	showDir := filepath.Join(media, "Sample Show")
+	epPath := filepath.Join(showDir, "Season 1", "S01E01.mkv")
+	ovaPath := filepath.Join(showDir, "Specials", "The Hidden OVA.mkv")
+	decoy := filepath.Join(showDir, "Season 1", "S01E99.mkv")
+	for _, p := range []string{epPath, ovaPath, decoy} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const sess = "20260915T210000Z-aaaaaaaaaaaaaaaa"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":2}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"files":2,"done":2,"running":false}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-show", "status": "matched", "path": showDir, "source": "scan",
+			"files": []map[string]any{
+				{"path": epPath, "season": "1", "episode": "1"},
+				{"path": ovaPath, "season": "0", "episode": "1"},
+			},
+			"match": map[string]any{"provider": "tvmaze", "id": "22", "title": "Sample Show", "year": "2020"},
+		}})
+	})
+	mux.HandleFunc("/v1/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = io.WriteString(w, "fakejpeg")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"provider": "tvmaze", "id": "22", "title": "Sample Show", "year": "2020",
+			"synopsis": "plot", "poster": r.URL.Path + "/poster.jpg",
+			"seasons": []any{
+				map[string]any{
+					"number": "1", "title": "Season 1",
+					"episodes": []any{map[string]any{"number": "1", "title": "Pilot"}},
+				},
+				map[string]any{
+					"number": "0", "title": "Specials",
+					"episodes": []any{map[string]any{"number": "1", "title": "The Hidden OVA"}},
+				},
+			},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	show, err := d.GetMediaItemByPath(ctx, lib.ID, showDir)
+	if err != nil || show == nil || show.Kind != "show" {
+		t.Fatalf("show %#v %v", show, err)
+	}
+	if got, _ := d.GetMediaItemByPath(ctx, lib.ID, filepath.Join(showDir, "Specials")); got != nil {
+		t.Fatalf("specials must not be a card: %#v", got)
+	}
+	eps, err := d.ListEpisodesByShow(ctx, show.ID)
+	if err != nil || len(eps) != 2 {
+		t.Fatalf("eps %#v %v", eps, err)
+	}
+	byPath := map[string]db.Episode{}
+	for _, ep := range eps {
+		byPath[ep.Path] = ep
+	}
+	if _, ok := byPath[decoy]; ok {
+		t.Fatal("files[] must not re-walk decoy videos")
+	}
+	if byPath[epPath].Title.String != "Pilot" || byPath[epPath].EpisodeNumber != 1 {
+		t.Fatalf("s01 %#v", byPath[epPath])
+	}
+	if byPath[ovaPath].Title.String != "The Hidden OVA" {
+		t.Fatalf("ova %#v", byPath[ovaPath])
+	}
+	seasons, err := d.ListSeasons(ctx, show.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seasonByID := map[int64]int{}
+	for _, s := range seasons {
+		seasonByID[s.ID] = s.SeasonNumber
+	}
+	if seasonByID[byPath[ovaPath].SeasonID] != 0 {
+		t.Fatalf("ova season %d want 0", seasonByID[byPath[ovaPath].SeasonID])
+	}
+}
+
+func TestMatchPathNumberedSequentialKept(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	showDir := filepath.Join(media, "Seq Show")
+	epA := filepath.Join(showDir, "Season 1", "ep-a.mkv")
+	epB := filepath.Join(showDir, "Season 1", "ep-b.mkv")
+	for _, p := range []string{epA, epB} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const sess = "20260915T210100Z-bbbbbbbbbbbbbbbb"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":2}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"files":2,"done":2,"running":false}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-show", "status": "unmatched", "path": showDir, "source": "scan",
+			"files": []map[string]any{
+				{"path": epA, "season": "1", "episode": "5"},
+				{"path": epB, "season": "1", "episode": "6"},
+			},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true}); err != nil {
+		t.Fatal(err)
+	}
+	show, err := d.GetMediaItemByPath(ctx, lib.ID, showDir)
+	if err != nil || show == nil {
+		t.Fatalf("show %#v %v", show, err)
+	}
+	eps, err := d.ListEpisodesByShow(ctx, show.ID)
+	if err != nil || len(eps) != 2 {
+		t.Fatalf("eps %#v %v", eps, err)
+	}
+	byPath := map[string]int{}
+	for _, ep := range eps {
+		byPath[ep.Path] = ep.EpisodeNumber
+	}
+	if byPath[epA] != 5 || byPath[epB] != 6 {
+		t.Fatalf("MatchMedia numbers rewritten: %#v", byPath)
+	}
+}
+
+func TestMatchPathFilesPathOnlyUsesLocalNumbers(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	showDir := filepath.Join(media, "Loose Show")
+	epPath := filepath.Join(showDir, "Season 1", "S01E02.mkv")
+	decoy := filepath.Join(showDir, "Season 1", "S01E99.mkv")
+	for _, p := range []string{epPath, decoy} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const sess = "20260915T210200Z-cccccccccccccccc"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":1}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"files":1,"done":1,"running":false}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-show", "status": "unmatched", "path": showDir, "source": "scan",
+			"files": []map[string]any{{"path": epPath}},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true}); err != nil {
+		t.Fatal(err)
+	}
+	show, err := d.GetMediaItemByPath(ctx, lib.ID, showDir)
+	if err != nil || show == nil {
+		t.Fatalf("show %#v %v", show, err)
+	}
+	eps, err := d.ListEpisodesByShow(ctx, show.ID)
+	if err != nil || len(eps) != 1 || eps[0].Path != epPath || eps[0].EpisodeNumber != 2 {
+		t.Fatalf("local numbering %#v %v", eps, err)
+	}
+}
+
+func TestApplyJobManualSelectParksMatchedWithExistingMeta(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, _, id := setupMatchedShow(t, store, media)
+	defer d.Close()
+
+	const sess = "20260915T133954Z-manualmanualmanu"
+	srv := catalogArtServer(t, sess, "tvmaze", "80316", "Witch Hat Atelier", "2026", "show")
+	defer srv.Close()
+
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	it, err := d.GetMediaItem(ctx, id)
+	if err != nil || it == nil {
+		t.Fatal(err)
+	}
+	if err := w.applyJob(ctx, it, matchmedia.Job{ID: "j1", Status: "matched"}, Opts{Overwrite: false, ManualSelect: true}, sess); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetMediaItem(ctx, id)
+	if err != nil || got == nil {
+		t.Fatal(err)
+	}
+	if got.MatchStatus.String != "manual" {
+		t.Fatalf("status %q want manual", got.MatchStatus.String)
+	}
+	if got.PosterPath.Valid && got.PosterPath.String != "" {
+		t.Fatalf("must not fill art before pick %#v", got.PosterPath)
+	}
+	if !got.MetaID.Valid || got.MetaID.String != "80316" {
+		t.Fatalf("keep existing meta id %#v", got.MetaID)
+	}
+}
+
+func TestApplyFinishedJobLibrarySkipsSkipped(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	filmDir := filepath.Join(media, "Local Film")
+	filmPath := filepath.Join(filmDir, "Local Film.mkv")
+	if err := os.MkdirAll(filmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filmPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Local Film", Path: filmPath, Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SkipMatchMedia(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: d, Store: store}
+	j := matchmedia.Job{
+		ID: "job-hit", Status: "matched", Path: filmDir, Title: "Wrong Hit",
+		Files: []matchmedia.JobFile{{Path: filmPath}},
+		Match: &matchmedia.Candidate{Provider: "tmdb", ID: "99", Title: "Wrong Hit"},
+	}
+	if err := w.applyFinishedJob(ctx, lib, j, nil, Opts{Overwrite: true}, "sess"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.GetMediaItem(ctx, id)
+	if err != nil || got == nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Local Film" {
+		t.Fatalf("title overwritten %q", got.Title)
+	}
+	if got.MetaID.Valid {
+		t.Fatalf("meta applied %#v", got.MetaID)
+	}
+	if !got.MatchSkipped() {
+		t.Fatalf("status %#v", got.MatchStatus)
 	}
 }
 

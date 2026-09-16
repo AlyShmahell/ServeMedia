@@ -205,7 +205,7 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchm
 	if only != nil && !jobTouchesItem(j, only) {
 		return nil
 	}
-	it, err := w.upsertFromJob(ctx, lib.ID, j, opts.Overwrite)
+	it, err := w.upsertFromJob(ctx, lib.ID, j, opts.Overwrite, only == nil)
 	if err != nil {
 		return err
 	}
@@ -217,6 +217,9 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchm
 		return nil
 	}
 	if only != nil && it.ID != only.ID && !jobTouchesItem(j, only) {
+		return nil
+	}
+	if only == nil && it.MatchSkipped() {
 		return nil
 	}
 	if err := w.applyJob(ctx, it, j, opts, session); err != nil {
@@ -240,7 +243,7 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	if err != nil {
 		return err
 	}
-	it, err := w.upsertFromJob(ctx, item.LibraryID, j, true)
+	it, err := w.upsertFromJob(ctx, item.LibraryID, j, true, false)
 	if err != nil {
 		return err
 	}
@@ -250,7 +253,7 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	return w.applyJob(ctx, it, j, Opts{Persist: persist, Overwrite: true}, session)
 }
 
-func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedia.Job, overwrite bool) (*db.MediaItem, error) {
+func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedia.Job, overwrite, keepSkipped bool) (*db.MediaItem, error) {
 	files := expandJobFiles(j)
 	if len(files) == 0 {
 		return nil, nil
@@ -268,13 +271,17 @@ func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedi
 	if err != nil {
 		return nil, err
 	}
-	if parent != nil && extrasShapedJob(j, kind, itemPath) {
-		return w.attachExtrasToShow(ctx, libraryID, parent, j, files, itemPath)
-	}
 	mtime := fileMtime(itemPath)
 	existing, err := w.DB.GetMediaItemByPath(ctx, libraryID, itemPath)
 	if err != nil {
 		return nil, err
+	}
+	if keepSkipped && existing != nil && existing.MatchSkipped() {
+		_ = w.DB.TouchMediaItemMtime(ctx, existing.ID, mtime)
+		return w.DB.GetMediaItem(ctx, existing.ID)
+	}
+	if parent != nil && extrasShapedJob(j, kind, itemPath) {
+		return w.attachExtrasToShow(ctx, libraryID, parent, j, files, itemPath)
 	}
 	keepMeta := existing != nil && existing.MetaID.Valid && strings.TrimSpace(existing.MetaID.String) != "" && !overwrite
 	var id int64
@@ -304,7 +311,7 @@ func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedi
 			showPath = filepath.Dir(files[0].Path)
 		}
 		sc := &scanner.Scanner{DB: w.DB, StorePath: w.Store}
-		if err := sc.IngestShowEpisodes(ctx, it.ID, showPath); err != nil {
+		if err := ingestShowFiles(ctx, sc, it.ID, showPath, j, files); err != nil {
 			return nil, err
 		}
 	}
@@ -547,6 +554,71 @@ func (w *Worker) attachExtrasToShow(ctx context.Context, libraryID int64, host *
 	return w.DB.GetMediaItem(ctx, host.ID)
 }
 
+func ingestShowFiles(ctx context.Context, sc *scanner.Scanner, showID int64, showPath string, j matchmedia.Job, files []matchmedia.JobFile) error {
+	if !jobSentVideoFiles(j) {
+		return sc.IngestShowEpisodes(ctx, showID, showPath)
+	}
+	numbered, loose := splitJobFileNumbers(files)
+	if len(numbered) > 0 {
+		if err := sc.IngestNumberedEpisodes(ctx, showID, numbered); err != nil {
+			return err
+		}
+	}
+	if len(loose) > 0 {
+		return sc.IngestShowEpisodePaths(ctx, showID, showPath, loose)
+	}
+	return nil
+}
+
+func jobSentVideoFiles(j matchmedia.Job) bool {
+	for _, f := range j.Files {
+		if strings.TrimSpace(f.Path) != "" && isVideoPath(f.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitJobFileNumbers(files []matchmedia.JobFile) (numbered []scanner.NumberedEpisode, loose []string) {
+	for _, f := range files {
+		path := strings.TrimSpace(f.Path)
+		if path == "" {
+			continue
+		}
+		seasonStr := strings.TrimSpace(f.Season)
+		epStr := strings.TrimSpace(f.Episode)
+		if seasonStr == "" && epStr == "" {
+			loose = append(loose, path)
+			continue
+		}
+		epNum, ok := parseJobInt(epStr)
+		if !ok {
+			loose = append(loose, path)
+			continue
+		}
+		season := 1
+		if seasonStr != "" {
+			if n, ok := parseJobInt(seasonStr); ok {
+				season = n
+			}
+		}
+		numbered = append(numbered, scanner.NumberedEpisode{Path: path, Season: season, Episode: epNum})
+	}
+	return numbered, loose
+}
+
+func parseJobInt(s string) (int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
 func expandJobFiles(j matchmedia.Job) []matchmedia.JobFile {
 	var videos []matchmedia.JobFile
 	for _, f := range j.Files {
@@ -680,17 +752,17 @@ func (w *Worker) applyJob(ctx context.Context, it *db.MediaItem, j matchmedia.Jo
 	hasMeta := it.MetaID.Valid && strings.TrimSpace(it.MetaID.String) != ""
 	switch j.Status {
 	case "manual", "multiple":
-		if hasMeta && !opts.Overwrite {
-			return nil
+		if opts.ManualSelect || !(hasMeta && !opts.Overwrite) {
+			return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "manual", "")
 		}
-		return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "manual", "")
+		return nil
 	case "unmatched":
-		if hasMeta && !opts.Overwrite {
-			return nil
+		if opts.ManualSelect || !(hasMeta && !opts.Overwrite) {
+			return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "unmatched", "")
 		}
-		return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "unmatched", "")
+		return nil
 	case "error":
-		if hasMeta && !opts.Overwrite {
+		if hasMeta && !opts.Overwrite && !opts.ManualSelect {
 			return nil
 		}
 		msg := strings.TrimSpace(j.Error)
@@ -699,11 +771,11 @@ func (w *Worker) applyJob(ctx context.Context, it *db.MediaItem, j matchmedia.Jo
 		}
 		return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "error", msg)
 	case "matched":
-		if hasMeta && !opts.Overwrite {
-			return w.fillMissingArt(ctx, it, opts.Persist, session)
-		}
 		if opts.ManualSelect {
 			return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "manual", "")
+		}
+		if hasMeta && !opts.Overwrite {
+			return w.fillMissingArt(ctx, it, opts.Persist, session)
 		}
 		return w.applyMatched(ctx, it, j, opts.Persist, session)
 	default:

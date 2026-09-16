@@ -143,6 +143,25 @@ async function openSampleMoviePlayer(page) {
 
 test.describe.configure({ mode: 'serial' });
 
+test('player arrow keys stay in video.js', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureMovieLibrary(page);
+  await openSampleMoviePlayer(page);
+  const url = page.url();
+  await page.locator('.video-js').evaluate((el) => {
+    el.setAttribute('tabindex', '0');
+    el.focus();
+  });
+  await page.keyboard.press('ArrowLeft');
+  await expect(page).toHaveURL(url);
+  const inPlayer = await page.evaluate(() => {
+    const el = document.activeElement;
+    if (!el) return false;
+    return !!(el.closest && el.closest('.video-js')) || !!(el.classList && el.classList.contains('video-js')) || el.tagName === 'VIDEO';
+  });
+  expect(inPlayer).toBe(true);
+});
+
 test('fullscreen via video.js control bar', async ({ page }) => {
   await ensureAdmin(page);
   await ensureMovieLibrary(page);

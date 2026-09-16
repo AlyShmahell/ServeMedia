@@ -40,6 +40,9 @@ func (s *Server) handleMatchGet(w http.ResponseWriter, r *http.Request) {
 			jobErr = "no MatchMedia job for this title — rescan to match again"
 		} else {
 			job = j
+			if job.Match != nil {
+				job.Match.Poster = s.Meta.ResolveURL(job.Match.Poster, session)
+			}
 			for i := range job.Candidates {
 				job.Candidates[i].Poster = s.Meta.ResolveURL(job.Candidates[i].Poster, session)
 			}
@@ -47,7 +50,7 @@ func (s *Server) handleMatchGet(w http.ResponseWriter, r *http.Request) {
 	} else {
 		jobErr = "no MatchMedia job for this title — rescan to match again"
 	}
-	cands := append([]matchmedia.Candidate(nil), job.Candidates...)
+	cands := pickerCandidates(job)
 	sort.Slice(cands, func(i, j int) bool { return cands[i].Score > cands[j].Score })
 	s.render(w, r, "partials/match_dialog.html", map[string]any{
 		"Item": it, "Job": job, "Candidates": cands, "Error": jobErr,
@@ -62,6 +65,15 @@ func (s *Server) handleMatchPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = r.ParseForm()
+	if r.FormValue("skip") == "1" || r.FormValue("skip") == "on" || r.FormValue("skip") == "true" {
+		if err := s.DB.SkipMatchMedia(r.Context(), it.ID); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("HX-Refresh", "true")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	provider := strings.TrimSpace(r.FormValue("provider"))
 	candID := strings.TrimSpace(r.FormValue("id"))
 	if provider == "" || candID == "" {
@@ -76,6 +88,24 @@ func (s *Server) handleMatchPost(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Refresh", "true")
 	w.WriteHeader(http.StatusOK)
+}
+
+// pickerCandidates includes job.Match when MatchMedia only set the winner.
+func pickerCandidates(job matchmedia.Job) []matchmedia.Candidate {
+	cands := append([]matchmedia.Candidate(nil), job.Candidates...)
+	if job.Match == nil {
+		return cands
+	}
+	m := *job.Match
+	if strings.TrimSpace(m.Provider) == "" || strings.TrimSpace(m.ID) == "" {
+		return cands
+	}
+	for _, c := range cands {
+		if strings.EqualFold(strings.TrimSpace(c.Provider), strings.TrimSpace(m.Provider)) && strings.TrimSpace(c.ID) == strings.TrimSpace(m.ID) {
+			return cands
+		}
+	}
+	return append([]matchmedia.Candidate{m}, cands...)
 }
 
 // RefreshFetchConfig re-syncs the MatchMedia-backed fetch worker after config save / reopen.

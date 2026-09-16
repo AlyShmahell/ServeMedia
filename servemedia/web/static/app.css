@@ -26,6 +26,26 @@ body:has(.auth) {
   overflow: auto;
 }
 a { color: var(--accent); text-decoration: none; }
+.card:focus-visible,
+.library-card:focus-visible,
+.topbar-pill:focus-visible,
+.topbar-logo:focus-visible,
+.btn:focus-visible,
+button:focus-visible,
+a:focus-visible,
+body.spatial-nav .card:focus,
+body.spatial-nav .library-card:focus-within,
+body.spatial-nav .topbar-pill:focus,
+body.spatial-nav .topbar-logo:focus,
+body.spatial-nav .btn:focus,
+body.spatial-nav button:focus,
+body.spatial-nav a:focus,
+body.spatial-nav input:focus,
+body.spatial-nav select:focus,
+body.spatial-nav textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .shell {
   display: grid;
   grid-template-rows: auto 1fr;

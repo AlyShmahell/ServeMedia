@@ -30,6 +30,20 @@ Run `servemedia` or the desktop entry. With a display, the browser opens automat
 
 The first visit goes to `/register` and creates the **admin**. After that, `/register` is gone. Add other users under Settings → Users.
 
+## Controls
+
+Arrow keys move focus among links and buttons on Home, libraries, titles, and Settings. A gamepad D-pad or stick does the same. **A** activates the focused control; **B** goes back (closes a dialog, otherwise Back / history). The focus outline appears while using arrows or a gamepad, not for mouse-only use.
+
+On the player, the keyboard stays with video.js (seek, volume, play). Gamepad left/right seek 10 seconds, up/down change volume, **A** plays or pauses, **B** leaves the player.
+
+If the pad does nothing in **Firefox from Flathub**, Linux often already sees it (`/dev/input/js*`) but Firefox cannot list it: the sandbox has device access and still lacks host udev (`/run/udev`). Grant it, then fully quit Firefox and reopen ServeMedia:
+
+```bash
+flatpak override --user --filesystem=/run/udev:ro org.mozilla.firefox
+```
+
+The same Filesystem grant works in Flatseal. Other Flatpak browsers (Chromium, Chrome) hit the same udev gap — use that app’s ID instead of `org.mozilla.firefox`. Distro-packaged Firefox usually needs nothing extra.
+
 ## Media
 
 Default library roots are `/media` and `/mnt`. Point ServeMedia at your files with `SERVEMEDIA_MEDIA_PATH` or `media.path` in `~/.servemedia/data/config.yaml` (comma-separated paths show as one folder tree). Seed config stays in `~/.servemedia/config/default.yaml`; your changes go in the overlay.

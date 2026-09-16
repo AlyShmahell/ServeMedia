@@ -374,6 +374,28 @@ func (s *Scanner) IngestShowEpisodePaths(ctx context.Context, showID int64, root
 	return s.ingestAnimeEpisodes(ctx, showID, root, paths)
 }
 
+// NumberedEpisode is a video with MatchMedia-assigned season/episode numbers.
+type NumberedEpisode struct {
+	Path    string
+	Season  int
+	Episode int
+}
+
+// IngestNumberedEpisodes upserts videos using caller-supplied season/episode
+// numbers (MatchMedia files[]). Season 0 is kinds/extras on the parent show.
+func (s *Scanner) IngestNumberedEpisodes(ctx context.Context, showID int64, eps []NumberedEpisode) error {
+	for _, ep := range eps {
+		path := strings.TrimSpace(ep.Path)
+		if path == "" || !metadata.IsVideo(filepath.Base(path)) {
+			continue
+		}
+		if err := s.ingestEpisodeAt(ctx, showID, path, ep.Season, ep.Episode); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // IngestVideosAsSeason0 appends videos as the next season-0 episodes.
 func (s *Scanner) IngestVideosAsSeason0(ctx context.Context, showID int64, paths []string) error {
 	next := 1
