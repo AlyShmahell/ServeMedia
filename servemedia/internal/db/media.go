@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,12 @@ type MediaItem struct {
 	Mtime             int64
 	DateAdded         string
 	ParentID          sql.NullInt64
+}
+
+const MatchStatusSkipped = "skipped"
+
+func (it *MediaItem) MatchSkipped() bool {
+	return it != nil && it.MatchStatus.Valid && strings.TrimSpace(it.MatchStatus.String) == MatchStatusSkipped
 }
 
 type Season struct {
@@ -265,7 +272,70 @@ func (d *DB) purgeLibraryStoreFiles(ctx context.Context, libraryID int64, storeP
 	if err != nil {
 		return err
 	}
+	return removeStoreRels(storePath, rels)
+}
 
+func (d *DB) purgeMediaItemStoreFiles(ctx context.Context, id int64, storePath string) error {
+	var rels []string
+	var poster, backdrop, nfo sql.NullString
+	err := d.SQL.QueryRowContext(ctx, `
+		SELECT poster_path, backdrop_path, nfo_path FROM media_items WHERE id=?`, id).Scan(&poster, &backdrop, &nfo)
+	if err != nil {
+		return err
+	}
+	for _, p := range []sql.NullString{poster, backdrop, nfo} {
+		if p.Valid && strings.TrimSpace(p.String) != "" {
+			rels = append(rels, p.String)
+		}
+	}
+	erows, err := d.SQL.QueryContext(ctx, `SELECT still_path, nfo_path FROM episodes WHERE show_id=?`, id)
+	if err != nil {
+		return err
+	}
+	for erows.Next() {
+		var still, epNFO sql.NullString
+		if err := erows.Scan(&still, &epNFO); err != nil {
+			erows.Close()
+			return err
+		}
+		for _, p := range []sql.NullString{still, epNFO} {
+			if p.Valid && strings.TrimSpace(p.String) != "" {
+				rels = append(rels, p.String)
+			}
+		}
+	}
+	err = erows.Err()
+	erows.Close()
+	if err != nil {
+		return err
+	}
+	srows, err := d.SQL.QueryContext(ctx, `SELECT poster_path FROM seasons WHERE show_id=?`, id)
+	if err != nil {
+		return err
+	}
+	for srows.Next() {
+		var sp sql.NullString
+		if err := srows.Scan(&sp); err != nil {
+			srows.Close()
+			return err
+		}
+		if sp.Valid && strings.TrimSpace(sp.String) != "" {
+			rels = append(rels, sp.String)
+		}
+	}
+	err = srows.Err()
+	srows.Close()
+	if err != nil {
+		return err
+	}
+	return removeStoreRels(storePath, rels)
+}
+
+func removeStoreRels(storePath string, rels []string) error {
+	storePath = filepath.Clean(storePath)
+	if storePath == "" || storePath == "." {
+		return nil
+	}
 	parents := map[string]struct{}{}
 	for _, rel := range rels {
 		rel = strings.TrimPrefix(filepath.Clean("/"+rel), "/")
@@ -273,7 +343,6 @@ func (d *DB) purgeLibraryStoreFiles(ctx context.Context, libraryID int64, storeP
 			continue
 		}
 		full := filepath.Join(storePath, rel)
-		// Ensure path stays under storePath.
 		if !strings.HasPrefix(full, storePath+string(os.PathSeparator)) && full != storePath {
 			continue
 		}
@@ -286,6 +355,53 @@ func (d *DB) purgeLibraryStoreFiles(ctx context.Context, libraryID int64, storeP
 		removeEmptyParents(p, metaMovies, metaTV)
 	}
 	return nil
+}
+
+// DissociateMediaItem deletes this item's store NFO/art, clears metadata columns,
+// reverts title/year, and sets match_status to skipped.
+func (d *DB) DissociateMediaItem(ctx context.Context, id int64, title string, year int, storePath string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return fmt.Errorf("missing title")
+	}
+	if storePath != "" {
+		_ = d.purgeMediaItemStoreFiles(ctx, id, storePath)
+	}
+	var yearArg any
+	if year > 0 {
+		yearArg = year
+	}
+	if _, err := d.SQL.ExecContext(ctx, `
+		UPDATE media_items SET
+			title=?, sort_title=?, year=?,
+			plot=NULL, poster_path=NULL, backdrop_path=NULL, nfo_path=NULL, rating=NULL,
+			meta_provider=NULL, meta_id=NULL,
+			matchmedia_session_id=NULL, matchmedia_job_id=NULL,
+			match_status=?, match_error=NULL
+		WHERE id=?`, title, title, yearArg, MatchStatusSkipped, id); err != nil {
+		return err
+	}
+	if _, err := d.SQL.ExecContext(ctx, `
+		UPDATE seasons SET
+			poster_path=NULL, plot=NULL, meta_provider=NULL, meta_id=NULL,
+			title=CASE WHEN season_number=0 THEN 'Specials' ELSE 'Season ' || season_number END
+		WHERE show_id=?`, id); err != nil {
+		return err
+	}
+	_, err := d.SQL.ExecContext(ctx, `
+		UPDATE episodes SET
+			plot=NULL, still_path=NULL, nfo_path=NULL, meta_provider=NULL, meta_id=NULL
+		WHERE show_id=?`, id)
+	return err
+}
+
+func (d *DB) SetEpisodeTitle(ctx context.Context, id int64, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil
+	}
+	_, err := d.SQL.ExecContext(ctx, `UPDATE episodes SET title=? WHERE id=?`, title, id)
+	return err
 }
 
 // removeEmptyParents removes empty directories up to (but not including) stop roots.
@@ -539,6 +655,10 @@ func (d *DB) SetMatchMediaMatch(ctx context.Context, id int64, session, jobID, s
 
 func (d *DB) ClearMatchMediaMatch(ctx context.Context, id int64) error {
 	return d.SetMatchMediaMatch(ctx, id, "", "", "", "")
+}
+
+func (d *DB) SkipMatchMedia(ctx context.Context, id int64) error {
+	return d.SetMatchMediaMatch(ctx, id, "", "", MatchStatusSkipped, "")
 }
 
 func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string, error) {

@@ -20,9 +20,147 @@ yaml_url() {
   ' "$DIST/config/default.yaml"
 }
 
-vendor() {
-  local htmx_url htmx_lic videojs_js videojs_css videojs_lic hls_url hls_lic matchmedia_url
+yaml_section_key() {
+  awk -v sec="$1" -v k="$2" '
+    $1 == sec ":" { insec=1; next }
+    insec && /^[^[:space:]#]/ { insec=0 }
+    insec && $1 == k ":" {
+      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
+      gsub(/^"/, "")
+      gsub(/"[[:space:]]*$/, "")
+      print
+      exit
+    }
+  ' "$DIST/config/default.yaml"
+}
+
+yaml_version_from_text() {
+  awk '
+    $1 == "version:" {
+      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
+      gsub(/^"/, "")
+      gsub(/"[[:space:]]*$/, "")
+      print
+      exit
+    }
+  '
+}
+
+is_semver() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+matchmedia_pin() {
+  local v
+  v="$(yaml_section_key matchmedia version)"
+  if ! is_semver "$v"; then
+    echo "error: matchmedia.version must be X.Y.Z (got ${v:-empty})" >&2
+    return 1
+  fi
+  printf '%s\n' "$v"
+}
+
+matchmedia_archive_name() {
+  printf 'matchmedia-%s-linux-amd64.tar.gz\n' "$1"
+}
+
+tarball_inner_version() {
+  local tarball="$1" yaml=""
+  yaml="$(tar -xOf "$tarball" matchmedia/config/default.yaml 2>/dev/null || true)"
+  if [[ -z "$yaml" ]]; then
+    yaml="$(tar -xOf "$tarball" config/default.yaml 2>/dev/null || true)"
+  fi
+  printf '%s\n' "$yaml" | yaml_version_from_text
+}
+
+verify_matchmedia_archive_name() {
+  local tarball="$1" pin="$2" base want
+  base="$(basename "$tarball")"
+  want="$(matchmedia_archive_name "$pin")"
+  if [[ "$base" != "$want" ]]; then
+    echo "error: cache archive $base does not match pin $want" >&2
+    return 1
+  fi
+}
+
+verify_matchmedia_payload() {
+  local tarball="$1" pin="$2" inner
+  inner="$(tarball_inner_version "$tarball")"
+  if ! is_semver "$inner"; then
+    echo "error: $tarball has no valid inner version (got ${inner:-empty})" >&2
+    return 1
+  fi
+  if [[ "$inner" != "$pin" ]]; then
+    echo "error: $tarball version $inner does not match matchmedia.version $pin" >&2
+    return 1
+  fi
+}
+
+install_matchmedia_tarball() {
+  local tarball="$1"
   local tmp src
+  tmp="$(mktemp -d)"
+  mkdir -p "$tmp/matchmedia-extract"
+  tar -xzf "$tarball" -C "$tmp/matchmedia-extract"
+  src=""
+  if [[ -x "$tmp/matchmedia-extract/matchmedia/matchmedia" ]]; then
+    src="$tmp/matchmedia-extract/matchmedia"
+  elif [[ -x "$tmp/matchmedia-extract/matchmedia" ]]; then
+    src="$tmp/matchmedia-extract"
+  else
+    echo "error: matchmedia binary missing from tarball $tarball" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$DIST/tools/matchmedia"
+  mkdir -p "$DIST/tools"
+  cp -a "$src" "$DIST/tools/matchmedia"
+  chmod a+x "$DIST/tools/matchmedia/matchmedia"
+  rm -rf "$tmp"
+}
+
+overlay_matchmedia() {
+  local cache="${MATCHMEDIA_CACHE:-/cache}" pin want matchmedia_url tmp
+  local -a extras
+  pin="$(matchmedia_pin)"
+  want="$cache/$(matchmedia_archive_name "$pin")"
+  if [[ -f "$want" ]]; then
+    verify_matchmedia_archive_name "$want" "$pin"
+    verify_matchmedia_payload "$want" "$pin"
+    echo "using cached matchmedia $pin from $want"
+    install_matchmedia_tarball "$want"
+    return 0
+  fi
+  extras=()
+  while IFS= read -r -d '' f; do
+    extras+=("$f")
+  done < <(find "$cache" -maxdepth 1 -type f -name 'matchmedia-*.tar.gz' -print0 2>/dev/null || true)
+  if ((${#extras[@]})); then
+    echo "error: matchmedia.version $pin needs $(matchmedia_archive_name "$pin"); cache has:" >&2
+    printf '  %s\n' "${extras[@]}" >&2
+    return 1
+  fi
+  matchmedia_url="$(yaml_url url)"
+  if [[ "$(basename "$matchmedia_url")" != "$(matchmedia_archive_name "$pin")" ]]; then
+    echo "error: matchmedia.url must end with $(matchmedia_archive_name "$pin") (got $matchmedia_url)" >&2
+    return 1
+  fi
+  echo "fetching matchmedia $pin from $matchmedia_url"
+  tmp="$(mktemp -d)"
+  if retry -o "$tmp/$(matchmedia_archive_name "$pin")" "$matchmedia_url"; then
+    verify_matchmedia_archive_name "$tmp/$(matchmedia_archive_name "$pin")" "$pin"
+    verify_matchmedia_payload "$tmp/$(matchmedia_archive_name "$pin")" "$pin"
+    install_matchmedia_tarball "$tmp/$(matchmedia_archive_name "$pin")"
+    rm -rf "$tmp"
+    return 0
+  fi
+  rm -rf "$tmp"
+  echo "error: matchmedia $pin missing (place $(matchmedia_archive_name "$pin") in build/cache or set a reachable matchmedia.url)" >&2
+  return 1
+}
+
+vendor() {
+  local htmx_url htmx_lic videojs_js videojs_css videojs_lic hls_url hls_lic
   htmx_url="$(yaml_url htmx_url)"
   htmx_lic="$(yaml_url htmx_license_url)"
   videojs_js="$(yaml_url videojs_js_url)"
@@ -30,7 +168,6 @@ vendor() {
   videojs_lic="$(yaml_url videojs_license_url)"
   hls_url="$(yaml_url hls_url)"
   hls_lic="$(yaml_url hls_license_url)"
-  matchmedia_url="$(yaml_url url)"
   mkdir -p "$DIST/vendor/video.js" "$DIST/vendor/ffmpeg" "$DIST/tools"
   retry -o "$DIST/vendor/htmx.min.js" "$htmx_url"
   retry -o "$DIST/vendor/htmx.min.js.LICENSE" "$htmx_lic"
@@ -42,23 +179,6 @@ vendor() {
   retry -o "$DIST/vendor/hls.min.js" "$hls_url"
   retry -o "$DIST/vendor/hls.min.js.LICENSE" "$hls_lic"
   printf '%s\n' "$hls_lic" >"$DIST/vendor/hls.min.js.NOTICE"
-  tmp="$(mktemp -d)"
-  retry -o "$tmp/matchmedia.tar.gz" "$matchmedia_url"
-  mkdir -p "$tmp/matchmedia-extract"
-  tar -xzf "$tmp/matchmedia.tar.gz" -C "$tmp/matchmedia-extract"
-  src=""
-  if [[ -x "$tmp/matchmedia-extract/matchmedia/matchmedia" ]]; then
-    src="$tmp/matchmedia-extract/matchmedia"
-  elif [[ -x "$tmp/matchmedia-extract/matchmedia" ]]; then
-    src="$tmp/matchmedia-extract"
-  else
-    echo "error: matchmedia binary missing from release tarball" >&2
-    exit 1
-  fi
-  rm -rf "$DIST/tools/matchmedia"
-  cp -a "$src" "$DIST/tools/matchmedia"
-  chmod a+x "$DIST/tools/matchmedia/matchmedia"
-  rm -rf "$tmp"
 }
 
 compile_ffmpeg() {
@@ -122,6 +242,7 @@ stage() {
   mkdir -p "$DIST/vendor/ffmpeg"
   cp -a "$CACHE"/. "$DIST/vendor/ffmpeg/"
   chmod a+x "$DIST/vendor/ffmpeg/ffmpeg" "$DIST/vendor/ffmpeg/ffprobe"
+  overlay_matchmedia
   cp -a "$DIST"/. "$OUT/"
   chmod -R a+rwX "$OUT"
   chmod a+x "$OUT/servemedia"

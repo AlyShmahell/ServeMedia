@@ -243,6 +243,19 @@
   };
 
   window.pickMatchCandidate = function (itemId, provider, id) {
+    postMatchChoice(itemId, function (body) {
+      body.set('provider', provider);
+      body.set('id', id);
+    });
+  };
+
+  window.skipMatchCandidate = function (itemId) {
+    postMatchChoice(itemId, function (body) {
+      body.set('skip', '1');
+    });
+  };
+
+  function postMatchChoice(itemId, fill) {
     var dlg = document.getElementById('match-pick-dialog');
     if (dlg && dlg.classList.contains('is-busy')) return;
     function setBusy(on) {
@@ -257,11 +270,12 @@
       for (var i = 0; i < cands.length; i++) {
         cands[i].disabled = on;
       }
+      var skip = document.getElementById('match-skip');
+      if (skip) skip.disabled = on;
     }
     setBusy(true);
     var body = new URLSearchParams();
-    body.set('provider', provider);
-    body.set('id', id);
+    fill(body);
     fetch('/hx/media/' + itemId + '/match', {
       method: 'POST',
       credentials: 'same-origin',

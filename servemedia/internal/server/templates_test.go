@@ -27,6 +27,7 @@ func TestMustParseTemplates(t *testing.T) {
 		"partials/card_actions.html",
 		"partials/items.html",
 		"partials/entry_scan_progress.html",
+		"partials/head_scripts.html",
 	} {
 		if tpl.Lookup(name) == nil {
 			t.Fatalf("missing template %s", name)
@@ -178,6 +179,9 @@ func TestMatchDialogBusyMarkup(t *testing.T) {
 	if !strings.Contains(html, "match-busy-bar") {
 		t.Fatal("busy bar")
 	}
+	if !strings.Contains(html, "Don't add") {
+		t.Fatal("don't add")
+	}
 }
 
 func TestCardActionsErrorBadgeNoMatchModal(t *testing.T) {
@@ -219,6 +223,30 @@ func TestCardActionsErrorBadgeNoMatchModal(t *testing.T) {
 	}
 	if strings.Contains(unmatched, `class="match-fail"`) {
 		t.Fatalf("unmatched must not use error badge: %s", unmatched)
+	}
+}
+
+func TestEntryScanModalDissociateOption(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "partials/entry_scan_modal.html", map[string]any{
+		"MetaReady": true, "MetaHint": "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `value="dissociate"`) {
+		t.Fatal("dissociate option")
+	}
+	if !strings.Contains(html, "Dissociate current NFO+poster") {
+		t.Fatal("dissociate label")
+	}
+	if !strings.Contains(html, "entry-scan-dissociate-hint") {
+		t.Fatal("dissociate hint")
 	}
 }
 

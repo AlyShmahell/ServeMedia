@@ -1637,13 +1637,13 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	mode := r.FormValue("mode")
 	switch mode {
-	case "local", "matchmedia":
+	case "local", "matchmedia", "dissociate":
 	default:
 		mode = "local"
 	}
 	persist := r.FormValue("persist") == "1" || r.FormValue("persist") == "on" || r.FormValue("persist") == "true"
 	overwrite := r.FormValue("overwrite") == "1" || r.FormValue("overwrite") == "on" || r.FormValue("overwrite") == "true"
-	if mode == "local" {
+	if mode == "local" || mode == "dissociate" {
 		persist = false
 		overwrite = false
 	}
@@ -1685,23 +1685,31 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runMediaScan(lib *db.Library, item *db.MediaItem, jobID int64, mode string, persist, overwrite bool, queryTitle string) {
 	ctx := context.Background()
 	s.syncFetchClients()
-	if mode != "matchmedia" {
+	switch mode {
+	case "matchmedia":
+		_ = s.DB.UpdateScanJob(ctx, jobID, "running", 0, "Matching…")
+		opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID, QueryTitle: strings.TrimSpace(queryTitle)}
+		if err := s.Fetch.MatchItem(ctx, lib, item, opts); err != nil {
+			log.Printf("match media %d: %v", item.ID, err)
+			_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
+			return
+		}
+		_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
+	case "dissociate":
+		if err := s.Scanner.DissociateMediaItem(ctx, lib, item, jobID); err != nil {
+			log.Printf("dissociate media %d: %v", item.ID, err)
+			_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
+			return
+		}
+		_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
+	default:
 		if err := s.Scanner.RescanMediaItem(ctx, lib, item, jobID); err != nil {
 			log.Printf("rescan media %d: %v", item.ID, err)
 			_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
 			return
 		}
 		_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
-		return
 	}
-	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 0, "Matching…")
-	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID, QueryTitle: strings.TrimSpace(queryTitle)}
-	if err := s.Fetch.MatchItem(ctx, lib, item, opts); err != nil {
-		log.Printf("match media %d: %v", item.ID, err)
-		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
-		return
-	}
-	_ = s.DB.UpdateScanJob(ctx, jobID, "done", 100, "Complete")
 }
 
 func (s *Server) handleEntryScanStatus(w http.ResponseWriter, r *http.Request) {

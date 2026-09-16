@@ -6,6 +6,8 @@
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/vendor/video.js/video.min.js"></script>
 <script src="/static/vendor/hls.min.js"></script>
+<script src="/static/controls.js" defer></script>
+<script src="/static/app.js" defer></script>
 </head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
@@ -213,6 +215,12 @@
     }
   });
   await new Promise((resolve) => player.ready(resolve));
+  if (typeof player.focus === 'function') {
+    player.focus();
+  } else if (player.el()) {
+    player.el().setAttribute('tabindex', '0');
+    player.el().focus();
+  }
 
   const bar = player.getChild('controlBar');
   const prevBtn = bar && bar.getChild('PrevEpisodeButton');

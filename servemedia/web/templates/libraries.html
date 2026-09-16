@@ -1,7 +1,7 @@
 {{define "libraries.html"}}
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Libraries — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css"></head>
+<title>Libraries — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css">{{template "partials/head_scripts.html" .}}</head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
 <ul>{{range .Libraries}}<li><a href="/libraries/{{.ID}}">{{.Name}}</a></li>{{else}}<li class="muted">None</li>{{end}}</ul>
