@@ -4,8 +4,8 @@
 <title>{{.Library.Name}} — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css">{{template "partials/head_scripts.html" .}}</head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content library-page">
-  <p class="library-page-type muted">{{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
-  <form class="row library-toolbar" data-page-state="library-toolbar" hx-get="/hx/libraries/{{.Library.ID}}/items" hx-target="#items" hx-trigger="input changed delay:200ms, change, submit" hx-include="this">
+  <p id="library-count" class="library-page-type muted">{{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
+  <form class="row library-toolbar" data-page-state="library-toolbar" hx-get="/hx/libraries/{{.Library.ID}}/items" hx-target="#items-live" hx-swap="outerHTML" hx-trigger="input changed delay:200ms, change, submit" hx-include="this">
     <div class="library-search">
       <input type="search" name="q" value="{{.Q}}" placeholder="Search" autocomplete="off">
       <button type="button" class="library-search-clear" aria-label="Clear search"{{if not .Q}} hidden{{end}}>×</button>
@@ -17,7 +17,7 @@
     </select>
   </form>
   <div class="library-main-card" data-scroll-key="library-main">
-    <div class="library-main-body grid" id="items">{{template "partials/items.html" .}}</div>
+    {{template "partials/items_live.html" .}}
   </div>
 </main></div>
 {{template "partials/fetch_modal.html" .}}

@@ -1151,6 +1151,190 @@ func TestTitleSimilarSpinOffNestsUnderParent(t *testing.T) {
 	}
 }
 
+func TestFranchiseSiblingsStayUnnested(t *testing.T) {
+	cases := []struct {
+		name, aDir, bDir, aTitle, bTitle, aID, bID string
+	}{
+		{"stargate", "Stargate SG-1", "Stargate Atlantis", "Stargate SG·1", "Stargate Atlantis", "204", "206"},
+		{"csi", "CSI NY", "CSI Miami", "CSI: NY", "CSI: Miami", "10", "11"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := t.TempDir()
+			media := t.TempDir()
+			d, err := db.Open(filepath.Join(store, "t.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+			if err != nil {
+				t.Fatal(err)
+			}
+			aDir := filepath.Join(media, tc.aDir)
+			bDir := filepath.Join(media, tc.bDir)
+			epA := filepath.Join(aDir, "Season 1", "S01E01.mkv")
+			epB := filepath.Join(bDir, "Season 1", "S01E01.mkv")
+			for _, p := range []string{epA, epB} {
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const sess = "20260918T120000Z-stargatesiblings00"
+			mux := twoShowMatchMux(t, sess, aDir, bDir, tc.aTitle, tc.bTitle, tc.aID, tc.bID)
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+			if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true}); err != nil {
+				t.Fatal(err)
+			}
+			items, err := d.ListMediaItems(ctx, lib.ID, "", "")
+			if err != nil || len(items) != 2 {
+				t.Fatalf("library cards %#v %v", items, err)
+			}
+			for _, it := range items {
+				if it.ParentID.Valid {
+					t.Fatalf("sibling nested: %#v", it)
+				}
+			}
+		})
+	}
+}
+
+func TestTitleSimilarParentClearedForFranchiseSiblings(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sgDir := filepath.Join(media, "Stargate SG-1")
+	atDir := filepath.Join(media, "Stargate Atlantis")
+	epA := filepath.Join(sgDir, "Season 1", "S01E01.mkv")
+	epB := filepath.Join(atDir, "Season 1", "S01E01.mkv")
+	for _, p := range []string{epA, epB} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sgID, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "show", Title: "Stargate SG·1", SortTitle: "Stargate SG·1",
+		Path: sgDir, Mtime: 1, MetaProvider: sql.NullString{String: "tvmaze", Valid: true},
+		MetaID: sql.NullString{String: "204", Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	atID, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "show", Title: "Stargate Atlantis", SortTitle: "Stargate Atlantis",
+		Path: atDir, Mtime: 1, MetaProvider: sql.NullString{String: "tvmaze", Valid: true},
+		MetaID: sql.NullString{String: "206", Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMediaItemParent(ctx, atID, sgID); err != nil {
+		t.Fatal(err)
+	}
+	const sess = "20260918T120000Z-stargateunnest000"
+	mux := twoShowMatchMux(t, sess, sgDir, atDir, "Stargate SG·1", "Stargate Atlantis", "204", "206")
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: false}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := d.ListMediaItems(ctx, lib.ID, "", "")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("library cards %#v %v", items, err)
+	}
+	at, err := d.GetMediaItem(ctx, atID)
+	if err != nil || at == nil || at.ParentID.Valid {
+		t.Fatalf("atlantis still nested %#v %v", at, err)
+	}
+}
+
+func twoShowMatchMux(t *testing.T, sess, aDir, bDir, aTitle, bTitle, aID, bID string) *http.ServeMux {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":2}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"files":2,"done":2,"running":false}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"id": "job-a", "status": "matched", "path": aDir, "source": "scan",
+				"match": map[string]any{"provider": "tvmaze", "id": aID, "title": aTitle, "year": "1997"},
+			},
+			{
+				"id": "job-b", "status": "matched", "path": bDir, "source": "scan",
+				"match": map[string]any{"provider": "tvmaze", "id": bID, "title": bTitle, "year": "2004"},
+			},
+		})
+	})
+	mux.HandleFunc("/v1/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = io.WriteString(w, "fakejpeg")
+			return
+		}
+		id := filepath.Base(r.URL.Path)
+		title := aTitle
+		if id == bID {
+			title = bTitle
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"provider": "tvmaze", "id": id, "title": title, "year": "2000",
+			"synopsis": "plot", "poster": r.URL.Path + "/poster.jpg",
+			"seasons": []any{map[string]any{
+				"number": "1", "title": "Season 1",
+				"episodes": []any{map[string]any{"number": "1", "title": "Pilot"}},
+			}},
+		})
+	})
+	return mux
+}
+
 func TestNestedChildShowNotParentSeason(t *testing.T) {
 	ctx := context.Background()
 	store := t.TempDir()

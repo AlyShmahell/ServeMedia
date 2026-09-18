@@ -64,6 +64,46 @@ func TestCleanEpisodeTitle(t *testing.T) {
 	}
 }
 
+func TestNestTokens_keepsShortDisambiguators(t *testing.T) {
+	sg := metadata.NestTokens("Stargate SG·1")
+	at := metadata.NestTokens("Stargate Atlantis")
+	un := metadata.NestTokens("Stargate Universe")
+	if nestSubset(sg, at) || nestSubset(at, sg) {
+		t.Fatalf("sg=%v at=%v", sg, at)
+	}
+	if nestSubset(sg, un) || nestSubset(un, sg) {
+		t.Fatalf("sg=%v un=%v", sg, un)
+	}
+	if !nestSubset(metadata.NestTokens("Sample Show"), metadata.NestTokens("Sample Show Explosion")) {
+		t.Fatal("Sample Show should nest under Explosion")
+	}
+	if !nestSubset(metadata.NestTokens("Magi"), metadata.NestTokens("Magi Sinbad")) {
+		t.Fatal("Magi should nest Magi Sinbad")
+	}
+	if nestSubset(metadata.NestTokens("CSI: NY"), metadata.NestTokens("CSI: Miami")) {
+		t.Fatal("CSI NY must not nest Miami")
+	}
+	if got := metadata.ContentTokens("Stargate SG·1"); len(got) != 1 || got[0] != "stargate" {
+		t.Fatalf("ContentTokens still drops shorts: %v", got)
+	}
+}
+
+func nestSubset(small, big []string) bool {
+	if len(small) == 0 {
+		return false
+	}
+	have := map[string]bool{}
+	for _, t := range big {
+		have[t] = true
+	}
+	for _, t := range small {
+		if !have[t] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestIsMoviesFolderName(t *testing.T) {
 	if !metadata.IsMoviesFolderName("Movies") || !metadata.IsMoviesFolderName("Film") {
 		t.Fatal("exact Movies/Film should match")

@@ -1,0 +1,17 @@
+{{define "partials/recent.html"}}
+<div class="grid" id="recent"
+  hx-get="/hx/home/recent"
+  hx-trigger="{{.RecentTrigger}}"
+  hx-swap="outerHTML">
+  {{range .Recent}}
+  <a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
+    <div class="poster-wrap">
+      <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
+      {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID .Item.Title $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
+      <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
+    </div>
+    <div class="t">{{.Item.Title}}</div>
+  </a>
+  {{else}}<p class="muted">Nothing scanned yet.</p>{{end}}
+</div>
+{{end}}

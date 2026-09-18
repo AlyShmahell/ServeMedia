@@ -126,8 +126,8 @@
     params.set('sort', fieldValue(form, 'sort'));
     var sep = url.indexOf('?') >= 0 ? '&' : '?';
     htmx.ajax('GET', url + sep + params.toString(), {
-      target: '#items',
-      swap: 'innerHTML',
+      target: '#items-live',
+      swap: 'outerHTML',
     });
   }
 

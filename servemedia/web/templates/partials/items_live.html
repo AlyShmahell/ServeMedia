@@ -1,0 +1,12 @@
+{{define "partials/items_live.html"}}
+{{if .SwapCount}}
+<p id="library-count" class="library-page-type muted" hx-swap-oob="true">{{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
+{{end}}
+<div class="library-main-body" id="items-live"
+  hx-get="/hx/libraries/{{.Library.ID}}/items"
+  hx-include=".library-toolbar"
+  hx-swap="outerHTML"
+  {{if .Poll}}hx-trigger="every 2s"{{end}}>
+  <div class="grid" id="items">{{template "partials/items.html" .}}</div>
+</div>
+{{end}}
