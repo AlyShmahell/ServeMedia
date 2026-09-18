@@ -32,9 +32,14 @@ The first visit goes to `/register` and creates the **admin**. After that, `/reg
 
 ## Controls
 
-Arrow keys move focus among links and buttons on Home, libraries, titles, and Settings. A gamepad D-pad or stick does the same. **A** activates the focused control; **B** goes back (closes a dialog, otherwise Back / history). The focus outline appears while using arrows or a gamepad, not for mouse-only use.
+Arrow keys or a gamepad move focus on Home, libraries, titles, and Settings. The focus outline appears while using arrows or a pad, not for mouse-only use.
 
-On the player, the keyboard stays with video.js (seek, volume, play). Gamepad left/right seek 10 seconds, up/down change volume, **A** plays or pauses, **B** leaves the player.
+<p align="center">
+  <img src="servemedia/share/assets/controls-gamepad.svg" alt="Gamepad: D-pad and left stick move focus, or seek 10 seconds and change volume on the player. A activates or plays and pauses. B goes back or leaves the player." width="640">
+</p>
+<p align="center">
+  <img src="servemedia/share/assets/controls-keyboard.svg" alt="Keyboard: arrow keys move focus, or seek and change volume on the player. Enter activates. Space plays and pauses on the player." width="640">
+</p>
 
 If the pad does nothing in **Firefox from Flathub**, Linux often already sees it (`/dev/input/js*`) but Firefox cannot list it: the sandbox has device access and still lacks host udev (`/run/udev`). Grant it, then fully quit Firefox and reopen ServeMedia:
 

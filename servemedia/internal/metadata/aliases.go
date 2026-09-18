@@ -27,9 +27,22 @@ var titleStop = map[string]bool{
 
 // ContentTokens are aliasKey fields after dropping stop words and tokens shorter than 3.
 func ContentTokens(s string) []string {
+	return titleTokens(s, true)
+}
+
+// NestTokens are aliasKey fields after dropping stop words only.
+// Short tokens (sg, 1, ny) stay so franchise siblings are not treated as spin-offs.
+func NestTokens(s string) []string {
+	return titleTokens(s, false)
+}
+
+func titleTokens(s string, dropShort bool) []string {
 	var out []string
 	for _, t := range strings.Fields(aliasKey(s)) {
-		if len(t) < 3 || titleStop[t] {
+		if titleStop[t] {
+			continue
+		}
+		if dropShort && len(t) < 3 {
 			continue
 		}
 		out = append(out, t)

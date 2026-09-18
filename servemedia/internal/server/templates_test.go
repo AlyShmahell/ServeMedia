@@ -26,6 +26,8 @@ func TestMustParseTemplates(t *testing.T) {
 		"partials/scan_modal.html",
 		"partials/card_actions.html",
 		"partials/items.html",
+		"partials/recent.html",
+		"partials/items_live.html",
 		"partials/entry_scan_progress.html",
 		"partials/head_scripts.html",
 	} {
@@ -247,6 +249,90 @@ func TestEntryScanModalDissociateOption(t *testing.T) {
 	}
 	if !strings.Contains(html, "entry-scan-dissociate-hint") {
 		t.Fatal("dissociate hint")
+	}
+}
+
+func TestHomeRecentPollMarkup(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "home.html", map[string]any{
+		"Recent": []itemCard{
+			{Item: db.MediaItem{ID: 7, Kind: "movie", Title: "Fresh Title"}},
+		},
+		"RecentTrigger":      "load, every 2s",
+		"LibraryCards":       []libraryCard{},
+		"MetaReady":          true,
+		"MetaDisabledReason": "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `hx-get="/hx/home/recent"`) {
+		t.Fatalf("recent endpoint: %s", html)
+	}
+	if !strings.Contains(html, `id="recent"`) {
+		t.Fatalf("recent wrapper: %s", html)
+	}
+	if !strings.Contains(html, `hx-trigger="load, every 2s"`) {
+		t.Fatalf("scan poll trigger: %s", html)
+	}
+	if !strings.Contains(html, "Fresh Title") {
+		t.Fatalf("recent card: %s", html)
+	}
+}
+
+func TestItemsLivePollsOnlyWhenFlagged(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	data := map[string]any{
+		"Library":   db.Library{ID: 3, Name: "Anime"},
+		"Items":     []itemCard{{Item: db.MediaItem{ID: 9, Kind: "show", Title: "New Show"}}},
+		"ItemCount": 1,
+		"Poll":               false,
+		"MetaReady":          true,
+		"MetaDisabledReason": "",
+	}
+	var idle bytes.Buffer
+	if err := tpl.ExecuteTemplate(&idle, "partials/items_live.html", data); err != nil {
+		t.Fatal(err)
+	}
+	idleHTML := idle.String()
+	if !strings.Contains(idleHTML, `id="items-live"`) {
+		t.Fatalf("wrapper: %s", idleHTML)
+	}
+	if strings.Contains(idleHTML, `hx-trigger="every 2s"`) {
+		t.Fatalf("idle must not poll: %s", idleHTML)
+	}
+	if strings.Contains(idleHTML, `hx-swap-oob`) {
+		t.Fatalf("full page must not oob count: %s", idleHTML)
+	}
+
+	data["Poll"] = true
+	data["SwapCount"] = true
+	data["ItemCount"] = 2
+	var live bytes.Buffer
+	if err := tpl.ExecuteTemplate(&live, "partials/items_live.html", data); err != nil {
+		t.Fatal(err)
+	}
+	liveHTML := live.String()
+	if !strings.Contains(liveHTML, `hx-trigger="every 2s"`) {
+		t.Fatalf("scan must poll: %s", liveHTML)
+	}
+	if !strings.Contains(liveHTML, `hx-get="/hx/libraries/3/items"`) {
+		t.Fatalf("items url: %s", liveHTML)
+	}
+	if !strings.Contains(liveHTML, `id="library-count"`) || !strings.Contains(liveHTML, `hx-swap-oob="true"`) {
+		t.Fatalf("oob count: %s", liveHTML)
+	}
+	if !strings.Contains(liveHTML, "2 titles") {
+		t.Fatalf("count copy: %s", liveHTML)
 	}
 }
 

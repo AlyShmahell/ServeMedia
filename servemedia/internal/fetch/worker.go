@@ -411,7 +411,7 @@ func (w *Worker) findTitleSimilarShow(ctx context.Context, libraryID int64, j ma
 	if jobPath == "" {
 		jobPath = itemPath
 	}
-	jobTok := metadata.ContentTokens(jobTitle(j, itemPath))
+	jobTok := metadata.NestTokens(jobTitle(j, itemPath))
 	bestScore := 0
 	var best *db.MediaItem
 	tie := false
@@ -423,7 +423,7 @@ func (w *Worker) findTitleSimilarShow(ctx context.Context, libraryID int64, j ma
 		if pathUnder(show.Path, jobPath) {
 			continue
 		}
-		showTok := metadata.ContentTokens(show.Title)
+		showTok := metadata.NestTokens(show.Title)
 		if !tokensSubset(showTok, jobTok) {
 			continue
 		}
@@ -489,6 +489,17 @@ func (w *Worker) nestMediaItem(ctx context.Context, libraryID int64, it *db.Medi
 		it.ParentID = sql.NullInt64{Int64: parent.ID, Valid: true}
 		if err := w.DB.DeleteEpisodesUnderPath(ctx, parent.ID, it.Path); err != nil {
 			return err
+		}
+	} else if parent == nil && it.ParentID.Valid {
+		cur, err := w.DB.GetMediaItem(ctx, it.ParentID.Int64)
+		if err != nil {
+			return err
+		}
+		if cur == nil || !pathUnder(it.Path, cur.Path) {
+			if err := w.DB.SetMediaItemParent(ctx, it.ID, 0); err != nil {
+				return err
+			}
+			it.ParentID = sql.NullInt64{}
 		}
 	}
 	if it.Kind != "show" {

@@ -199,6 +199,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/hx/libraries/{id}/items", s.handleHXItems)
 		r.Get("/hx/search", s.handleHXSearch)
 		r.Get("/hx/home/continue", s.handleHXContinue)
+		r.Get("/hx/home/recent", s.handleHXRecent)
 		r.Post("/hx/progress", s.handleProgress)
 		r.Post("/hx/playback-prefs", s.handlePlaybackPrefs)
 		r.Post("/hx/libraries", s.handleCreateLibrary)
@@ -484,32 +485,63 @@ func (s *Server) libraryCardData(ctx context.Context, lib *db.Library, job *db.S
 	return card
 }
 
+func recentHXTrigger(polling, initial bool) string {
+	interval := "every 30s"
+	if polling {
+		interval = "every 2s"
+	}
+	if initial {
+		return "load, " + interval
+	}
+	return interval
+}
+
+func (s *Server) userHasRunningScan(ctx context.Context, userID int64) bool {
+	libs, err := s.DB.ListLibraries(ctx, userID)
+	if err != nil {
+		return false
+	}
+	for i := range libs {
+		job, err := s.DB.RunningScanForLibrary(ctx, libs[i].ID)
+		if err == nil && job != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) libraryScanPolling(ctx context.Context, libraryID int64) bool {
+	job, err := s.DB.RunningScanForLibrary(ctx, libraryID)
+	return err == nil && job != nil
+}
+
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	cont, _ := s.DB.ContinueWatching(r.Context(), u.ID, 12)
 	recent, _ := s.DB.RecentlyAdded(r.Context(), u.ID, 24)
-	progress, _ := s.DB.MediaItemsProgressPct(r.Context(), u.ID, recent)
-	recentCards := make([]itemCard, 0, len(recent))
-	for _, it := range recent {
-		recentCards = append(recentCards, itemCard{Item: it, ProgressPct: progress[it.ID]})
-	}
 	libs, _ := s.DB.ListLibraries(r.Context(), u.ID)
 	scanID, _ := strconv.ParseInt(r.URL.Query().Get("scan"), 10, 64)
 	scanLibID, _ := strconv.ParseInt(r.URL.Query().Get("lib"), 10, 64)
 	var cards []libraryCard
+	anyRunning := false
 	for i := range libs {
 		lib := libs[i]
 		var job *db.ScanJob
 		if scanID > 0 && scanLibID == lib.ID {
 			job, _ = s.DB.GetScanJob(r.Context(), scanID)
 		}
-		if job == nil {
-			job, _ = s.DB.RunningScanForLibrary(r.Context(), lib.ID)
+		running, _ := s.DB.RunningScanForLibrary(r.Context(), lib.ID)
+		if running != nil {
+			anyRunning = true
+			if job == nil {
+				job = running
+			}
 		}
 		cards = append(cards, s.libraryCardData(r.Context(), &lib, job))
 	}
 	s.render(w, r, "home.html", map[string]any{
-		"Continue": cont, "Recent": recentCards, "LibraryCards": cards,
+		"Continue": cont, "Recent": s.mediaItemCards(r.Context(), u.ID, recent), "LibraryCards": cards,
+		"RecentTrigger": recentHXTrigger(anyRunning, true),
 	})
 }
 
@@ -538,6 +570,16 @@ func (s *Server) mediaItemCards(ctx context.Context, userID int64, items []db.Me
 	return cards
 }
 
+func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Library, sort, q string, swapCount bool) map[string]any {
+	all, _ := s.DB.ListMediaItems(ctx, lib.ID, "name", "")
+	items, _ := s.DB.ListMediaItems(ctx, lib.ID, sort, q)
+	return map[string]any{
+		"Library": lib, "Items": s.mediaItemCards(ctx, u.ID, items),
+		"ItemCount": len(all), "Sort": sort, "Q": q,
+		"Poll": s.libraryScanPolling(ctx, lib.ID), "SwapCount": swapCount,
+	}
+}
+
 func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
@@ -546,25 +588,18 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	sort := r.URL.Query().Get("sort")
-	q := r.URL.Query().Get("q")
-	all, _ := s.DB.ListMediaItems(r.Context(), id, "name", "")
-	items, _ := s.DB.ListMediaItems(r.Context(), id, sort, q)
-	s.render(w, r, "library.html", map[string]any{
-		"Library": lib, "Items": s.mediaItemCards(r.Context(), u.ID, items),
-		"ItemCount": len(all), "Sort": sort, "Q": q,
-	})
+	s.render(w, r, "library.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), false))
 }
 
 func (s *Server) handleHXItems(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if lib, _ := s.DB.GetLibrary(r.Context(), u.ID, id); lib == nil {
+	lib, _ := s.DB.GetLibrary(r.Context(), u.ID, id)
+	if lib == nil {
 		http.NotFound(w, r)
 		return
 	}
-	items, _ := s.DB.ListMediaItems(r.Context(), id, r.URL.Query().Get("sort"), r.URL.Query().Get("q"))
-	s.render(w, r, "partials/items.html", map[string]any{"Items": s.mediaItemCards(r.Context(), u.ID, items)})
+	s.render(w, r, "partials/items_live.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), true))
 }
 
 func (s *Server) handleHXSearch(w http.ResponseWriter, r *http.Request) {
@@ -583,6 +618,15 @@ func (s *Server) handleHXContinue(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	cont, _ := s.DB.ContinueWatching(r.Context(), u.ID, 12)
 	s.render(w, r, "partials/continue.html", map[string]any{"Continue": cont})
+}
+
+func (s *Server) handleHXRecent(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	recent, _ := s.DB.RecentlyAdded(r.Context(), u.ID, 24)
+	s.render(w, r, "partials/recent.html", map[string]any{
+		"Recent": s.mediaItemCards(r.Context(), u.ID, recent),
+		"RecentTrigger": recentHXTrigger(s.userHasRunningScan(r.Context(), u.ID), false),
+	})
 }
 
 func (s *Server) ownedMediaItem(r *http.Request, id int64) *db.MediaItem {
