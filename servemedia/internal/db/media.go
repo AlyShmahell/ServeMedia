@@ -598,6 +598,14 @@ func (d *DB) DeleteEpisodesUnderPath(ctx context.Context, showID int64, root str
 	return err
 }
 
+func (d *DB) DeleteEpisode(ctx context.Context, id int64) error {
+	if id <= 0 {
+		return nil
+	}
+	_, err := d.SQL.ExecContext(ctx, `DELETE FROM episodes WHERE id=?`, id)
+	return err
+}
+
 func (d *DB) UpsertMediaItem(ctx context.Context, it MediaItem) (int64, error) {
 	var id int64
 	err := d.SQL.QueryRowContext(ctx, `SELECT id FROM media_items WHERE library_id = ? AND path = ?`, it.LibraryID, it.Path).Scan(&id)

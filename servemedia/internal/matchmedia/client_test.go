@@ -65,14 +65,37 @@ func TestScanJSONPath(t *testing.T) {
 			t.Fatal(err)
 		}
 		gotPath = body["path"]
+		if _, ok := body["mode"]; ok {
+			t.Fatal("empty mode must be omitted")
+		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"session":"20260829T122800Z-a1b2c3d4e5f6g7h8","files":3}`))
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	got, err := c.Scan("/media/tv")
+	got, err := c.Scan("/media/tv", "")
 	if err != nil || got.Files != 3 || got.Session != "20260829T122800Z-a1b2c3d4e5f6g7h8" || gotPath != "/media/tv" {
 		t.Fatalf("got=%+v path=%q err=%v", got, gotPath, err)
+	}
+}
+
+func TestScanJSONMode(t *testing.T) {
+	var got map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"20260829T122800Z-a1b2c3d4e5f6g7h8","files":1,"mode":"changes"}`))
+	}))
+	defer srv.Close()
+	c := &Client{Base: srv.URL, HTTP: srv.Client()}
+	out, err := c.Scan("/media/tv", "changes")
+	if err != nil || out.Session == "" {
+		t.Fatal(err)
+	}
+	if got["path"] != "/media/tv" || got["mode"] != "changes" {
+		t.Fatalf("body %#v", got)
 	}
 }
 
@@ -83,7 +106,7 @@ func TestScanMissingSession(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	if _, err := c.Scan("/media/tv"); err == nil {
+	if _, err := c.Scan("/media/tv", ""); err == nil {
 		t.Fatal("expected missing session")
 	}
 }

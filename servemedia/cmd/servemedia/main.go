@@ -47,7 +47,7 @@ func main() {
 	ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
 	version.Init(cfg.Version)
 
-	matchmediaData := filepath.Join(cfg.ExeDir, "data", "matchmedia")
+	matchmediaData := cfg.MatchMediaDataDir()
 	if *doPrepare {
 		if _, err := os.Stat(cfg.MatchMediaBin()); err != nil {
 			log.Fatal(err)

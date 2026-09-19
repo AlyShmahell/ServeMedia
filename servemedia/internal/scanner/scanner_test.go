@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/alyshmahell/servemedia/internal/db"
@@ -1182,4 +1183,243 @@ func mustItem(t *testing.T, d *db.DB, id int64) *db.MediaItem {
 		t.Fatal(err)
 	}
 	return it
+}
+
+func TestScanLibrary_movieMoveKeepsID(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := t.TempDir()
+	lib, err := d.CreateLibrary(ctx, u.ID, "Movies", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := filepath.Join(media, "Film Title (2016)", "Film Title (2016).mkv")
+	touch(t, old)
+	sc := &Scanner{DB: d, StorePath: t.TempDir(), MediaRoot: media}
+	jobID, err := d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.ScanLibrary(ctx, lib, jobID)
+	first, err := d.GetMediaItemByPath(ctx, lib.ID, old)
+	if err != nil || first == nil {
+		t.Fatal(err)
+	}
+	newPath := filepath.Join(media, "Movies", "Film Title (2016)", "Film Title (2016).mkv")
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(old, newPath); err != nil {
+		t.Fatal(err)
+	}
+	jobID, err = d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.ScanLibrary(ctx, lib, jobID)
+	got, err := d.GetMediaItemByPath(ctx, lib.ID, newPath)
+	if err != nil || got == nil {
+		t.Fatal(err)
+	}
+	if got.ID != first.ID {
+		t.Fatalf("id %d want %d", got.ID, first.ID)
+	}
+	items, err := d.ListAllMediaItems(ctx, lib.ID)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items %#v %v", items, err)
+	}
+}
+
+func TestScanLibrary_deletedMoviePruned(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := t.TempDir()
+	lib, err := d.CreateLibrary(ctx, u.ID, "Movies", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep := filepath.Join(media, "Keep.mkv")
+	gone := filepath.Join(media, "Gone.mkv")
+	touch(t, keep)
+	touch(t, gone)
+	sc := &Scanner{DB: d, StorePath: t.TempDir(), MediaRoot: media}
+	jobID, err := d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.ScanLibrary(ctx, lib, jobID)
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	jobID, err = d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.ScanLibrary(ctx, lib, jobID)
+	if got, _ := d.GetMediaItemByPath(ctx, lib.ID, gone); got != nil {
+		t.Fatal("gone movie still in library")
+	}
+	if got, _ := d.GetMediaItemByPath(ctx, lib.ID, keep); got == nil {
+		t.Fatal("kept movie missing")
+	}
+}
+
+func TestReattachMovedPath_ambiguousTitles(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := t.TempDir()
+	lib, err := d.CreateLibrary(ctx, u.ID, "Movies", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldA := filepath.Join("/gone-a", "Dup Title", "Dup Title.mkv")
+	oldB := filepath.Join("/gone-b", "Dup Title", "Dup Title.mkv")
+	if _, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Dup Title", Path: oldA, Mtime: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Dup Title", Path: oldB, Mtime: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	newPath := filepath.Join(media, "Dup Title", "Dup Title.mkv")
+	touch(t, newPath)
+	sc := &Scanner{DB: d, StorePath: t.TempDir(), MediaRoot: media}
+	if err := sc.ReattachMovedPath(ctx, lib, "movie", newPath); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := d.GetMediaItemByPath(ctx, lib.ID, newPath); got != nil {
+		t.Fatal("ambiguous titles must not merge")
+	}
+}
+
+func TestScanLibrary_showRenameKeepsID(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := t.TempDir()
+	lib, err := d.CreateLibrary(ctx, u.ID, "TV", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDir := filepath.Join(media, "Sample Show")
+	touch(t, filepath.Join(oldDir, "Season 1", "S01E01.mkv"))
+	touch(t, filepath.Join(oldDir, "Season 1", "S01E02.mkv"))
+	sc := &Scanner{DB: d, StorePath: t.TempDir(), MediaRoot: media}
+	jobID, err := d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.ScanLibrary(ctx, lib, jobID)
+	first, err := d.GetMediaItemByPath(ctx, lib.ID, oldDir)
+	if err != nil || first == nil {
+		t.Fatal(err)
+	}
+	eps, err := d.ListEpisodesByShow(ctx, first.ID)
+	if err != nil || len(eps) != 2 {
+		t.Fatalf("eps %#v %v", eps, err)
+	}
+	oldEpID := eps[0].ID
+	newDir := filepath.Join(media, "sample show")
+	if err := os.Rename(oldDir, newDir); err != nil {
+		t.Fatal(err)
+	}
+	jobID, err = d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.ScanLibrary(ctx, lib, jobID)
+	got, err := d.GetMediaItemByPath(ctx, lib.ID, newDir)
+	if err != nil || got == nil {
+		t.Fatal(err)
+	}
+	if got.ID != first.ID {
+		t.Fatalf("show id %d want %d", got.ID, first.ID)
+	}
+	eps, err = d.ListEpisodesByShow(ctx, got.ID)
+	if err != nil || len(eps) != 2 {
+		t.Fatalf("eps after %#v %v", eps, err)
+	}
+	found := false
+	for _, ep := range eps {
+		if ep.ID == oldEpID {
+			found = true
+			if !strings.HasPrefix(ep.Path, newDir) {
+				t.Fatalf("episode path %q", ep.Path)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("episode row not reused")
+	}
+}
+
+func TestRescanMediaItem_missingMovieDeletes(t *testing.T) {
+	dir := t.TempDir()
+	d, err := db.Open(filepath.Join(dir, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := t.TempDir()
+	lib, err := d.CreateLibrary(ctx, u.ID, "Movies", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vid := filepath.Join(media, "Ghost.mkv")
+	id, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Ghost", Path: vid, Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := &Scanner{DB: d, StorePath: t.TempDir(), MediaRoot: media}
+	if err := sc.RescanMediaItem(ctx, lib, mustItem(t, d, id), 0); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := d.GetMediaItem(ctx, id); got != nil {
+		t.Fatal("ghost movie still present")
+	}
 }

@@ -189,8 +189,12 @@ func (c *Client) Status() (Status, error) {
 	return Status{Ready: true}, nil
 }
 
-func (c *Client) Scan(path string) (ScanResult, error) {
-	body, err := json.Marshal(map[string]string{"path": path})
+func (c *Client) Scan(path, mode string) (ScanResult, error) {
+	payload := map[string]string{"path": path}
+	if m := strings.TrimSpace(mode); m != "" {
+		payload["mode"] = m
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return ScanResult{}, err
 	}

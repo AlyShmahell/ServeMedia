@@ -15,9 +15,25 @@ Application lifecycle is `./build/run` (host binary). **All automated tests are 
 ./build/run
 ```
 
-Choose **run**, **(re)build & run**, **(re)build & prepare**, or **(re)build & package** (arrow keys, Enter). **run** execs the current `build/dist/servemedia` (error if missing). Prepare verifies `tools/matchmedia/matchmedia`, fetches third-party `vendor/` if missing, then exits (local dist only, not an install step). Package writes one archive with root `servemedia/` and ServeMedia’s `LICENSE`: `servemedia-<ver>-linux-amd64.tar.gz` (`tools/matchmedia/` plus `vendor/` with htmx, video.js, hls.js, ffmpeg). Version in the tarball name comes from `config/default.yaml`.
+Choose **run**, **(re)build & run**, **(re)build & prepare**, or **(re)build & package** (arrow keys, Enter). **run** execs the current `build/dist/servemedia` (error if missing). Prepare verifies `tools/matchmedia/matchmedia`, fetches third-party `vendor/` if missing, then exits (local dist only, not an install step). Package rebuilds dist, writes the host tarball with root `servemedia/` and ServeMedia’s `LICENSE` (`servemedia-<ver>-linux-amd64.tar.gz`: `tools/matchmedia/` plus `vendor/` with htmx, video.js, hls.js, ffmpeg; version from `config/default.yaml`), then [`flatpak/build`](../../flatpak/build) (host and, with `IN_CONTAINER=1`, `flatpak-builder` inside the Fedora image from [`flatpak/containerfile`](../../flatpak/containerfile)). Host Flatpak tools are not required. Runtimes and SDK downloads stay in `build/cache/flatpak` (never wiped). First run pulls Freedesktop **25.08** Platform/SDK (~GB). Outputs:
 
-The binary defaults to `{exeDir}/config/default.yaml`. Writable data: `{exeDir}/data` (store, transcode, backups, optional `config.yaml` overlay). Media root: `SERVEMEDIA_MEDIA_PATH` or overlay `media.path` (comma-separated paths share one picker tree). ffmpeg is `{exeDir}/vendor/ffmpeg` (`SERVEMEDIA_FFMPEG` override).
+| Artifact | ffmpeg |
+|----------|--------|
+| `servemedia-<ver>-linux-amd64.tar.gz` | vendored (`vendor/ffmpeg`, static x264 + VAAPI) |
+| `servemedia-<ver>-linux-amd64.flatpak` | no `vendor/ffmpeg`; `org.freedesktop.Platform.ffmpeg-full` (25.08) |
+
+App id is `eu.alyshmahell.ServeMedia`. Manifest: [`flatpak/eu.alyshmahell.ServeMedia.yml`](../../flatpak/eu.alyshmahell.ServeMedia.yml) (its `build-commands` extract with `--exclude` so a Flathub GitHub tarball never unpacks ffmpeg). [`flatpak/build`](../../flatpak/build) also strips `vendor/ffmpeg` before `flatpak-builder`. Runtime wrapper is [`flatpak/servemedia`](../../flatpak/servemedia) (`SERVEMEDIA_ROOT=/app`). Data in the sandbox is `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` (`$XDG_DATA_HOME/servemedia`), not next to the binary.
+
+Sideload:
+
+```bash
+flatpak install --user build/package/servemedia-<ver>-linux-amd64.flatpak
+flatpak run eu.alyshmahell.ServeMedia
+```
+
+The `.flatpak` needs the ffmpeg-full extension (installed automatically when online). The sandbox can read and write `/media`, `/mnt`, `/run/media`, `~/Videos`, and `~/Music`; libraries outside those paths need `flatpak override --filesystem=...`. Flathub **acceptance** does not need a file on [alyshmahell.eu](https://alyshmahell.eu). The **verified badge** is later: Developer Portal token in `https://alyshmahell.eu/.well-known/org.flathub.VerifiedApps.txt` (GitHub Pages: `.nojekyll` or Jekyll `include: [".well-known"]`) or a TXT record at `_flathub.alyshmahell.eu`. Do not invent a token in this repo.
+
+The binary defaults to `{exeDir}/config/default.yaml`. Writable data: `{exeDir}/data` on a host install (store, transcode, backups, optional `config.yaml` overlay). Media root: `SERVEMEDIA_MEDIA_PATH` or overlay `media.path` (comma-separated paths share one picker tree). ffmpeg is `{exeDir}/vendor/ffmpeg` (`SERVEMEDIA_FFMPEG` override), or `ffmpeg` on `PATH` when that tree is absent (Flatpak).
 
 ## Run tests
 

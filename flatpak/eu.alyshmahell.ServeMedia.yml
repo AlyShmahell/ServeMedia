@@ -1,0 +1,58 @@
+# Sideload and Flathub Flatpak. Does not ship vendor/ffmpeg; uses
+# org.freedesktop.Platform.ffmpeg-full at runtime.
+#
+# Local builder: ./flatpak/build copies this manifest next to the staged
+# tarball as servemedia.tar.gz (and the helper files below).
+# Flathub: replace the servemedia.tar.gz file source with:
+#   - type: archive
+#     url: https://github.com/AlyShmahell/servemedia/releases/download/vX.Y.Z/servemedia-X.Y.Z-linux-amd64.tar.gz
+#     sha256: <release>
+id: eu.alyshmahell.ServeMedia
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+command: servemedia
+finish-args:
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --filesystem=/media
+  - --filesystem=/mnt
+  - --filesystem=/run/media
+  - --filesystem=xdg-videos
+  - --filesystem=xdg-music
+  - --talk-name=org.freedesktop.portal.OpenURI
+add-extensions:
+  org.freedesktop.Platform.ffmpeg-full:
+    directory: lib/ffmpeg
+    add-ld-path: .
+    version: "25.08"
+    autodelete: false
+modules:
+  - name: servemedia
+    buildsystem: simple
+    build-commands:
+      - mkdir -p unpacked
+      - tar --no-same-owner -xf servemedia.tar.gz -C unpacked --exclude=servemedia/vendor/ffmpeg
+      - cp -a unpacked/servemedia/. /app/
+      - rm -rf /app/data /app/.gitkeep /app/share/applications/servemedia.desktop
+      - install -d /app/lib/ffmpeg
+      - install -Dm755 servemedia /app/bin/servemedia
+      - install -Dm644 servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
+      - sed -i 's|^Icon=.*|Icon=eu.alyshmahell.ServeMedia|' /app/share/applications/eu.alyshmahell.ServeMedia.desktop
+      - install -Dm644 logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
+      - install -Dm644 eu.alyshmahell.ServeMedia.metainfo.xml /app/share/metainfo/eu.alyshmahell.ServeMedia.metainfo.xml
+      - chmod a+x /app/servemedia /app/bin/servemedia
+      - find /app/tools -type f -name matchmedia -exec chmod a+x {} +
+    sources:
+      - type: file
+        path: servemedia.tar.gz
+      - type: file
+        path: servemedia
+      - type: file
+        path: eu.alyshmahell.ServeMedia.metainfo.xml
+      - type: file
+        path: servemedia.desktop
+      - type: file
+        path: logo.svg

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>eu.alyshmahell.ServeMedia</id>
+  <name>ServeMedia</name>
+  <summary>Self-hosted media server for Linux</summary>
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>BSD-3-Clause</project_license>
+  <developer id="eu.alyshmahell">
+    <name>Aly Shmahell</name>
+  </developer>
+  <url type="homepage">https://alyshmahell.eu</url>
+  <url type="bugtracker">https://github.com/AlyShmahell/servemedia/issues</url>
+  <url type="vcs-browser">https://github.com/AlyShmahell/servemedia</url>
+  <description>
+    <p>
+      ServeMedia is a self-hosted media server for Linux. Scan local libraries,
+      fetch metadata through MatchMedia, and play in the browser.
+    </p>
+    <p>
+      Point it at folders on disk, add libraries, and scan with local NFO and
+      posters or with MatchMedia. Playback stays in the browser on the same
+      machine.
+    </p>
+    <p>
+      Built for Linux desktops. Keyboard and gamepad can move focus through
+      Home, libraries, titles, and Settings.
+    </p>
+  </description>
+  <keywords>
+    <keyword>media</keyword>
+    <keyword>server</keyword>
+    <keyword>library</keyword>
+    <keyword>anime</keyword>
+    <keyword>playback</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="dark">#0f1419</color>
+    <color type="primary" scheme_preference="light">#3d9cf0</color>
+  </branding>
+  <launchable type="desktop-id">eu.alyshmahell.ServeMedia.desktop</launchable>
+  <provides>
+    <binary>servemedia</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <recommends>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>gamepad</control>
+  </recommends>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/01-home.png</image>
+      <caption>Home with libraries and recently added titles</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/02-library-anime.png</image>
+      <caption>Anime library poster grid</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/03-title.png</image>
+      <caption>Title page with plot and seasons</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/04-season.png</image>
+      <caption>Season page with episode stills</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/05-player.png</image>
+      <caption>Browser playback</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/06-setup.png</image>
+      <caption>Create the admin account</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.0.6" date="2026-09-19"/>
+  </releases>
+</component>

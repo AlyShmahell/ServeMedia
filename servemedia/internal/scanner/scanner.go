@@ -69,9 +69,15 @@ func (s *Scanner) RescanMediaItem(ctx context.Context, lib *db.Library, item *db
 	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 5, "Scanning…")
 	switch item.Kind {
 	case "movie":
+		if pathGone(item.Path) {
+			return s.DB.DeleteMediaItem(ctx, item.ID)
+		}
 		_ = s.DB.UpdateScanJob(ctx, jobID, "running", 40, "Scanning movie")
 		return s.ingestMovie(ctx, lib, item.Path)
 	case "show":
+		if pathGone(item.Path) {
+			return s.DB.DeleteMediaItem(ctx, item.ID)
+		}
 		showPath := item.Path
 		_ = s.DB.UpdateScanJob(ctx, jobID, "running", 20, "Indexing show")
 		showID, err := s.ingestShow(ctx, lib, showPath)
@@ -140,6 +146,9 @@ func (s *Scanner) ingestMovie(ctx context.Context, lib *db.Library, path string)
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil
+	}
+	if err := s.ReattachMovedPath(ctx, lib, "movie", path); err != nil {
+		return err
 	}
 	// Provider-matched movies: do not re-apply poisoned local NFO/posters on scan.
 	if existing, err := s.DB.GetMediaItemByPath(ctx, lib.ID, path); err == nil && existing != nil {
@@ -348,7 +357,7 @@ func (s *Scanner) scanMixed(ctx context.Context, lib *db.Library, jobID int64) e
 			return err
 		}
 	}
-	return nil
+	return s.PruneMissing(ctx, lib)
 }
 
 // LooksLikeShowDir reports whether dir should be ingested as a show (same rules
@@ -844,6 +853,12 @@ func (s *Scanner) ingestSequentialEpisodes(ctx context.Context, showID int64, sh
 }
 
 func (s *Scanner) ingestShow(ctx context.Context, lib *db.Library, showPath string) (int64, error) {
+	if _, err := os.Stat(showPath); err != nil {
+		return 0, nil
+	}
+	if err := s.ReattachMovedPath(ctx, lib, "show", showPath); err != nil {
+		return 0, err
+	}
 	showTitle := metadata.CleanEpisodeTitle(filepath.Base(showPath))
 	if showTitle == "" {
 		showTitle = filepath.Base(showPath)

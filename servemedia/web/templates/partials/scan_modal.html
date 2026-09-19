@@ -12,14 +12,15 @@
     <label for="scan-mode">What do you want to do?</label>
     <select name="mode" id="scan-mode">
       <option value="local" {{if not .MetaReady}}selected{{end}}>Scan local NFO/posters</option>
-      <option value="matchmedia" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with MatchMedia</option>
+      <option value="matchmedia" {{if not .MetaReady}}disabled{{else}}selected{{end}}>Scan with MatchMedia (Rescan)</option>
+      <option value="matchmedia-changes" {{if not .MetaReady}}disabled{{end}}>Scan with MatchMedia (Changes)</option>
     </select>
     {{if not .MetaReady}}
     <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
     {{else if .MetaHint}}
     <p class="muted scan-modal-hint">{{.MetaHint}}</p>
     {{end}}
-    <label class="scan-persist">
+    <label class="scan-persist" id="scan-overwrite-wrap">
       <input type="checkbox" name="overwrite" value="1">
       Overwrite existing metadata
     </label>
@@ -38,11 +39,18 @@
   var dlg = document.getElementById('scan-modal');
   if (!dlg) return;
   var form = document.getElementById('scan-modal-form');
+  var mode = document.getElementById('scan-mode');
+  var overwriteWrap = document.getElementById('scan-overwrite-wrap');
   function closeDlg() { dlg.close(); }
+  function syncModeFields() {
+    var changes = mode && mode.value === 'matchmedia-changes';
+    if (overwriteWrap) overwriteWrap.hidden = !!changes;
+  }
   var closeBtn = document.getElementById('scan-modal-close');
   var cancelBtn = document.getElementById('scan-modal-cancel');
   if (closeBtn) closeBtn.addEventListener('click', closeDlg);
   if (cancelBtn) cancelBtn.addEventListener('click', closeDlg);
+  if (mode) mode.addEventListener('change', syncModeFields);
   dlg.addEventListener('click', function (e) {
     if (e.target === dlg) closeDlg();
   });
@@ -50,6 +58,7 @@
     if (!form) return;
     form.setAttribute('hx-post', '/hx/libraries/' + libraryId + '/scan');
     form.setAttribute('hx-target', '#library-' + libraryId);
+    syncModeFields();
     if (window.htmx) htmx.process(form);
     dlg.showModal();
   };

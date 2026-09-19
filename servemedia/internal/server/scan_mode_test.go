@@ -47,6 +47,7 @@ func TestRunLibraryScanMatchMediaSkipsMixedWalk(t *testing.T) {
 	}
 
 	var scanHits int
+	var scanMode string
 	const sess = "20260829T122800Z-a1b2c3d4e5f6g7h8"
 	requireSess := func(w http.ResponseWriter, r *http.Request) bool {
 		if r.URL.Query().Get("session") != sess {
@@ -59,6 +60,11 @@ func TestRunLibraryScanMatchMediaSkipsMixedWalk(t *testing.T) {
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
 		scanHits++
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		scanMode = body["mode"]
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":1}`))
 	})
@@ -107,6 +113,9 @@ func TestRunLibraryScanMatchMediaSkipsMixedWalk(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.runLibraryScan(lib, jobID, "matchmedia", false, true)
+	if scanMode != "rescan" {
+		t.Fatalf("mode %q want rescan", scanMode)
+	}
 	if sc.MixedWalks() != 0 {
 		t.Fatalf("mixed walks %d want 0", sc.MixedWalks())
 	}
@@ -155,5 +164,75 @@ func TestRunLibraryScanLocalStillWalks(t *testing.T) {
 	got, err := d.GetMediaItemByPath(ctx, lib.ID, film)
 	if err != nil || got == nil {
 		t.Fatalf("local walk %#v %v", got, err)
+	}
+}
+
+func TestRunLibraryScanChangesSendsMode(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	film := filepath.Join(media, "New Film.mkv")
+	if err := os.WriteFile(film, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var gotMode string
+	const sess = "20260829T122800Z-bbbbbbbbbbbbbbbb"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		gotMode = body["mode"]
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":1,"mode":"changes"}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"files":1,"done":1,"running":false}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-new", "status": "unmatched", "path": film, "source": "scan",
+			"files": []map[string]any{{"path": film}},
+		}})
+	})
+	stub := httptest.NewServer(mux)
+	defer stub.Close()
+	sc := &scanner.Scanner{DB: d, StorePath: store, MediaRoot: media}
+	meta := &matchmedia.Client{Base: stub.URL, HTTP: stub.Client()}
+	s := &Server{
+		Cfg: &config.Config{}, DB: d, Scanner: sc,
+		Fetch: &fetch.Worker{DB: d, Store: store, Meta: meta}, Meta: meta,
+	}
+	s.Cfg.Store.Path = store
+	jobID, err := d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.runLibraryScan(lib, jobID, "matchmedia-changes", true, true)
+	if sc.MixedWalks() != 0 {
+		t.Fatalf("mixed walks %d want 0", sc.MixedWalks())
+	}
+	if gotMode != "changes" {
+		t.Fatalf("mode %q want changes", gotMode)
+	}
+	got, err := d.GetMediaItemByPath(ctx, lib.ID, film)
+	if err != nil || got == nil {
+		t.Fatalf("changes upsert %#v %v", got, err)
 	}
 }

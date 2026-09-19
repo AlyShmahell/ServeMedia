@@ -97,6 +97,9 @@ type Config struct {
 }
 
 func ExeDir() (string, error) {
+	if root := strings.TrimSpace(os.Getenv("SERVEMEDIA_ROOT")); root != "" {
+		return filepath.Clean(root), nil
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -105,6 +108,30 @@ func ExeDir() (string, error) {
 		exe = resolved
 	}
 	return filepath.Dir(exe), nil
+}
+
+func inFlatpak() bool {
+	return strings.TrimSpace(os.Getenv("FLATPAK_ID")) != ""
+}
+
+// DataRoot is the prefix for relative data/* paths (store, transcode, backups, overlay).
+// Host installs keep {exeDir}; Flatpak uses $XDG_DATA_HOME/servemedia because /app is read-only.
+func DataRoot(exeDir string) string {
+	if !inFlatpak() {
+		return exeDir
+	}
+	if d := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); d != "" {
+		return filepath.Join(d, "servemedia")
+	}
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		home = "/var/data"
+	}
+	return filepath.Join(home, ".var", "app", strings.TrimSpace(os.Getenv("FLATPAK_ID")), "data", "servemedia")
+}
+
+func overlayPath(exeDir string) string {
+	return filepath.Join(DataRoot(exeDir), "data", "config.yaml")
 }
 
 func resolvePath(base, p, fallback string) string {
@@ -171,7 +198,7 @@ func Load(path string) (Config, error) {
 	seedVersion := strings.TrimSpace(c.Version)
 	c.ExeDir = root
 	c.resolvePaths()
-	overlay := filepath.Join(root, "data", "config.yaml")
+	overlay := overlayPath(root)
 	c.OverlayPath = overlay
 	if b, err := os.ReadFile(overlay); err == nil && len(b) > 0 {
 		if err := yaml.Unmarshal(b, &c); err != nil {
@@ -218,7 +245,7 @@ func (c Config) PrimaryMediaRoot() string {
 }
 
 func (c *Config) resolvePaths() {
-	base := c.ExeDir
+	base := DataRoot(c.ExeDir)
 	c.Store.Path = resolvePath(base, c.Store.Path, "data/store")
 	c.Transcode.Path = resolvePath(base, c.Transcode.Path, "data/transcode")
 	c.Backup.Dir = resolvePath(base, c.Backup.Dir, "data/backups")
@@ -275,7 +302,11 @@ func (c Config) OverlaySavePath() string {
 	if strings.TrimSpace(c.OverlayPath) != "" {
 		return c.OverlayPath
 	}
-	return filepath.Join(c.ExeDir, "data", "config.yaml")
+	return overlayPath(c.ExeDir)
+}
+
+func (c Config) MatchMediaDataDir() string {
+	return filepath.Join(DataRoot(c.ExeDir), "data", "matchmedia")
 }
 
 func (c Config) MatchMediaBin() string {

@@ -18,12 +18,15 @@ func ThirdParty(cfg config.Config) error {
 	if strings.TrimSpace(cfg.Vendor.HTMXURL) == "" {
 		return fmt.Errorf("vendor URLs missing from config")
 	}
+	flatpak := strings.TrimSpace(os.Getenv("FLATPAK_ID")) != ""
 	vdir := cfg.VendorDir()
 	if err := os.MkdirAll(filepath.Join(vdir, "video.js"), 0o755); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Join(vdir, "ffmpeg"), 0o755); err != nil {
-		return err
+	if !flatpak {
+		if err := os.MkdirAll(filepath.Join(vdir, "ffmpeg"), 0o755); err != nil {
+			return err
+		}
 	}
 	gets := []struct {
 		url, dest string
@@ -41,12 +44,18 @@ func ThirdParty(cfg config.Config) error {
 		if g.url == "" {
 			continue
 		}
+		if flatpak && strings.Contains(filepath.ToSlash(g.dest), "/ffmpeg/") {
+			continue
+		}
 		if fileOK(g.dest) {
 			continue
 		}
 		if err := download(g.url, g.dest); err != nil {
 			return fmt.Errorf("%s: %w", g.dest, err)
 		}
+	}
+	if flatpak {
+		return nil
 	}
 	ffmpeg := filepath.Join(vdir, "ffmpeg", "ffmpeg")
 	ffprobe := filepath.Join(vdir, "ffmpeg", "ffprobe")
