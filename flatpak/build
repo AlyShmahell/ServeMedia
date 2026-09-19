@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Build the Flatpak from the packaged linux-amd64 tarball (no vendor/ffmpeg).
+# Host: Podman. IN_CONTAINER=1: flatpak-builder inside the Fedora image.
+set -euo pipefail
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$DIR/.." && pwd)"
+BUILD="$ROOT/build"
+
+inner() {
+  local APP_ID="eu.alyshmahell.ServeMedia"
+  local RUNTIME_VER="25.08"
+  local TARBALL="${TARBALL:?}"
+  local VERSION="${VERSION:?}"
+  local SRC="${SRC:-/src}"
+  local CACHE="${CACHE:-/cache}"
+  local OUT="${OUT:-/out}"
+  local WORK="${WORK:-$CACHE/work}"
+  local strip repo builddir dest
+
+  export FLATPAK_USER_DIR="${CACHE}/user"
+  export XDG_CACHE_HOME="${CACHE}/xdg"
+  mkdir -p "$FLATPAK_USER_DIR" "$XDG_CACHE_HOME" "$OUT"
+
+  rm -rf "$WORK"
+  mkdir -p "$WORK"
+  cp -a "$SRC/flatpak/." "$WORK/"
+  cp "$SRC/servemedia/share/applications/servemedia.desktop" "$WORK/servemedia.desktop"
+  cp "$SRC/servemedia/web/static/logo.svg" "$WORK/logo.svg"
+  chmod +x "$WORK/servemedia"
+
+  strip="$(mktemp -d)"
+  tar -xf "$TARBALL" -C "$strip"
+  rm -rf "$strip/servemedia/vendor/ffmpeg"
+  tar -C "$strip" -czf "$WORK/servemedia.tar.gz" servemedia
+  rm -rf "$strip"
+
+  if [[ ! -f "$WORK/$APP_ID.yml" ]]; then
+    echo "error: flatpak manifest missing in $WORK" >&2
+    exit 1
+  fi
+
+  flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+  flatpak --user install -y --noninteractive flathub \
+    "org.freedesktop.Platform//${RUNTIME_VER}" \
+    "org.freedesktop.Sdk//${RUNTIME_VER}"
+
+  repo="$WORK/repo"
+  builddir="$WORK/build"
+  dest="$OUT/servemedia-${VERSION}-linux-amd64.flatpak"
+  rm -rf "$repo" "$builddir"
+  mkdir -p "$repo"
+  cd "$WORK"
+  flatpak-builder \
+    --user \
+    --disable-rofiles-fuse \
+    --state-dir "${CACHE}/builder" \
+    --repo "$repo" \
+    --force-clean \
+    "$builddir" \
+    "$WORK/$APP_ID.yml"
+  flatpak build-bundle \
+    "$repo" \
+    "$dest" \
+    "$APP_ID" \
+    --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+
+  echo "wrote $dest"
+  chmod -R a+rwX "$OUT" "$CACHE" || true
+}
+
+if [[ "${IN_CONTAINER:-}" == 1 ]]; then
+  inner
+  exit 0
+fi
+
+yaml_field() {
+  local key="$1" file="$2"
+  awk -v k="$key" '
+    $1 == k ":" {
+      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
+      gsub(/^"/, "")
+      gsub(/"[[:space:]]*$/, "")
+      print
+      exit
+    }
+  ' "$file"
+}
+
+if [[ ! -x "$BUILD/dist/servemedia" ]]; then
+  echo "error: build/dist/servemedia not found; rebuild first" >&2
+  exit 1
+fi
+
+version="$(yaml_field version "$BUILD/dist/config/default.yaml")"
+version="${version:-0.0.0}"
+tarball="$BUILD/package/servemedia-${version}-linux-amd64.tar.gz"
+if [[ ! -f "$tarball" ]]; then
+  echo "error: $tarball not found; package the linux-amd64 tarball first" >&2
+  exit 1
+fi
+
+mkdir -p "$BUILD/package" "$BUILD/cache/flatpak"
+: >"$BUILD/package/.gitkeep"
+: >"$BUILD/cache/.gitkeep"
+
+if ! command -v podman >/dev/null 2>&1; then
+  echo "error: podman is required to build Flatpaks" >&2
+  exit 1
+fi
+
+image="localhost/servemedia-flatpak-builder:latest"
+podman build -t "$image" -f "$DIR/containerfile" "$DIR"
+
+podman run --rm --privileged \
+  --security-opt label=disable \
+  -e IN_CONTAINER=1 \
+  -e VERSION="$version" \
+  -e TARBALL="/src/build/package/servemedia-${version}-linux-amd64.tar.gz" \
+  -e SRC=/src \
+  -e CACHE=/cache \
+  -e OUT=/out \
+  -v "$ROOT:/src:z" \
+  -v "$BUILD/cache/flatpak:/cache:z" \
+  -v "$BUILD/package:/out:z" \
+  "$image" \
+  bash /src/flatpak/build

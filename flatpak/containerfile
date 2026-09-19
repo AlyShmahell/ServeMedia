@@ -1,0 +1,5 @@
+# syntax=docker/dockerfile:1
+# Flatpak-builder image. Host driver is flatpak/build.
+FROM docker.io/library/fedora:latest
+RUN dnf install -y flatpak flatpak-builder ostree python3 \
+  && dnf clean all

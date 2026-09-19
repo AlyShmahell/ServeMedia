@@ -29,6 +29,7 @@ type Opts struct {
 	ScanJobID    int64
 	QueryTitle   string
 	ManualSelect bool
+	ScanMode     string
 }
 
 func (w *Worker) progress(ctx context.Context, jobID int64, pct int, msg string) {
@@ -48,7 +49,11 @@ func (w *Worker) MatchLibrary(ctx context.Context, lib *db.Library, opts Opts) e
 	if lib == nil {
 		return fmt.Errorf("missing library")
 	}
-	return w.MatchPath(ctx, lib, lib.Path, nil, opts)
+	if err := w.MatchPath(ctx, lib, lib.Path, nil, opts); err != nil {
+		return err
+	}
+	sc := &scanner.Scanner{DB: w.DB, StorePath: w.Store}
+	return sc.PruneMissing(ctx, lib)
 }
 
 func (w *Worker) MatchItem(ctx context.Context, lib *db.Library, item *db.MediaItem, opts Opts) error {
@@ -108,7 +113,7 @@ func (w *Worker) MatchPath(ctx context.Context, lib *db.Library, scanPath string
 		return fmt.Errorf("metadata service unavailable")
 	}
 	w.progress(ctx, opts.ScanJobID, 5, "Matching titles…")
-	scanned, err := w.Meta.Scan(scanPath)
+	scanned, err := w.Meta.Scan(scanPath, opts.ScanMode)
 	if err != nil {
 		return err
 	}
@@ -140,7 +145,7 @@ func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string
 			}
 		}
 		w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
-		appliedOne := false
+		appliedBatch := 0
 		for _, j := range jobs {
 			if j.Status == "pending" || j.Status == "" {
 				continue
@@ -152,18 +157,15 @@ func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string
 				return err
 			}
 			applied[j.ID] = struct{}{}
-			appliedOne = true
-			p, err = w.Meta.ScanStatus(session)
-			if err != nil {
-				p = matchmedia.ScanProgress{}
-			}
-			w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
-			break
+			appliedBatch++
 		}
-		if !appliedOne && !p.Running && pending == 0 {
+		if appliedBatch > 0 {
+			w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
+		}
+		if pending == 0 && !p.Running {
 			return nil
 		}
-		if !appliedOne {
+		if appliedBatch == 0 {
 			time.Sleep(400 * time.Millisecond)
 		}
 	}
@@ -205,7 +207,7 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchm
 	if only != nil && !jobTouchesItem(j, only) {
 		return nil
 	}
-	it, err := w.upsertFromJob(ctx, lib.ID, j, opts.Overwrite, only == nil)
+	it, err := w.upsertFromJob(ctx, lib.ID, j, opts.Overwrite, only == nil, opts.ScanMode)
 	if err != nil {
 		return err
 	}
@@ -220,6 +222,9 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchm
 		return nil
 	}
 	if only == nil && it.MatchSkipped() {
+		return nil
+	}
+	if changesSkipApply(opts, it, j) {
 		return nil
 	}
 	if err := w.applyJob(ctx, it, j, opts, session); err != nil {
@@ -243,7 +248,7 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	if err != nil {
 		return err
 	}
-	it, err := w.upsertFromJob(ctx, item.LibraryID, j, true, false)
+	it, err := w.upsertFromJob(ctx, item.LibraryID, j, true, false, "")
 	if err != nil {
 		return err
 	}
@@ -253,7 +258,7 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	return w.applyJob(ctx, it, j, Opts{Persist: persist, Overwrite: true}, session)
 }
 
-func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedia.Job, overwrite, keepSkipped bool) (*db.MediaItem, error) {
+func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedia.Job, overwrite, keepSkipped bool, scanMode string) (*db.MediaItem, error) {
 	files := expandJobFiles(j)
 	if len(files) == 0 {
 		return nil, nil
@@ -275,6 +280,16 @@ func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedi
 	existing, err := w.DB.GetMediaItemByPath(ctx, libraryID, itemPath)
 	if err != nil {
 		return nil, err
+	}
+	if existing == nil {
+		sc := &scanner.Scanner{DB: w.DB, StorePath: w.Store}
+		if err := sc.ReattachMovedPath(ctx, &db.Library{ID: libraryID}, kind, itemPath); err != nil {
+			return nil, err
+		}
+		existing, err = w.DB.GetMediaItemByPath(ctx, libraryID, itemPath)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if keepSkipped && existing != nil && existing.MatchSkipped() {
 		_ = w.DB.TouchMediaItemMtime(ctx, existing.ID, mtime)
@@ -305,20 +320,75 @@ func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedi
 	if err != nil || it == nil {
 		return it, err
 	}
+	known := changesKnownMatched(scanMode, overwrite, existing, j.Status)
 	if kind == "show" {
-		showPath := strings.TrimSpace(j.Path)
-		if showPath == "" {
-			showPath = filepath.Dir(files[0].Path)
+		needIngest := true
+		if known {
+			same, err := episodePathsMatch(ctx, w.DB, it.ID, files)
+			if err != nil {
+				return nil, err
+			}
+			needIngest = !same
 		}
-		sc := &scanner.Scanner{DB: w.DB, StorePath: w.Store}
-		if err := ingestShowFiles(ctx, sc, it.ID, showPath, j, files); err != nil {
+		if needIngest {
+			showPath := strings.TrimSpace(j.Path)
+			if showPath == "" {
+				showPath = filepath.Dir(files[0].Path)
+			}
+			sc := &scanner.Scanner{DB: w.DB, StorePath: w.Store}
+			if err := ingestShowFiles(ctx, sc, it.ID, showPath, j, files); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if !known {
+		if err := w.nestMediaItem(ctx, libraryID, it, parent); err != nil {
 			return nil, err
 		}
 	}
-	if err := w.nestMediaItem(ctx, libraryID, it, parent); err != nil {
-		return nil, err
-	}
 	return w.DB.GetMediaItem(ctx, it.ID)
+}
+
+func changesKnownMatched(scanMode string, overwrite bool, existing *db.MediaItem, jobStatus string) bool {
+	if scanMode != "changes" || overwrite || existing == nil {
+		return false
+	}
+	if !existing.MetaID.Valid || strings.TrimSpace(existing.MetaID.String) == "" {
+		return false
+	}
+	return jobStatus == "matched"
+}
+
+func changesSkipApply(opts Opts, it *db.MediaItem, j matchmedia.Job) bool {
+	return changesKnownMatched(opts.ScanMode, opts.Overwrite, it, j.Status)
+}
+
+func episodePathsMatch(ctx context.Context, d *db.DB, showID int64, files []matchmedia.JobFile) (bool, error) {
+	eps, err := d.ListEpisodesByShow(ctx, showID)
+	if err != nil {
+		return false, err
+	}
+	have := make(map[string]struct{}, len(eps))
+	for _, e := range eps {
+		have[filepath.Clean(e.Path)] = struct{}{}
+	}
+	want := make(map[string]struct{})
+	for _, f := range files {
+		p := strings.TrimSpace(f.Path)
+		if p == "" || !isVideoPath(p) {
+			continue
+		}
+		want[filepath.Clean(p)] = struct{}{}
+	}
+	if len(have) != len(want) {
+		return false, nil
+	}
+	for p := range want {
+		if _, ok := have[p]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func jobTitle(j matchmedia.Job, itemPath string) string {

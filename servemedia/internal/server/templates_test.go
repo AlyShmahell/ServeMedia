@@ -252,6 +252,33 @@ func TestEntryScanModalDissociateOption(t *testing.T) {
 	}
 }
 
+func TestScanModalMatchMediaModes(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "partials/scan_modal.html", map[string]any{
+		"MetaReady": true, "MetaHint": "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, "Scan with MatchMedia (Rescan)") {
+		t.Fatal("rescan label")
+	}
+	if !strings.Contains(html, "Scan with MatchMedia (Changes)") {
+		t.Fatal("changes label")
+	}
+	if !strings.Contains(html, `value="matchmedia-changes"`) {
+		t.Fatal("changes value")
+	}
+	if !strings.Contains(html, `id="scan-overwrite-wrap"`) {
+		t.Fatal("overwrite wrap")
+	}
+}
+
 func TestHomeRecentPollMarkup(t *testing.T) {
 	tplFS, err := fs.Sub(web.FS, "templates")
 	if err != nil {

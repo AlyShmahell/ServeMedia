@@ -1589,13 +1589,18 @@ func (s *Server) startLibraryScan(lib *db.Library, mode string, persist, overwri
 
 func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persist, overwrite bool) {
 	ctx := context.Background()
-	if mode != "matchmedia" {
+	if mode != "matchmedia" && mode != "matchmedia-changes" {
 		s.Scanner.ScanLibrary(ctx, lib, jobID)
 		return
 	}
 	s.syncFetchClients()
 	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 1, "Matching…")
-	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID}
+	scanMode := "rescan"
+	if mode == "matchmedia-changes" {
+		scanMode = "changes"
+		overwrite = false
+	}
+	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID, ScanMode: scanMode}
 	if err := s.Fetch.MatchLibrary(ctx, lib, opts); err != nil {
 		log.Printf("match library %d: %v", lib.ID, err)
 		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
@@ -1627,14 +1632,16 @@ func (s *Server) handleScanLibrary(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	mode := r.FormValue("mode")
 	switch mode {
-	case "local", "matchmedia":
+	case "local", "matchmedia", "matchmedia-changes":
 	default:
 		mode = "local"
 	}
 	persist := r.FormValue("persist") == "1" || r.FormValue("persist") == "on" || r.FormValue("persist") == "true"
 	overwrite := r.FormValue("overwrite") == "1" || r.FormValue("overwrite") == "on" || r.FormValue("overwrite") == "true"
-	if mode == "local" {
-		persist = false
+	if mode == "local" || mode == "matchmedia-changes" {
+		if mode == "local" {
+			persist = false
+		}
 		overwrite = false
 	}
 	jobID, err := s.startLibraryScan(lib, mode, persist, overwrite)

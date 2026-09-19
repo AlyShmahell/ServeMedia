@@ -1,4 +1,4 @@
-version: "0.0.5"
+version: "0.0.6"
 http:
   addr: ":7676"
 store:
@@ -30,8 +30,8 @@ integrations:
     destinations: []
 matchmedia:
   addr: "127.0.0.1:7680"
-  version: "0.0.7"
-  url: "https://github.com/AlyShmahell/MatchMedia/releases/download/v0.0.7/matchmedia-0.0.7-linux-amd64.tar.gz"
+  version: "0.0.8"
+  url: "https://github.com/AlyShmahell/MatchMedia/releases/download/v0.0.8/matchmedia-0.0.8-linux-amd64.tar.gz"
 vendor:
   htmx_url: "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
   htmx_license_url: "https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE"

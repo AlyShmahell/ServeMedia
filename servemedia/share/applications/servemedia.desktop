@@ -2,7 +2,7 @@
 Name=ServeMedia
 Comment=Self-hosted media library
 Exec=servemedia
-Icon=servemedia
+Icon=eu.alyshmahell.ServeMedia
 Terminal=false
 Type=Application
 Categories=AudioVideo;
