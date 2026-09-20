@@ -157,6 +157,5 @@ case "$CHOICE" in
   3)
     rebuild
     package
-    "$DIR/../flatpak/build"
     ;;
 esac

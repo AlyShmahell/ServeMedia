@@ -1,19 +1,25 @@
-# Sideload and Flathub Flatpak. Does not ship vendor/ffmpeg; uses
+# Sideload and Flathub Flatpak. Compiles ServeMedia and MatchMedia from
+# git tags. Does not ship vendor/ffmpeg; uses
 # org.freedesktop.Platform.ffmpeg-full at runtime.
 #
-# Local builder: ./flatpak/build copies this manifest next to the staged
-# tarball as servemedia.tar.gz (and the helper files below).
-# Flathub: replace the servemedia.tar.gz file source with:
-#   - type: archive
-#     url: https://github.com/AlyShmahell/servemedia/releases/download/vX.Y.Z/servemedia-X.Y.Z-linux-amd64.tar.gz
-#     sha256: <release>
+# ./flatpak/build menu: build, build offline, lint, regen, sync.
+# Host tarball is ./build/run package only — not used here.
 id: eu.alyshmahell.ServeMedia
 runtime: org.freedesktop.Platform
 runtime-version: "25.08"
 sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.golang
 command: servemedia
+add-extensions:
+  org.freedesktop.Platform.ffmpeg-full:
+    directory: lib/ffmpeg
+    add-ld-path: .
+    version: "25.08"
+    autodelete: false
 finish-args:
   - --share=network
+  - --share=ipc
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
@@ -22,37 +28,111 @@ finish-args:
   - --filesystem=/run/media
   - --filesystem=xdg-videos
   - --filesystem=xdg-music
-  - --talk-name=org.freedesktop.portal.OpenURI
-add-extensions:
-  org.freedesktop.Platform.ffmpeg-full:
-    directory: lib/ffmpeg
-    add-ld-path: .
-    version: "25.08"
-    autodelete: false
 modules:
+  - name: matchmedia
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/golang/bin
+      env:
+        CGO_ENABLED: "0"
+        GOFLAGS: "-buildvcs=false"
+        GOPROXY: "off"
+        GOSUMDB: "off"
+    build-commands:
+      - |
+        . /usr/lib/sdk/golang/enable.sh
+        ( cd matchmedia && go build -mod=vendor -ldflags="-s -w" -o matchmedia ./app )
+      - install -Dm755 matchmedia/matchmedia /app/tools/matchmedia/matchmedia
+      - cp -a matchmedia/share/config /app/tools/matchmedia/config
+      - install -Dm644 matchmedia/gui/index.html /app/tools/matchmedia/public/index.html
+      - install -Dm644 matchmedia/gui/style.css /app/tools/matchmedia/public/style.css
+      - install -Dm644 matchmedia/gui/app.js /app/tools/matchmedia/public/app.js
+      - install -Dm644 LICENSE /app/tools/matchmedia/LICENSE
+      - install -Dm644 LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/MatchMedia.LICENSE
+    sources:
+      - type: git
+        url: https://github.com/AlyShmahell/MatchMedia.git
+        tag: v0.0.8
+        commit: bd1a79d2eebcfd16ca1a9d60612669f484ea35c5
+        x-checker-data:
+          type: git
+          tag-pattern: ^v([\d.]+)$
+      - pins/matchmedia-go-sources.yml
+
   - name: servemedia
     buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/golang/bin
+      env:
+        CGO_ENABLED: "0"
+        GOFLAGS: "-buildvcs=false"
+        GOPROXY: "off"
+        GOSUMDB: "off"
     build-commands:
-      - mkdir -p unpacked
-      - tar --no-same-owner -xf servemedia.tar.gz -C unpacked --exclude=servemedia/vendor/ffmpeg
-      - cp -a unpacked/servemedia/. /app/
-      - rm -rf /app/data /app/.gitkeep /app/share/applications/servemedia.desktop
-      - install -d /app/lib/ffmpeg
-      - install -Dm755 servemedia /app/bin/servemedia
-      - install -Dm644 servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
+      - |
+        . /usr/lib/sdk/golang/enable.sh
+        ( cd servemedia && go build -mod=vendor -ldflags="-s -w" -o servemedia ./cmd/servemedia )
+      - install -Dm755 servemedia/servemedia /app/servemedia
+      - cp -a servemedia/share/config /app/config
+      - install -d /app/public /app/lib/ffmpeg /app/vendor/video.js
+      - install -m644 servemedia/web/static/app.css servemedia/web/static/app.js servemedia/web/static/controls.js servemedia/web/static/logo.svg servemedia/web/static/placeholder.svg /app/public/
+      - install -Dm644 LICENSE /app/LICENSE
+      - install -Dm644 LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/LICENSE
+      - install -Dm644 servemedia/share/applications/servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - sed -i 's|^Icon=.*|Icon=eu.alyshmahell.ServeMedia|' /app/share/applications/eu.alyshmahell.ServeMedia.desktop
-      - install -Dm644 logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
+      - install -Dm644 servemedia/web/static/logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
       - install -Dm644 eu.alyshmahell.ServeMedia.metainfo.xml /app/share/metainfo/eu.alyshmahell.ServeMedia.metainfo.xml
-      - chmod a+x /app/servemedia /app/bin/servemedia
-      - find /app/tools -type f -name matchmedia -exec chmod a+x {} +
+      - install -Dm755 servemedia-wrapper /app/bin/servemedia
+      - install -Dm644 htmx.min.js /app/vendor/htmx.min.js
+      - install -Dm644 htmx.min.js.LICENSE /app/vendor/htmx.min.js.LICENSE
+      - printf '%s\n' 'https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE' >/app/vendor/htmx.min.js.NOTICE
+      - install -Dm644 video.min.js /app/vendor/video.js/video.min.js
+      - install -Dm644 video-js.min.css /app/vendor/video.js/video-js.min.css
+      - install -Dm644 videojs.LICENSE /app/vendor/video.js/LICENSE
+      - printf '%s\n' 'https://raw.githubusercontent.com/videojs/video.js/v8.21.1/LICENSE' >/app/vendor/video.js/LICENSE.NOTICE
+      - install -Dm644 hls.min.js /app/vendor/hls.min.js
+      - install -Dm644 hls.min.js.LICENSE /app/vendor/hls.min.js.LICENSE
+      - printf '%s\n' 'https://raw.githubusercontent.com/video-dev/hls.js/v1.5.20/LICENSE' >/app/vendor/hls.min.js.NOTICE
+      - chmod a+x /app/servemedia /app/bin/servemedia /app/tools/matchmedia/matchmedia
     sources:
-      - type: file
-        path: servemedia.tar.gz
+      - type: git
+        url: https://github.com/AlyShmahell/ServeMedia.git
+        tag: v0.0.6
+        commit: 1fc58cab1bc5540bdee7d9f00a0dbae4ac62a233
+        x-checker-data:
+          type: git
+          tag-pattern: ^v([\d.]+)$
+      - pins/servemedia-go-sources.yml
       - type: file
         path: servemedia
+        dest-filename: servemedia-wrapper
       - type: file
         path: eu.alyshmahell.ServeMedia.metainfo.xml
       - type: file
-        path: servemedia.desktop
+        url: https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js
+        sha256: e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447
+        dest-filename: htmx.min.js
       - type: file
-        path: logo.svg
+        url: https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE
+        sha256: d3d2456f76414f2456104660ebd65aff1c04cd7966b942bdabd63f3cdb316a38
+        dest-filename: htmx.min.js.LICENSE
+      - type: file
+        url: https://unpkg.com/video.js@8.21.1/dist/video.min.js
+        sha256: 18f208dab567acc9e1165c30c435ac53d72850fb8219a79d00c33ebc37fff16b
+        dest-filename: video.min.js
+      - type: file
+        url: https://unpkg.com/video.js@8.21.1/dist/video-js.min.css
+        sha256: 4b54c38247b63ea52ae39c07e8bd903d2593eac3c27ce82e460f7bea70b2b9d5
+        dest-filename: video-js.min.css
+      - type: file
+        url: https://raw.githubusercontent.com/videojs/video.js/v8.21.1/LICENSE
+        sha256: c0d958248a3de7537966f6659e0176fa6a35f23afbbe37a7b23fcc096a5b3b5d
+        dest-filename: videojs.LICENSE
+      - type: file
+        url: https://unpkg.com/hls.js@1.5.20/dist/hls.min.js
+        sha256: d016c1230496ee59f3f5b01c16cce4cc01b5a1d3d357adec200c908b131ebe49
+        dest-filename: hls.min.js
+      - type: file
+        url: https://raw.githubusercontent.com/video-dev/hls.js/v1.5.20/LICENSE
+        sha256: ca8773cf798c7ed997d4dd7c8e23c348699f8d5b7462636694cc14de6cda12db
+        dest-filename: hls.min.js.LICENSE

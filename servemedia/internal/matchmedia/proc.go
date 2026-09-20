@@ -15,6 +15,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MatchMedia v0.0.8 merges this file before {data_dir}/config.yaml.
+const flatpakRunOverlay = "/run/matchmedia/config.yaml"
+
 type Proc struct {
 	cmd *exec.Cmd
 }
@@ -118,9 +121,16 @@ func within(root, path string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
+func overlayDest(matchmediaHome string) string {
+	if strings.TrimSpace(os.Getenv("FLATPAK_ID")) != "" {
+		return flatpakRunOverlay
+	}
+	return filepath.Join(matchmediaHome, "data", "config.yaml")
+}
+
 func writeOverlay(matchmediaHome, dataDir, addr, browseRoot string) error {
-	overlayDir := filepath.Join(matchmediaHome, "data")
-	if err := os.MkdirAll(overlayDir, 0o755); err != nil {
+	path := overlayDest(matchmediaHome)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
@@ -151,7 +161,7 @@ func writeOverlay(matchmediaHome, dataDir, addr, browseRoot string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(overlayDir, "config.yaml"), body, 0o644)
+	return os.WriteFile(path, body, 0o644)
 }
 
 func mergeOverlay(dst, src map[string]any) {

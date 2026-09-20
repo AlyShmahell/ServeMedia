@@ -34,3 +34,4 @@ servemedia/.env
 # Editor
 .idea/
 .vscode/
+repo/
