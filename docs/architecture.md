@@ -28,7 +28,7 @@ flowchart LR
 | `servemedia/share/applications` | `servemedia.desktop` staged to `{exeDir}/share/applications` |
 | `install.sh` | TTY GitHub-release install into `~/.servemedia` (userscope desktop, icon, `~/.local/bin`) |
 | `build/` | Podman dist builder: Containerfile, compose, host `run`, image helper `build` |
-| `flatpak/` | `build` driver, `containerfile`, manifest, AppStream, runtime wrapper `servemedia` for `eu.alyshmahell.ServeMedia` (Freedesktop 25.08) |
+| `flatpak/` | TTY `build` menu, `containerfile`, manifest, AppStream, `pins/` Go lists, runtime wrapper `servemedia` for `eu.alyshmahell.ServeMedia` (Freedesktop 25.08) |
 | `build/cache/` | Host cache (gitignored): ffmpeg bins + LICENSE reused across rebuilds; `matchmedia-<version>-linux-amd64.tar.gz` (must match `matchmedia.version` and the archive’s inner `version:`) overlays `tools/matchmedia` at stage time; Flatpak SDK/Platform under `cache/flatpak` |
 | `{exeDir}/config` | Seed YAML (`-config` default `{exeDir}/config/default.yaml`) |
 | `{exeDir}/public` | First-party static copy in the dist tree (templates stay embedded) |
@@ -41,7 +41,7 @@ flowchart LR
 
 ## Packages
 
-The packager writes a tarball with root `servemedia/` and ServeMedia’s `LICENSE`, then a Flatpak (`./build/run` → **(re)build & package**):
+The packager writes a tarball with root `servemedia/` and ServeMedia’s `LICENSE` (`./build/run` → **(re)build & package**). A sideload Flatpak is `./flatpak/build` (compiles the git tags pinned in the manifest):
 
 | Archive | Contents |
 |---------|----------|

@@ -1,127 +1,542 @@
 #!/usr/bin/env bash
-# Build the Flatpak from the packaged linux-amd64 tarball (no vendor/ffmpeg).
-# Host: Podman. IN_CONTAINER=1: flatpak-builder inside the Fedora image.
+# TTY menu: build, build offline, lint, regen Go pins, sync release pins.
+# Host: Podman. IN_CONTAINER=1: work inside the Fedora or golang image.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/.." && pwd)"
 BUILD="$ROOT/build"
+PINS="$DIR/pins"
+APP_ID="eu.alyshmahell.ServeMedia"
+YML="$DIR/${APP_ID}.yml"
+META="$DIR/${APP_ID}.metainfo.xml"
+IMAGE="localhost/servemedia-flatpak-builder:latest"
+RUNTIME_VER="25.08"
+SM_REPO="${SERVEMEDIA_REPO:-AlyShmahell/ServeMedia}"
+MM_REPO="${MATCHMEDIA_REPO:-AlyShmahell/MatchMedia}"
+UA="servemedia-flatpak-sync"
 
-inner() {
-  local APP_ID="eu.alyshmahell.ServeMedia"
-  local RUNTIME_VER="25.08"
-  local TARBALL="${TARBALL:?}"
-  local VERSION="${VERSION:?}"
-  local SRC="${SRC:-/src}"
-  local CACHE="${CACHE:-/cache}"
-  local OUT="${OUT:-/out}"
-  local WORK="${WORK:-$CACHE/work}"
-  local strip repo builddir dest
+need_podman() {
+  if ! command -v podman >/dev/null 2>&1; then
+    echo "error: podman is required" >&2
+    exit 1
+  fi
+}
 
-  export FLATPAK_USER_DIR="${CACHE}/user"
-  export XDG_CACHE_HOME="${CACHE}/xdg"
-  mkdir -p "$FLATPAK_USER_DIR" "$XDG_CACHE_HOME" "$OUT"
+app_version() {
+  python3 -c '
+import pathlib, re, sys
+meta = pathlib.Path(sys.argv[1]).read_text()
+m = re.search(r"<release version=\"([^\"]+)\"", meta)
+print(m.group(1) if m else "0.0.0")
+' "$META"
+}
 
-  rm -rf "$WORK"
-  mkdir -p "$WORK"
-  cp -a "$SRC/flatpak/." "$WORK/"
-  cp "$SRC/servemedia/share/applications/servemedia.desktop" "$WORK/servemedia.desktop"
-  cp "$SRC/servemedia/web/static/logo.svg" "$WORK/logo.svg"
-  chmod +x "$WORK/servemedia"
+yml_git_tag() {
+  python3 -c '
+import pathlib, re, sys
+yml, url = pathlib.Path(sys.argv[1]).read_text(), sys.argv[2]
+m = re.search(rf"url: {re.escape(url)}\n        tag: (v[\d.]+)\n", yml)
+print(m.group(1) if m else "")
+' "$YML" "$1"
+}
 
-  strip="$(mktemp -d)"
-  tar -xf "$TARBALL" -C "$strip"
-  rm -rf "$strip/servemedia/vendor/ffmpeg"
-  tar -C "$strip" -czf "$WORK/servemedia.tar.gz" servemedia
-  rm -rf "$strip"
+rewrite_go_sources() {
+  awk -v dest="$2" '
+    $0 == "  path: modules.txt" { print "  dest-filename: modules.txt"; print "  path: " dest; next }
+    { print }
+  ' "$1" >"$3"
+}
 
-  if [[ ! -f "$WORK/$APP_ID.yml" ]]; then
-    echo "error: flatpak manifest missing in $WORK" >&2
+prepare_work() {
+  local src="${SRC:-/src}" work="${WORK:-$CACHE/work}"
+  rm -rf "$work"
+  mkdir -p "$work/pins"
+  cp "$src/flatpak/${APP_ID}.yml" "$work/"
+  cp "$src/flatpak/${APP_ID}.metainfo.xml" "$work/"
+  cp "$src/flatpak/servemedia" "$work/"
+  cp "$src/flatpak/pins/"*.yml "$work/pins/"
+  cp "$src/flatpak/pins/"*.txt "$work/pins/"
+  chmod +x "$work/servemedia"
+  if [[ ! -f "$work/$APP_ID.yml" ]]; then
+    echo "error: flatpak manifest missing in $work" >&2
+    exit 1
+  fi
+}
+
+ref_installed() {
+  flatpak --user info "$1" >/dev/null 2>&1
+}
+
+ensure_runtimes() {
+  local offline="${1:-}"
+  local plat="org.freedesktop.Platform//${RUNTIME_VER}"
+  local sdk="org.freedesktop.Sdk//${RUNTIME_VER}"
+  local golang="org.freedesktop.Sdk.Extension.golang//${RUNTIME_VER}"
+  if [[ -n "$offline" ]]; then
+    if ! ref_installed "$plat" || ! ref_installed "$sdk" || ! ref_installed "$golang"; then
+      echo "error: Freedesktop ${RUNTIME_VER} Platform/SDK/golang missing from cache; choose build first" >&2
+      exit 1
+    fi
+    return 0
+  fi
+  flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+  flatpak --user install -y --noninteractive flathub "$plat" "$sdk" "$golang"
+}
+
+ensure_linter() {
+  local offline="${1:-}"
+  if ref_installed org.flatpak.Builder; then
+    return 0
+  fi
+  if [[ -n "$offline" ]]; then
+    echo "error: org.flatpak.Builder missing from cache; choose lint or build first" >&2
+    exit 1
+  fi
+  flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+  flatpak --user install -y --noninteractive flathub org.flatpak.Builder
+}
+
+inner_build() {
+  local offline="${1:-}"
+  local version="${VERSION:?}"
+  local cache="${CACHE:-/cache}"
+  local out="${OUT:-/out}"
+  local work="${WORK:-$cache/work}"
+  local repo builddir dest
+
+  export FLATPAK_USER_DIR="${cache}/user"
+  export XDG_CACHE_HOME="${cache}/xdg"
+  mkdir -p "$FLATPAK_USER_DIR" "$XDG_CACHE_HOME" "$out"
+  prepare_work
+  ensure_runtimes "$offline"
+  if [[ -z "$offline" ]]; then
+    ensure_linter ""
+  fi
+
+  repo="$work/repo"
+  builddir="$work/build"
+  dest="$out/servemedia-${version}-linux-amd64.flatpak"
+  rm -rf "$repo" "$builddir"
+  mkdir -p "$repo"
+  cd "$work"
+  if [[ -n "$offline" ]]; then
+    flatpak-builder \
+      --user \
+      --offline \
+      --disable-rofiles-fuse \
+      --state-dir "${cache}/builder" \
+      --repo "$repo" \
+      --force-clean \
+      "$builddir" \
+      "$work/$APP_ID.yml"
+  else
+    flatpak-builder \
+      --user \
+      --disable-rofiles-fuse \
+      --state-dir "${cache}/builder" \
+      --repo "$repo" \
+      --force-clean \
+      "$builddir" \
+      "$work/$APP_ID.yml"
+  fi
+  if [[ -n "$offline" ]]; then
+    flatpak build-bundle "$repo" "$dest" "$APP_ID"
+  else
+    flatpak build-bundle \
+      "$repo" \
+      "$dest" \
+      "$APP_ID" \
+      --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+  fi
+  echo "wrote $dest"
+  chmod -R a+rwX "$out" "$cache" || true
+}
+
+inner_lint() {
+  local cache="${CACHE:-/cache}"
+  local work="${WORK:-$cache/work}"
+  export FLATPAK_USER_DIR="${cache}/user"
+  export XDG_CACHE_HOME="${cache}/xdg"
+  mkdir -p "$FLATPAK_USER_DIR" "$XDG_CACHE_HOME"
+  prepare_work
+  ensure_linter ""
+  cd "$work"
+  flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest "$work/$APP_ID.yml"
+}
+
+inner_regen() {
+  local src="${SRC:-/src}"
+  local work sm_src mm_src sm_tag mm_tag
+  work="$(mktemp -d)"
+  trap 'rm -rf "'"$work"'"' EXIT
+  sm_tag="${SERVEMEDIA_TAG:-}"
+  mm_tag="${MATCHMEDIA_TAG:-}"
+  if [[ -z "$mm_tag" ]]; then
+    echo "error: MATCHMEDIA_TAG is empty" >&2
     exit 1
   fi
 
-  flatpak --user remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-  flatpak --user install -y --noninteractive flathub \
-    "org.freedesktop.Platform//${RUNTIME_VER}" \
-    "org.freedesktop.Sdk//${RUNTIME_VER}"
+  if [[ -n "$sm_tag" ]]; then
+    git clone --depth 1 --branch "$sm_tag" "https://github.com/${SM_REPO}.git" "$work/servemedia-src"
+  else
+    mkdir -p "$work/servemedia-src"
+    cp -a "${src}/servemedia" "$work/servemedia-src/servemedia"
+  fi
+  sm_src="$work/servemedia-src/servemedia"
+  rm -rf "$sm_src/vendor"
 
-  repo="$WORK/repo"
-  builddir="$WORK/build"
-  dest="$OUT/servemedia-${VERSION}-linux-amd64.flatpak"
-  rm -rf "$repo" "$builddir"
-  mkdir -p "$repo"
-  cd "$WORK"
-  flatpak-builder \
-    --user \
-    --disable-rofiles-fuse \
-    --state-dir "${CACHE}/builder" \
-    --repo "$repo" \
-    --force-clean \
-    "$builddir" \
-    "$WORK/$APP_ID.yml"
-  flatpak build-bundle \
-    "$repo" \
-    "$dest" \
-    "$APP_ID" \
-    --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+  git clone --depth 1 --branch "$mm_tag" "https://github.com/${MM_REPO}.git" "$work/matchmedia-src"
+  mm_src="$work/matchmedia-src/matchmedia"
+  rm -rf "$mm_src/vendor"
 
-  echo "wrote $dest"
-  chmod -R a+rwX "$OUT" "$CACHE" || true
+  export GOFLAGS=-buildvcs=false
+  export GOPROXY=https://proxy.golang.org,direct
+  mkdir -p "$work/sm" "$work/mm" "${src}/flatpak/pins"
+  go run github.com/dennwc/flatpak-go-mod@latest \
+    -dest-pref servemedia/ \
+    -out "$work/sm" \
+    "$sm_src"
+  go run github.com/dennwc/flatpak-go-mod@latest \
+    -dest-pref matchmedia/ \
+    -out "$work/mm" \
+    "$mm_src"
+  rewrite_go_sources "$work/sm/go.mod.yml" pins/servemedia.modules.txt \
+    "${src}/flatpak/pins/servemedia-go-sources.yml"
+  install -m644 "$work/sm/modules.txt" "${src}/flatpak/pins/servemedia.modules.txt"
+  rewrite_go_sources "$work/mm/go.mod.yml" pins/matchmedia.modules.txt \
+    "${src}/flatpak/pins/matchmedia-go-sources.yml"
+  install -m644 "$work/mm/modules.txt" "${src}/flatpak/pins/matchmedia.modules.txt"
+  echo "wrote ${src}/flatpak/pins"
 }
 
 if [[ "${IN_CONTAINER:-}" == 1 ]]; then
-  inner
+  case "${ACTION:-}" in
+    build) inner_build "" ;;
+    build-offline) inner_build offline ;;
+    lint) inner_lint ;;
+    regen) inner_regen ;;
+    *)
+      echo "error: unknown ACTION ${ACTION:-}" >&2
+      exit 1
+      ;;
+  esac
   exit 0
 fi
 
-yaml_field() {
-  local key="$1" file="$2"
-  awk -v k="$key" '
-    $1 == k ":" {
-      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
-      gsub(/^"/, "")
-      gsub(/"[[:space:]]*$/, "")
-      print
-      exit
-    }
-  ' "$file"
+menu() {
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    echo "error: stdin/stdout must be a TTY" >&2
+    exit 1
+  fi
+  local opts=("$@")
+  local n=${#opts[@]}
+  local i=0
+  local key rest j
+  printf '\e[?25l'
+  restore() { printf '\e[?25h\e[0m'; }
+  trap restore EXIT
+  draw() {
+    for j in "${!opts[@]}"; do
+      if (( j == i )); then
+        printf '\e[7m> %s\e[0m\n' "${opts[j]}"
+      else
+        printf '  %s\n' "${opts[j]}"
+      fi
+    done
+  }
+  draw
+  while true; do
+    IFS= read -rsn1 key
+    rest=""
+    if [[ $key == $'\e' ]]; then
+      IFS= read -rsn2 -t 0.1 rest || rest=""
+      key+="$rest"
+    fi
+    case "$key" in
+      $'\e[A')
+        i=$(( (i - 1 + n) % n ))
+        ;;
+      $'\e[B')
+        i=$(( (i + 1) % n ))
+        ;;
+      "")
+        printf '\e[%dA' "$n"
+        for j in "${!opts[@]}"; do
+          printf '\e[2K\n'
+        done
+        printf '\e[%dA' "$n"
+        restore
+        trap - EXIT
+        CHOICE=$i
+        return 0
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    printf '\e[%dA' "$n"
+    draw
+  done
 }
 
-if [[ ! -x "$BUILD/dist/servemedia" ]]; then
-  echo "error: build/dist/servemedia not found; rebuild first" >&2
-  exit 1
-fi
+fedora_run() {
+  local action="$1"
+  local version
+  version="$(app_version)"
+  version="${version:-0.0.0}"
+  mkdir -p "$BUILD/package" "$BUILD/cache/flatpak"
+  : >"$BUILD/package/.gitkeep"
+  : >"$BUILD/cache/.gitkeep"
+  podman run --rm --privileged \
+    --security-opt label=disable \
+    -e IN_CONTAINER=1 \
+    -e ACTION="$action" \
+    -e VERSION="$version" \
+    -e SRC=/src \
+    -e CACHE=/cache \
+    -e OUT=/out \
+    -v "$ROOT:/src:z" \
+    -v "$BUILD/cache/flatpak:/cache:z" \
+    -v "$BUILD/package:/out:z" \
+    "$IMAGE" \
+    bash /src/flatpak/build
+}
 
-version="$(yaml_field version "$BUILD/dist/config/default.yaml")"
-version="${version:-0.0.0}"
-tarball="$BUILD/package/servemedia-${version}-linux-amd64.tar.gz"
-if [[ ! -f "$tarball" ]]; then
-  echo "error: $tarball not found; package the linux-amd64 tarball first" >&2
-  exit 1
-fi
+do_build() {
+  need_podman
+  podman build -t "$IMAGE" -f "$DIR/containerfile" "$DIR"
+  fedora_run build
+}
 
-mkdir -p "$BUILD/package" "$BUILD/cache/flatpak"
-: >"$BUILD/package/.gitkeep"
-: >"$BUILD/cache/.gitkeep"
+do_build_offline() {
+  need_podman
+  if ! podman image exists "$IMAGE"; then
+    echo "error: $IMAGE missing; choose build first" >&2
+    exit 1
+  fi
+  fedora_run build-offline
+}
 
-if ! command -v podman >/dev/null 2>&1; then
-  echo "error: podman is required to build Flatpaks" >&2
-  exit 1
-fi
+do_lint() {
+  need_podman
+  podman build -t "$IMAGE" -f "$DIR/containerfile" "$DIR"
+  fedora_run lint
+}
 
-image="localhost/servemedia-flatpak-builder:latest"
-podman build -t "$image" -f "$DIR/containerfile" "$DIR"
+do_regen() {
+  local mm_tag sm_tag
+  need_podman
+  mm_tag="$(yml_git_tag "https://github.com/${MM_REPO}.git")"
+  sm_tag="${SERVEMEDIA_TAG:-}"
+  if [[ -z "$mm_tag" ]]; then
+    echo "error: MatchMedia tag missing from $YML" >&2
+    exit 1
+  fi
+  mkdir -p "$PINS"
+  podman run --rm \
+    -e IN_CONTAINER=1 \
+    -e ACTION=regen \
+    -e SRC=/src \
+    -e SERVEMEDIA_REPO="$SM_REPO" \
+    -e MATCHMEDIA_REPO="$MM_REPO" \
+    -e SERVEMEDIA_TAG="$sm_tag" \
+    -e MATCHMEDIA_TAG="$mm_tag" \
+    -v "$ROOT:/src:z" \
+    docker.io/library/golang:1.26-bookworm \
+    bash /src/flatpak/build
+}
 
-podman run --rm --privileged \
-  --security-opt label=disable \
-  -e IN_CONTAINER=1 \
-  -e VERSION="$version" \
-  -e TARBALL="/src/build/package/servemedia-${version}-linux-amd64.tar.gz" \
-  -e SRC=/src \
-  -e CACHE=/cache \
-  -e OUT=/out \
-  -v "$ROOT:/src:z" \
-  -v "$BUILD/cache/flatpak:/cache:z" \
-  -v "$BUILD/package:/out:z" \
-  "$image" \
-  bash /src/flatpak/build
+gh_json() {
+  curl -fsSL -A "$UA" -H "Accept: application/vnd.github+json" "$1"
+}
+
+tag_commit() {
+  python3 -c '
+import json, sys, urllib.request
+ua, url = sys.argv[1], sys.argv[2]
+req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": ua})
+ref = json.load(urllib.request.urlopen(req))
+obj = ref["object"]
+if obj["type"] == "commit":
+    print(obj["sha"])
+    raise SystemExit
+req = urllib.request.Request(obj["url"], headers={"Accept": "application/vnd.github+json", "User-Agent": ua})
+tag = json.load(urllib.request.urlopen(req))
+print(tag["object"]["sha"])
+' "$UA" "$1"
+}
+
+hash_url() {
+  curl -fL -A "$UA" --retry 3 --retry-delay 1 "$1" | sha256sum | awk '{print $1}'
+}
+
+do_sync() {
+  local json cfg
+  json="$(mktemp)"
+  cfg="$(mktemp)"
+  trap 'rm -f "'"$json"'" "'"$cfg"'"' EXIT
+  if ! gh_json "https://api.github.com/repos/${SM_REPO}/releases/latest" >"$json"; then
+    echo "error: could not fetch latest release for ${SM_REPO}" >&2
+    exit 1
+  fi
+  eval "$(python3 -c '
+import json, sys
+rel = json.load(open(sys.argv[1]))
+tag = (rel.get("tag_name") or "").strip()
+if tag.startswith("v"):
+    ver = tag[1:]
+else:
+    ver = tag
+pub = (rel.get("published_at") or "")[:10]
+if not tag or len(pub) != 10:
+    sys.exit(2)
+print("TAG=" + json.dumps(tag))
+print("VER=" + json.dumps(ver))
+print("DATE=" + json.dumps(pub))
+' "$json")" || {
+    echo "error: latest ${SM_REPO} release has no tag/date" >&2
+    exit 1
+  }
+  SM_COMMIT="$(tag_commit "https://api.github.com/repos/${SM_REPO}/git/refs/tags/${TAG}")"
+  curl -fL -A "$UA" --retry 3 --retry-delay 1 -o "$cfg" \
+    "https://raw.githubusercontent.com/${SM_REPO}/${TAG}/servemedia/share/config/default.yaml"
+  eval "$(python3 -c '
+import sys
+mm = ""
+urls = {}
+keys = (
+    "htmx_url", "htmx_license_url",
+    "videojs_js_url", "videojs_css_url", "videojs_license_url",
+    "hls_url", "hls_license_url",
+)
+in_mm = in_vendor = False
+for line in open(sys.argv[1]):
+    raw = line.rstrip("\n")
+    s = raw.strip()
+    if s.startswith("matchmedia:"):
+        in_mm, in_vendor = True, False
+        continue
+    if s.startswith("vendor:"):
+        in_mm, in_vendor = False, True
+        continue
+    if raw and not raw[:1].isspace() and not s.startswith("#"):
+        in_mm = in_vendor = False
+    if ":" not in s:
+        continue
+    k, _, v = s.partition(":")
+    v = v.strip().strip("\"")
+    if in_mm and k == "version":
+        mm = v
+    if in_vendor and k in keys:
+        urls[k] = v
+need = list(keys)
+if not mm or any(k not in urls for k in need):
+    sys.exit(2)
+print("MM_VER=" + repr(mm))
+for k in need:
+    print(k.upper() + "=" + repr(urls[k]))
+' "$cfg")" || {
+    echo "error: default.yaml on ${TAG} missing matchmedia.version or vendor URLs" >&2
+    exit 1
+  }
+  MM_TAG="v${MM_VER}"
+  MM_COMMIT="$(tag_commit "https://api.github.com/repos/${MM_REPO}/git/refs/tags/${MM_TAG}")"
+  HTMX_SHA="$(hash_url "$HTMX_URL")"
+  HTMX_LIC_SHA="$(hash_url "$HTMX_LICENSE_URL")"
+  VIDEOJS_JS_SHA="$(hash_url "$VIDEOJS_JS_URL")"
+  VIDEOJS_CSS_SHA="$(hash_url "$VIDEOJS_CSS_URL")"
+  VIDEOJS_LIC_SHA="$(hash_url "$VIDEOJS_LICENSE_URL")"
+  HLS_SHA="$(hash_url "$HLS_URL")"
+  HLS_LIC_SHA="$(hash_url "$HLS_LICENSE_URL")"
+  python3 - "$YML" "$META" "$TAG" "$SM_COMMIT" "$MM_TAG" "$MM_COMMIT" "$VER" "$DATE" \
+    "$HTMX_URL" "$HTMX_SHA" \
+    "$HTMX_LICENSE_URL" "$HTMX_LIC_SHA" \
+    "$VIDEOJS_JS_URL" "$VIDEOJS_JS_SHA" \
+    "$VIDEOJS_CSS_URL" "$VIDEOJS_CSS_SHA" \
+    "$VIDEOJS_LICENSE_URL" "$VIDEOJS_LIC_SHA" \
+    "$HLS_URL" "$HLS_SHA" \
+    "$HLS_LICENSE_URL" "$HLS_LIC_SHA" <<'PY'
+import pathlib, re, sys
+
+yml_path, meta_path = sys.argv[1], sys.argv[2]
+sm_tag, sm_commit = sys.argv[3], sys.argv[4]
+mm_tag, mm_commit = sys.argv[5], sys.argv[6]
+ver, date = sys.argv[7], sys.argv[8]
+pins = {
+    "htmx.min.js": (sys.argv[9], sys.argv[10]),
+    "htmx.min.js.LICENSE": (sys.argv[11], sys.argv[12]),
+    "video.min.js": (sys.argv[13], sys.argv[14]),
+    "video-js.min.css": (sys.argv[15], sys.argv[16]),
+    "videojs.LICENSE": (sys.argv[17], sys.argv[18]),
+    "hls.min.js": (sys.argv[19], sys.argv[20]),
+    "hls.min.js.LICENSE": (sys.argv[21], sys.argv[22]),
+}
+yml = pathlib.Path(yml_path).read_text()
+
+def pin_git(yml, url, tag, commit):
+    block = (
+        rf"(url: {re.escape(url)}\n"
+        rf"        tag: )v[\d.]+\n"
+        rf"(        commit: )[0-9a-f]+\n"
+    )
+    out, n = re.subn(block, rf"\g<1>{tag}\n\g<2>{commit}\n", yml, count=1)
+    if n != 1:
+        sys.exit(4)
+    return out
+
+yml = pin_git(yml, "https://github.com/AlyShmahell/MatchMedia.git", mm_tag, mm_commit)
+yml = pin_git(yml, "https://github.com/AlyShmahell/ServeMedia.git", sm_tag, sm_commit)
+
+def pin_file(yml, dest, url, sha):
+    block = (
+        rf"(- type: file\n"
+        rf"        url: ).+\n"
+        rf"(        sha256: )[0-9a-f]+\n"
+        rf"(        dest-filename: {re.escape(dest)}\n)"
+    )
+    repl = rf"\g<1>{url}\n\g<2>{sha}\n\g<3>"
+    out, n = re.subn(block, repl, yml, count=1)
+    if n != 1:
+        sys.exit(5)
+    return out
+
+for dest, (url, sha) in pins.items():
+    yml = pin_file(yml, dest, url, sha)
+
+def pin_notice(yml, dest, url):
+    block = rf"(printf '%s\\n' ')[^']+(' >/app/vendor/{re.escape(dest)})"
+    out, n = re.subn(block, rf"\g<1>{url}\g<2>", yml, count=1)
+    if n != 1:
+        sys.exit(6)
+    return out
+
+yml = pin_notice(yml, "htmx.min.js.NOTICE", sys.argv[11])
+yml = pin_notice(yml, "video.js/LICENSE.NOTICE", sys.argv[17])
+yml = pin_notice(yml, "hls.min.js.NOTICE", sys.argv[21])
+pathlib.Path(yml_path).write_text(yml)
+meta = pathlib.Path(meta_path).read_text()
+meta, n = re.subn(
+    r'<release version="[^"]*" date="[^"]*"/>',
+    f'<release version="{ver}" date="{date}"/>',
+    meta,
+    count=1,
+)
+if n != 1:
+    sys.exit(3)
+pathlib.Path(meta_path).write_text(meta)
+PY
+  echo "pinned ${TAG}@${SM_COMMIT} ${MM_TAG}@${MM_COMMIT}"
+  SERVEMEDIA_TAG="$TAG" do_regen
+}
+
+need_podman
+CHOICE=
+menu "build" "build offline" "lint" "regen" "sync"
+case "$CHOICE" in
+  0) do_build ;;
+  1) do_build_offline ;;
+  2) do_lint ;;
+  3) do_regen ;;
+  4) do_sync ;;
+esac

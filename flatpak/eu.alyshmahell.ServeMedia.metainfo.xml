@@ -13,13 +13,12 @@
   <url type="vcs-browser">https://github.com/AlyShmahell/servemedia</url>
   <description>
     <p>
-      ServeMedia is a self-hosted media server for Linux. Scan local libraries,
-      fetch metadata through MatchMedia, and play in the browser.
+      ServeMedia is <b> The Self-hosted Media-Server for Linux. </b>
     </p>
     <p>
       Point it at folders on disk, add libraries, and scan with local NFO and
-      posters or with MatchMedia. Playback stays in the browser on the same
-      machine.
+      posters or fetch from online metadata providers with MatchMedia. 
+      Playback stays in the browser on the same machine or over the network.
     </p>
     <p>
       Built for Linux desktops. Keyboard and gamepad can move focus through

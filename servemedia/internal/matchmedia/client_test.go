@@ -184,11 +184,29 @@ func TestWithinFilesystemRoot(t *testing.T) {
 	}
 }
 
+func TestOverlayDestHost(t *testing.T) {
+	t.Setenv("FLATPAK_ID", "")
+	home := t.TempDir()
+	got := overlayDest(home)
+	want := filepath.Join(home, "data", "config.yaml")
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestOverlayDestFlatpak(t *testing.T) {
+	t.Setenv("FLATPAK_ID", "eu.alyshmahell.ServeMedia")
+	if got := overlayDest("/app/tools/matchmedia"); got != flatpakRunOverlay {
+		t.Fatalf("got %q want %q", got, flatpakRunOverlay)
+	}
+}
+
 func TestWriteOverlayServeMediaKeysLast(t *testing.T) {
 	extra := filepath.Join(t.TempDir(), "extra.yaml")
 	if err := os.WriteFile(extra, []byte("browse_root: /media\nproviders:\n  omdb:\n    base: http://omdb-stub:8080\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("FLATPAK_ID", "")
 	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", extra)
 	home := t.TempDir()
 	data := t.TempDir()
