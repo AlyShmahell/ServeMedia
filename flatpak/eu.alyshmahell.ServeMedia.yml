@@ -2,7 +2,7 @@
 # git tags. Does not ship vendor/ffmpeg; uses
 # org.freedesktop.Platform.ffmpeg-full at runtime.
 #
-# ./flatpak/build menu: build, build offline, lint, regen, sync.
+# ./flatpak/build menu: build, lint, regen, sync.
 # Host tarball is ./build/run package only — not used here.
 id: eu.alyshmahell.ServeMedia
 runtime: org.freedesktop.Platform
@@ -97,8 +97,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/AlyShmahell/ServeMedia.git
-        tag: v0.0.6
-        commit: 1fc58cab1bc5540bdee7d9f00a0dbae4ac62a233
+        tag: v0.0.7
+        commit: 8fd108aeb867457c500138e1747311fba5e5078e
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$

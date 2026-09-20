@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TTY menu: build, build offline, lint, regen Go pins, sync release pins.
+# TTY menu: build (online, or offline if the network is down), lint, regen, sync.
 # Host: Podman. IN_CONTAINER=1: work inside the Fedora or golang image.
 set -euo pipefail
 
@@ -21,6 +21,11 @@ need_podman() {
     echo "error: podman is required" >&2
     exit 1
   fi
+}
+
+network_up() {
+  curl -fsI --connect-timeout 3 --max-time 5 \
+    https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1
 }
 
 app_version() {
@@ -305,21 +310,27 @@ fedora_run() {
 
 do_build() {
   need_podman
-  podman build -t "$IMAGE" -f "$DIR/containerfile" "$DIR"
-  fedora_run build
-}
-
-do_build_offline() {
-  need_podman
+  if network_up; then
+    echo "online"
+    podman build -t "$IMAGE" -f "$DIR/containerfile" "$DIR"
+    fedora_run build
+    return
+  fi
+  echo "offline"
   if ! podman image exists "$IMAGE"; then
-    echo "error: $IMAGE missing; choose build first" >&2
+    echo "error: $IMAGE missing; need network for first build" >&2
     exit 1
   fi
   fedora_run build-offline
 }
 
 do_lint() {
+  local ver sm mm
   need_podman
+  ver="$(app_version)"
+  sm="$(yml_git_tag "https://github.com/${SM_REPO}.git")"
+  mm="$(yml_git_tag "https://github.com/${MM_REPO}.git")"
+  echo "linting ${ver:-0.0.0} (ServeMedia ${sm:-unknown}, MatchMedia ${mm:-unknown})"
   podman build -t "$IMAGE" -f "$DIR/containerfile" "$DIR"
   fedora_run lint
 }
@@ -532,11 +543,10 @@ PY
 
 need_podman
 CHOICE=
-menu "build" "build offline" "lint" "regen" "sync"
+menu "build" "lint" "regen" "sync"
 case "$CHOICE" in
   0) do_build ;;
-  1) do_build_offline ;;
-  2) do_lint ;;
-  3) do_regen ;;
-  4) do_sync ;;
+  1) do_lint ;;
+  2) do_regen ;;
+  3) do_sync ;;
 esac
