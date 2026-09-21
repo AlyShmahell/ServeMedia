@@ -5,7 +5,7 @@
 <h1 align="center">ServeMedia</h1>
 
 <p align="justified">
-**ServeMedia** is `The Self-Hosted Media-Server for Linux`. It is built around a core application called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. **ServeMedia** is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. **ServeMedia** provides a desktop entry which starts its services then opens the browser pointed to its webpage (port **7676**), which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback.
+<b>ServeMedia</b> is <it>The Self-Hosted Media-Server for Linux</it>. It is built around a core application called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. <b>ServeMedia</b> is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. <b>ServeMedia</b> provides a desktop entry which starts its services then opens the browser pointed to its webpage (port <b>7676</b>), which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback.
 </p>
 
 ## Requirements
@@ -31,12 +31,6 @@ The first visit goes to `/register` and creates the **admin**. After that, `/reg
 ## How to
 
 Start ServeMedia, create the admin, add a library, open a title, and play.
-
-<p align="center">
-  <video controls width="640" src="flatpak/screenshots/screencast.webm">
-    <a href="flatpak/screenshots/screencast.webm">Watch the walkthrough</a>
-  </video>
-</p>
 
 Create the admin account.
 
