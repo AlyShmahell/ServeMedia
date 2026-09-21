@@ -52,10 +52,7 @@ run_unit() {
 run_smoke() {
   "${COMPOSE[@]}" down -v 2>/dev/null || true
   rebuild_dist
-  podman build -t localhost/tests_omdb-stub:latest -f omdb-stub/Containerfile omdb-stub
-  podman build -t localhost/tests_webhook-stub:latest -f webhook-stub/Containerfile webhook-stub
-  podman build -t localhost/servemedia-runtime:latest -f runtime/Containerfile runtime
-  "${COMPOSE[@]}" up -d --build servemedia
+  "${COMPOSE[@]}" up -d --build omdb-stub webhook-stub servemedia
   "${COMPOSE[@]}" build smoke
   "${COMPOSE[@]}" run --rm smoke
 }

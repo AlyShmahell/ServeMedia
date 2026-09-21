@@ -21,7 +21,7 @@ flowchart LR
 
 | Path | Role |
 |------|------|
-| `servemedia/cmd/servemedia` | HTTP server (`-config`, `--prepare`) |
+| `servemedia` | HTTP server (`-config`, `--prepare`) |
 | `servemedia/internal` | config, db, scan, fetch, stream, transcode, matchmedia client |
 | `servemedia/web` | go:embed templates + first-party static (`app.css` / `app.js` / `controls.js` / logos) |
 | `servemedia/share/config` | Seed `default.yaml` copied into `build/dist/config` |
@@ -35,7 +35,7 @@ flowchart LR
 | `{exeDir}/data` | SQLite store, transcode cache, backups, overlay `config.yaml`, MatchMedia `data/matchmedia` (Flatpak: `$XDG_DATA_HOME/servemedia/data`) |
 | `{exeDir}/tools/matchmedia` | First-party MatchMedia v0.0.8 (binary, `config/`, `public/`, `LICENSE`) |
 | `{exeDir}/vendor` | Third-party only: htmx, video.js, hls.js, ffmpeg (+ licenses) |
-| `tests/` | Podman unit (`go test`) + Playwright smoke against bind-mounted dist |
+| `tests/` | Podman unit (`go test` via `tests/images`) + Playwright smoke against bind-mounted dist; OMDb and webhook stubs share one image |
 
 `tools/` is first-party helper programs. `vendor/` is third-party only.
 

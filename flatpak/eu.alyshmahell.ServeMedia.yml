@@ -71,7 +71,7 @@ modules:
     build-commands:
       - |
         . /usr/lib/sdk/golang/enable.sh
-        ( cd servemedia && go build -mod=vendor -ldflags="-s -w" -o servemedia ./cmd/servemedia )
+        ( cd servemedia && go build -mod=vendor -ldflags="-s -w" -o servemedia . )
       - install -Dm755 servemedia/servemedia /app/servemedia
       - cp -a servemedia/share/config /app/config
       - install -d /app/public /app/lib/ffmpeg /app/vendor/video.js

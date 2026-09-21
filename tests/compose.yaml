@@ -3,29 +3,31 @@ services:
   unit:
     build:
       context: ..
-      dockerfile: tests/unit/Containerfile
+      dockerfile: tests/images/unit.Containerfile
 
   omdb-stub:
-    image: localhost/tests_omdb-stub:latest
+    image: localhost/tests-stub:latest
     build:
-      context: ./omdb-stub
-      dockerfile: Containerfile
+      context: ./stubs
+      dockerfile: ../images/stub.Containerfile
+    command: ["python", "/stub/omdb.py"]
     expose:
       - "8080"
 
   webhook-stub:
-    image: localhost/tests_webhook-stub:latest
+    image: localhost/tests-stub:latest
     build:
-      context: ./webhook-stub
-      dockerfile: Containerfile
+      context: ./stubs
+      dockerfile: ../images/stub.Containerfile
+    command: ["python", "/stub/webhook.py"]
     expose:
       - "9090"
 
   servemedia:
     image: localhost/servemedia-runtime:latest
     build:
-      context: ./runtime
-      dockerfile: Containerfile
+      context: ./images
+      dockerfile: runtime.Containerfile
     environment:
       SERVEMEDIA_MEDIA_PATH: /media
       SERVEMEDIA_MATCHMEDIA_OVERLAY: /overlay/matchmedia.yaml
@@ -52,15 +54,13 @@ services:
   smoke:
     build:
       context: ..
-      dockerfile: tests/smoke/Containerfile
+      dockerfile: tests/images/smoke.Containerfile
     depends_on:
       servemedia:
         condition: service_healthy
     environment:
       SERVEMEDIA_BASE_URL: http://servemedia:7676
       WEBHOOK_STUB_URL: http://webhook-stub:9090
-    volumes:
-      - ./smoke:/tests:ro
 
 volumes:
   servemedia-test-data:

@@ -3,5 +3,5 @@ WORKDIR /src
 ENV PATH="/usr/local/go/bin:${PATH}"
 COPY servemedia/ /src/servemedia/
 WORKDIR /src/servemedia
-RUN go mod tidy && go test ./...
+RUN go mod download
 CMD ["go", "test", "./..."]

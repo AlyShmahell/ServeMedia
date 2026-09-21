@@ -158,7 +158,7 @@ func (m *Manager) probeVAAPI() {
 	}
 
 	if statFails == len(devs) {
-		log.Printf("transcode hwaccel: render nodes present but not accessible; add host user to render/video group or set group_add in compose (see servemedia/.env.example)")
+		log.Printf("transcode hwaccel: render nodes present but not accessible; add host user to the render and video groups")
 	}
 	log.Printf("transcode hwaccel=software (no render node passed vaapi smoke test)")
 }

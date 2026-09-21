@@ -29,7 +29,6 @@ go.work.sum
 .env
 /data/
 !data/.gitkeep
-servemedia/.env
 
 # Editor
 .idea/

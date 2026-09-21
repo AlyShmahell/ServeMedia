@@ -45,7 +45,7 @@ The binary defaults to `{exeDir}/config/default.yaml`. Writable data: `{exeDir}/
 
 Menu:
 
-1. Run unit (`go test` inside `tests/unit` image)
+1. Run unit (`go test` inside the `tests/images/unit.Containerfile` image)
 2. Run smoke (Playwright against compose `servemedia` on the dist tree)
 3. Run all
 
@@ -55,7 +55,7 @@ Non-interactive (CI):
 ./tests/run   # without a TTY runs unit then smoke
 ```
 
-`./tests/run` builds `build/dist/` (same builder as `./build/run`) before smoke, then runs the existing unit and smoke compose services. It does not use MatchMedia’s check / live / stub-chat harness. Smoke bind-mounts `tests/fixtures/media` **read-only** so persist-beside-media cannot dirty the fixtures. MatchMedia’s overlay (`tests/matchmedia-overlay.yaml`) points OMDb/TVMaze/Jikan/TMDB at `omdb-stub` so synthetic show names stay unmatched; Film Title still hits the OMDb search fixture.
+`./tests/run` builds `build/dist/` (same builder as `./build/run`) before smoke, then runs the unit and smoke compose services. Image recipes live in `tests/images/`. OMDb and webhook stubs share one image (`tests/images/stub.Containerfile`, services `omdb-stub` and `webhook-stub`). It does not use MatchMedia’s check / live / stub-chat harness. Smoke bind-mounts `tests/fixtures/media` **read-only** so persist-beside-media cannot dirty the fixtures. MatchMedia’s overlay (`tests/matchmedia-overlay.yaml`) points OMDb/TVMaze/Jikan/TMDB at `omdb-stub` so synthetic show names stay unmatched; Film Title still hits the OMDb search fixture.
 
 ## Hard rules
 
