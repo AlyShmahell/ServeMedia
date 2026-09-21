@@ -4,7 +4,9 @@
 
 <h1 align="center">ServeMedia</h1>
 
-The Self-hosted Media-Server for Linux: scan your files, fetch metadata, and play in the browser. On start it opens in the browser and listens locally (default port **7676**).
+<p align="justified">
+**ServeMedia** is `The Self-Hosted Media-Server for Linux`. It is built around a core application called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. **ServeMedia** is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. **ServeMedia** provides a desktop entry which starts its services then opens the browser pointed to its webpage (port **7676**), which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback.
+</p>
 
 ## Requirements
 
@@ -15,20 +17,62 @@ The Self-hosted Media-Server for Linux: scan your files, fetch metadata, and pla
 GPU transcode uses host Mesa/`libva` when available; software encode is the fallback.
 
 ## Install
-
+- from [GitHub Releases](https://github.com/AlyShmahell/servemedia/releases), using the automated installer:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AlyShmahell/servemedia/main/install.sh | bash
 ```
-
-Pick a GitHub release. The archive includes MatchMedia and vendor libraries (htmx, video.js, hls.js, ffmpeg). The installer writes `~/.servemedia`, links `~/.local/bin/servemedia`, and adds a user-scope desktop entry. Add `~/.local/bin` to `PATH` if `servemedia` is not found. Override the install prefix with `SERVEMEDIA_HOME`.
-
-Archives are also on [GitHub Releases](https://github.com/AlyShmahell/servemedia/releases): `servemedia-<ver>-linux-amd64.tar.gz`.
-
+The installer writes `~/.servemedia`, links `~/.local/bin/servemedia`, and adds a user-scope desktop entry. Add `~/.local/bin` to `PATH` if `servemedia` is not found. Override the install prefix with **env var** `SERVEMEDIA_HOME`.
 ## Start
 
 Run `servemedia` or the desktop entry. With a display, the browser opens automatically (`SERVEMEDIA_NO_BROWSER=1` skips that). If ServeMedia is already listening, a second start opens the app and exits.
 
 The first visit goes to `/register` and creates the **admin**. After that, `/register` is gone. Add other users under Settings → Users.
+
+## How to
+
+Start ServeMedia, create the admin, add a library, open a title, and play.
+
+<p align="center">
+  <video controls width="640" src="flatpak/screenshots/screencast.webm">
+    <a href="flatpak/screenshots/screencast.webm">Watch the walkthrough</a>
+  </video>
+</p>
+
+Create the admin account.
+
+<p align="center">
+  <img src="flatpak/screenshots/06-setup.png" alt="Create the admin account" width="640">
+</p>
+
+Home with libraries and recently added titles.
+
+<p align="center">
+  <img src="flatpak/screenshots/01-home.png" alt="Home with libraries and recently added titles" width="640">
+</p>
+
+Anime library poster grid.
+
+<p align="center">
+  <img src="flatpak/screenshots/02-library-anime.png" alt="Anime library poster grid" width="640">
+</p>
+
+Title page with plot and seasons.
+
+<p align="center">
+  <img src="flatpak/screenshots/03-title.png" alt="Title page with plot and seasons" width="640">
+</p>
+
+Season page with episode stills.
+
+<p align="center">
+  <img src="flatpak/screenshots/04-season.png" alt="Season page with episode stills" width="640">
+</p>
+
+Browser playback.
+
+<p align="center">
+  <img src="flatpak/screenshots/05-player.png" alt="Browser playback" width="640">
+</p>
 
 ## Controls
 
