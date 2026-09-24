@@ -54,6 +54,13 @@ func TestVaapiSmokeTestAV1(t *testing.T) {
 	}
 }
 
+func TestVaapiSmokeTestAV110(t *testing.T) {
+	dev := requireRenderNode(t)
+	if err := vaapiSmokeTestAV110(dev); err != nil {
+		t.Skipf("av1_vaapi 10-bit smoke on %s: %v", dev, err)
+	}
+}
+
 func TestProbeVAAPIIntegration(t *testing.T) {
 	requireRenderNode(t)
 	m := NewManager(config.Defaults())
@@ -128,6 +135,27 @@ func TestEnsureLibVADriversPathKeepsExisting(t *testing.T) {
 	ensureLibVADriversPath()
 	if got := os.Getenv("LIBVA_DRIVERS_PATH"); got != "/custom/dri" {
 		t.Fatalf("LIBVA_DRIVERS_PATH=%q", got)
+	}
+}
+
+func TestJoinExistingLibVADriverDirsOrder(t *testing.T) {
+	root := t.TempDir()
+	nonfree := filepath.Join(root, "dri-nonfree")
+	freeworld := filepath.Join(root, "dri-freeworld")
+	dri := filepath.Join(root, "dri")
+	missing := filepath.Join(root, "absent")
+	for _, dir := range []string{nonfree, freeworld, dri} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := joinExistingLibVADriverDirs(nonfree, freeworld, dri, missing)
+	want := nonfree + ":" + freeworld + ":" + dri
+	if got != want {
+		t.Fatalf("join=%q want %q", got, want)
+	}
+	if got := joinExistingLibVADriverDirs(missing); got != "" {
+		t.Fatalf("missing dirs: got %q", got)
 	}
 }
 

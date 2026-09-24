@@ -6,10 +6,12 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/alyshmahell/servemedia/internal/backup"
 	"github.com/alyshmahell/servemedia/internal/config"
 	"github.com/alyshmahell/servemedia/internal/db"
 	"github.com/alyshmahell/servemedia/web"
@@ -120,5 +122,127 @@ func TestHandleHXRecentAndItemsLive(t *testing.T) {
 	}
 	if !strings.Contains(liveItems, "2 titles") {
 		t.Fatalf("live count: %s", liveItems)
+	}
+}
+
+func TestDeleteLibraryRefreshesStrips(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, err := d.CreateLibrary(ctx, u.ID, "Gone", "/media/gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := d.CreateLibrary(ctx, u.ID, "Kept", "/media/kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goneItem, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: gone.ID, Kind: "movie", Title: "Gone Film", Path: "/media/gone/Gone.mkv", Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keptItem, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: kept.ID, Kind: "movie", Title: "Kept Film", Path: "/media/kept/Kept.mkv", Mtime: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertWatchMovie(ctx, u.ID, goneItem, 30, 100, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.UpsertWatchMovie(ctx, u.ID, keptItem, 40, 100, false); err != nil {
+		t.Fatal(err)
+	}
+
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Defaults()
+	cfg.Store.Path = store
+	s := &Server{Cfg: &cfg, DB: d, Templates: MustParseTemplates(tplFS)}
+	rtr := chi.NewRouter()
+	rtr.Delete("/hx/libraries/{id}", s.handleDeleteLibrary)
+
+	req := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/hx/libraries/%d", gone.ID), nil)
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	rtr.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "Gone Film") || !strings.Contains(body, "Kept Film") {
+		t.Fatalf("strips: %s", body)
+	}
+	if !strings.Contains(body, `id="continue" hx-swap-oob="innerHTML"`) {
+		t.Fatalf("continue oob: %s", body)
+	}
+	if !strings.Contains(body, `id="recent"`) || !strings.Contains(body, `hx-swap-oob="outerHTML"`) {
+		t.Fatalf("recent oob: %s", body)
+	}
+	if strings.Contains(body, "<article") {
+		t.Fatalf("card markup should not be in the delete body: %s", body)
+	}
+}
+
+func TestBackupStatusAndDeleteRefreshArchives(t *testing.T) {
+	dir := t.TempDir()
+	keep := "servemedia-metadata-keep.tar.zst"
+	drop := "servemedia-metadata-drop.tar.zst"
+	for _, name := range []string{keep, drop} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Defaults()
+	cfg.Backup.Dir = dir
+	cfg.Store.Path = t.TempDir()
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		Cfg:       &cfg,
+		Backup:    &backup.Service{Cfg: &cfg},
+		Templates: MustParseTemplates(tplFS),
+	}
+	rtr := chi.NewRouter()
+	rtr.Get("/hx/backup/status", s.handleBackupStatus)
+	rtr.Delete("/hx/backup/{name}", s.handleBackupDelete)
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/hx/backup/status", nil)
+	statusW := httptest.NewRecorder()
+	rtr.ServeHTTP(statusW, statusReq)
+	if statusW.Code != http.StatusOK {
+		t.Fatalf("status %d %s", statusW.Code, statusW.Body.String())
+	}
+	statusBody := statusW.Body.String()
+	if !strings.Contains(statusBody, `id="backup-archives-table" hx-swap-oob="outerHTML"`) || !strings.Contains(statusBody, `id="backup-archives"`) || !strings.Contains(statusBody, keep) || !strings.Contains(statusBody, drop) {
+		t.Fatalf("status archives: %s", statusBody)
+	}
+
+	delReq := httptest.NewRequest(http.MethodDelete, "/hx/backup/"+drop, nil)
+	delW := httptest.NewRecorder()
+	rtr.ServeHTTP(delW, delReq)
+	if delW.Code != http.StatusOK {
+		t.Fatalf("delete %d %s", delW.Code, delW.Body.String())
+	}
+	delBody := delW.Body.String()
+	if strings.Contains(delBody, drop) || !strings.Contains(delBody, keep) {
+		t.Fatalf("remaining archives: %s", delBody)
+	}
+	if strings.Contains(delBody, "<tbody") {
+		t.Fatalf("delete should return rows only: %s", delBody)
 	}
 }

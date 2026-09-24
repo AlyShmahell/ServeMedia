@@ -1,4 +1,4 @@
-version: "0.0.7"
+version: "0.0.8"
 http:
   addr: ":7676"
 store:
@@ -21,6 +21,8 @@ backup:
   dir: data/backups
 scan:
   on_startup: true
+watchdog:
+  ttl_seconds: 60 # 0 = do not exit when all tabs are closed
 integrations:
   webhooks:
     enabled: false
@@ -42,4 +44,12 @@ vendor:
   hls_license_url: "https://raw.githubusercontent.com/video-dev/hls.js/v1.5.20/LICENSE"
   ffmpeg_src_url: "https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz"
   x264_src_url: "https://github.com/mirror/x264/archive/refs/heads/stable.tar.gz"
+  x265_src_url: "https://github.com/videolan/x265/archive/refs/tags/3.4.tar.gz"
+  opus_src_url: "https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"
+  dav1d_src_url: "https://github.com/videolan/dav1d/archive/refs/tags/1.5.1.tar.gz"
+  svtav1_src_url: "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v2.3.0/SVT-AV1-v2.3.0.tar.gz"
+  libvpx_src_url: "https://github.com/webmproject/libvpx/archive/refs/tags/v1.15.2.tar.gz"
+  lame_src_url: "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz"
+  libvpl_src_url: "https://github.com/intel/libvpl/archive/refs/tags/v2.15.0.tar.gz"
+  nv_codec_headers_src_url: "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n13.0.19.0.tar.gz"
   ffmpeg_license_url: "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1.1/COPYING.GPLv3"

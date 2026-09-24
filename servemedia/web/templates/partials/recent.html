@@ -1,5 +1,6 @@
 {{define "partials/recent.html"}}
 <div class="grid" id="recent"
+  {{if .OOB}}hx-swap-oob="outerHTML"{{end}}
   hx-get="/hx/home/recent"
   hx-trigger="{{.RecentTrigger}}"
   hx-swap="outerHTML">

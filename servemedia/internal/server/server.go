@@ -28,8 +28,9 @@ import (
 	"github.com/alyshmahell/servemedia/internal/scanner"
 	"github.com/alyshmahell/servemedia/internal/stream"
 	"github.com/alyshmahell/servemedia/internal/transcode"
-	"github.com/alyshmahell/servemedia/internal/webhooks"
 	"github.com/alyshmahell/servemedia/internal/version"
+	"github.com/alyshmahell/servemedia/internal/watchdog"
+	"github.com/alyshmahell/servemedia/internal/webhooks"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -43,6 +44,7 @@ type Server struct {
 	Scanner   *scanner.Scanner
 	Fetch     *fetch.Worker
 	Transcode *transcode.Manager
+	Watchdog  *watchdog.Watchdog
 	Webhooks  *webhooks.Service
 	Meta      *matchmedia.Client
 	Templates *template.Template
@@ -127,7 +129,7 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 		},
 		"queryEscape": url.QueryEscape,
 		"joinPath":    filepath.Join,
-		"join":        func(parts []string) string {
+		"join": func(parts []string) string {
 			var out []string
 			for _, p := range parts {
 				p = strings.TrimSpace(p)
@@ -182,6 +184,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/login", s.handleLoginGet)
 	r.Post("/login", s.handleLoginPost)
 	r.Post("/logout", s.handleLogout)
+	r.Post("/hx/kpa", s.handleKPA)
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireUser)
@@ -194,8 +197,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/play/movie/{id}", s.handlePlayMovie)
 		r.Get("/play/episode/{id}", s.handlePlayEpisode)
 		r.Get("/about", s.handleAbout)
-			r.Get("/settings", s.handleSettings)
-			r.Get("/settings/libraries", s.handleSettingsLibrariesRedirect)
+		r.Get("/settings", s.handleSettings)
+		r.Get("/settings/libraries", s.handleSettingsLibrariesRedirect)
 		r.Get("/hx/libraries/{id}/items", s.handleHXItems)
 		r.Get("/hx/search", s.handleHXSearch)
 		r.Get("/hx/home/continue", s.handleHXContinue)
@@ -624,7 +627,7 @@ func (s *Server) handleHXRecent(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
 	recent, _ := s.DB.RecentlyAdded(r.Context(), u.ID, 24)
 	s.render(w, r, "partials/recent.html", map[string]any{
-		"Recent": s.mediaItemCards(r.Context(), u.ID, recent),
+		"Recent":        s.mediaItemCards(r.Context(), u.ID, recent),
 		"RecentTrigger": recentHXTrigger(s.userHasRunningScan(r.Context(), u.ID), false),
 	})
 }
@@ -991,6 +994,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 		Audio          int                   `json:"audio"`
 		Height         int                   `json:"height"`
 		Start          float64               `json:"start"`
+		Pipeline       string                `json:"pipeline,omitempty"`
 		Qualities      []media.QualityOption `json:"qualities,omitempty"`
 		AudioTracks    []media.Track         `json:"audioTracks,omitempty"`
 		SubtitleTracks []media.Track         `json:"subtitleTracks,omitempty"`
@@ -1039,7 +1043,12 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	if probe != nil {
 		pixFmt = probe.VideoPixFmt()
 	}
-	job, err := s.Transcode.Start(r.Context(), transcodeKey(r, u), path, audioIndex, encodeHeight, startAt, pixFmt)
+	owner := strings.TrimSpace(r.FormValue("tab"))
+	if owner == "" {
+		owner = transcodeKey(r, u)
+	}
+	force8Bit := strings.TrimSpace(r.FormValue("bitdepth")) == "8"
+	job, err := s.Transcode.Start(r.Context(), owner, path, audioIndex, encodeHeight, startAt, pixFmt, force8Bit)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -1047,6 +1056,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	resp.Mode = "hls"
 	resp.URL = fmt.Sprintf("/hls/%s/master.m3u8", job.ID)
 	resp.Start = float64(job.StartAt)
+	resp.Pipeline = job.Pipeline
 	_ = json.NewEncoder(w).Encode(resp)
 	if s.Webhooks != nil && u != nil {
 		s.dispatchPlaybackWebhooks(r.Context(), u, kind, id, title, 0, 0, false, webhooks.NotificationPlaybackStart)
@@ -1184,6 +1194,49 @@ func (s *Server) handleMetadata(w http.ResponseWriter, r *http.Request) {
 	rel := strings.TrimPrefix(r.URL.Path, "/metadata/")
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 	http.ServeFile(w, r, filepath.Join(s.Cfg.Store.Path, "metadata", rel))
+}
+
+func (s *Server) handleKPA(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	tab := strings.TrimSpace(r.FormValue("tab"))
+	if !validTabID(tab) {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	path := r.FormValue("path")
+	if len(path) > 512 {
+		path = path[:512]
+	}
+	title := r.FormValue("title")
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	if s.Watchdog != nil {
+		s.Watchdog.Pulse(u.ID, tab, path, title)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func validTabID(id string) bool {
+	if id == "" || len(id) > 80 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
@@ -1331,9 +1384,9 @@ func (s *Server) handleSettingsLibrariesRedirect(w http.ResponseWriter, r *http.
 
 func (s *Server) handleSettingsServer(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "settings_server.html", map[string]any{
-		"Config":            s.Cfg,
-		"TranscodeHW":       s.Transcode.HWAccelStatus(),
-		"ActiveTranscode":   s.Transcode.ActiveTranscodeStatus(),
+		"Config":          s.Cfg,
+		"TranscodeHW":     s.Transcode.HWAccelStatus(),
+		"ActiveTranscode": s.Transcode.ActiveTranscodeStatus(),
 	})
 }
 
@@ -1574,8 +1627,15 @@ func (s *Server) handleDeleteLibrary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// 200 + empty body so HTMX swaps the card away (204 does not swap).
-	w.WriteHeader(200)
+	// OOB strips only. The leftover empty body removes the card (outerHTML). 204 would not swap.
+	cont, _ := s.DB.ContinueWatching(r.Context(), u.ID, 12)
+	recent, _ := s.DB.RecentlyAdded(r.Context(), u.ID, 24)
+	s.render(w, r, "partials/library_deleted.html", map[string]any{
+		"Continue":      cont,
+		"Recent":        s.mediaItemCards(r.Context(), u.ID, recent),
+		"RecentTrigger": recentHXTrigger(s.userHasRunningScan(r.Context(), u.ID), false),
+		"OOB":           true,
+	})
 }
 
 func (s *Server) startLibraryScan(lib *db.Library, mode string, persist, overwrite bool) (int64, error) {
@@ -1814,8 +1874,11 @@ func (s *Server) handleBackupNow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
-	st := s.Backup.Status()
-	s.render(w, r, "partials/backup_status.html", map[string]any{"Status": st})
+	names, _ := s.Backup.List()
+	s.render(w, r, "partials/backup_status_live.html", map[string]any{
+		"Status":   s.Backup.Status(),
+		"Archives": names,
+	})
 }
 
 func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
@@ -1834,7 +1897,8 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	w.WriteHeader(204)
+	names, _ := s.Backup.List()
+	s.render(w, r, "partials/backup_archives.html", map[string]any{"Archives": names})
 }
 
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {

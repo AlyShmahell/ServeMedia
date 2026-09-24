@@ -86,6 +86,9 @@ type Config struct {
 	Scan struct {
 		OnStartup bool `yaml:"on_startup"`
 	} `yaml:"scan"`
+	Watchdog struct {
+		TTLSeconds int `yaml:"ttl_seconds"`
+	} `yaml:"watchdog"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
 	MatchMedia   MatchMediaConfig   `yaml:"matchmedia"`
 	Vendor       VendorConfig       `yaml:"vendor"`
@@ -114,10 +117,15 @@ func inFlatpak() bool {
 	return strings.TrimSpace(os.Getenv("FLATPAK_ID")) != ""
 }
 
+func inAppImage() bool {
+	return strings.TrimSpace(os.Getenv("APPIMAGE")) != ""
+}
+
 // DataRoot is the prefix for relative data/* paths (store, transcode, backups, overlay).
-// Host installs keep {exeDir}; Flatpak uses $XDG_DATA_HOME/servemedia because /app is read-only.
+// Host installs keep {exeDir}. Flatpak and AppImage payloads are read-only, so those
+// use a writable directory under $XDG_DATA_HOME/servemedia.
 func DataRoot(exeDir string) string {
-	if !inFlatpak() {
+	if !inFlatpak() && !inAppImage() {
 		return exeDir
 	}
 	if d := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); d != "" {
@@ -127,7 +135,10 @@ func DataRoot(exeDir string) string {
 	if home == "" {
 		home = "/var/data"
 	}
-	return filepath.Join(home, ".var", "app", strings.TrimSpace(os.Getenv("FLATPAK_ID")), "data", "servemedia")
+	if inFlatpak() {
+		return filepath.Join(home, ".var", "app", strings.TrimSpace(os.Getenv("FLATPAK_ID")), "data", "servemedia")
+	}
+	return filepath.Join(home, ".local", "share", "servemedia")
 }
 
 func overlayPath(exeDir string) string {
@@ -163,6 +174,7 @@ func Defaults() Config {
 	c.Backup.Retain = 7
 	c.Backup.Dir = "data/backups"
 	c.Scan.OnStartup = true
+	c.Watchdog.TTLSeconds = 60
 	c.MatchMedia.Addr = "127.0.0.1:7680"
 	return c
 }

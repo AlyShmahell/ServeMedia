@@ -1,0 +1,14 @@
+{{define "partials/backup_archives.html"}}
+{{range .Archives}}
+<tr>
+  <td><code>{{.}}</code></td>
+  <td class="row">
+    <form method="post" action="/hx/backup/restore" onsubmit="return confirm('Restore this backup? Server will reload store.')">
+      <input type="hidden" name="name" value="{{.}}">
+      <button type="submit">Restore</button>
+    </form>
+    <button class="secondary" hx-delete="/hx/backup/{{.}}" hx-confirm="Delete archive?" hx-target="#backup-archives" hx-swap="innerHTML">Delete</button>
+  </td>
+</tr>
+{{else}}<tr><td colspan="2" class="muted">No backups yet</td></tr>{{end}}
+{{end}}

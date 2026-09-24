@@ -181,50 +181,172 @@ vendor() {
   printf '%s\n' "$hls_lic" >"$DIST/vendor/hls.min.js.NOTICE"
 }
 
+fetch_src() {
+  local dest="$1" url="$2"
+  mkdir -p "$dest"
+  retry -o "$dest.src" "$url"
+  tar -xf "$dest.src" -C "$dest" --strip-components=1
+  rm -f "$dest.src"
+}
+
+assert_host_linked_ffmpeg() {
+  local bin="$1" bad
+  if ! ldd "$bin" >"$bin.ldd" 2>&1; then
+    echo "error: ldd failed for $bin" >&2
+    cat "$bin.ldd" >&2
+    return 1
+  fi
+  cat "$bin.ldd"
+  bad="$(awk '/=>/ {print $1}' "$bin.ldd" | grep -E 'libav|libx264|libx265|libopus|libdav1d|libvpx|libmp3lame|libSvtAv1|libvpl' || true)"
+  rm -f "$bin.ldd"
+  if [[ -n "$bad" ]]; then
+    echo "error: codec libraries must be static, found:" >&2
+    printf '%s\n' "$bad" >&2
+    return 1
+  fi
+}
+
 compile_ffmpeg() {
-  local prefix x264_prefix ffmpeg_src x264_src tmp ffmpeg_lic
-  prefix="${PREFIX:-/opt/ffmpeg}"
-  x264_prefix="${X264_PREFIX:-/opt/x264}"
-  ffmpeg_src="$(yaml_url ffmpeg_src_url)"
-  x264_src="$(yaml_url x264_src_url)"
+  local prefix ffmpeg_lic
+  prefix="${PREFIX:-/opt/ffbuild}"
+  export PREFIX="$prefix"
+  export PKG_CONFIG_PATH="$prefix/lib/pkgconfig:$prefix/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  export CMAKE_POLICY_VERSION_MINIMUM=3.5
+  mkdir -p "$prefix"
+  local tmp
   tmp="$(mktemp -d)"
-  retry -o "$tmp/x264.src" "$x264_src"
-  mkdir -p "$tmp/x264-src"
-  tar -xf "$tmp/x264.src" -C "$tmp/x264-src" --strip-components=1
+  cd "$tmp"
+
+  fetch_src nv-codec-headers "$(yaml_url nv_codec_headers_src_url)"
+  make -C nv-codec-headers PREFIX="$prefix" install
+
+  fetch_src x264 "$(yaml_url x264_src_url)"
   (
-    cd "$tmp/x264-src"
-    bash ./configure --prefix="$x264_prefix" --enable-static --disable-shared --disable-cli
+    cd x264
+    bash ./configure --prefix="$prefix" --enable-static --enable-pic --disable-cli --disable-opencl --disable-shared
     make -j"$(nproc)"
     make install
   )
-  retry -o "$tmp/ffmpeg.src" "$ffmpeg_src"
-  mkdir -p "$tmp/ffmpeg-src"
-  tar -xf "$tmp/ffmpeg.src" -C "$tmp/ffmpeg-src" --strip-components=1
+
+  fetch_src x265 "$(yaml_url x265_src_url)"
+  cmake -S x265/source -B x265/build \
+    -DCMAKE_INSTALL_PREFIX="$prefix" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_SHARED=OFF \
+    -DENABLE_CLI=OFF \
+    -DENABLE_LIBNUMA=OFF \
+    -DENABLE_PIC=ON
+  cmake --build x265/build -j"$(nproc)"
+  cmake --install x265/build
+
+  fetch_src opus "$(yaml_url opus_src_url)"
   (
-    cd "$tmp/ffmpeg-src"
-    export PKG_CONFIG_PATH="$x264_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    cd opus
+    ./configure --prefix="$prefix" --disable-shared --enable-static --disable-doc --disable-extra-programs
+    make -j"$(nproc)"
+    make install
+  )
+
+  fetch_src dav1d "$(yaml_url dav1d_src_url)"
+  meson setup dav1d/build dav1d \
+    --prefix="$prefix" --buildtype=release --default-library=static \
+    -Denable_tools=false -Denable_tests=false
+  ninja -C dav1d/build install
+
+  fetch_src svtav1 "$(yaml_url svtav1_src_url)"
+  cmake -S svtav1 -B svtav1/build \
+    -DCMAKE_INSTALL_PREFIX="$prefix" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DBUILD_APPS=OFF \
+    -DBUILD_TESTING=OFF
+  cmake --build svtav1/build -j"$(nproc)"
+  cmake --install svtav1/build
+
+  fetch_src libvpx "$(yaml_url libvpx_src_url)"
+  (
+    cd libvpx
+    ./configure --prefix="$prefix" --disable-shared --enable-static --enable-pic \
+      --disable-examples --disable-tools --disable-docs --disable-unit-tests \
+      --enable-vp9-highbitdepth
+    make -j"$(nproc)"
+    make install
+  )
+
+  fetch_src lame "$(yaml_url lame_src_url)"
+  (
+    cd lame
+    ./configure --prefix="$prefix" --disable-shared --enable-static --disable-frontend --disable-gtktest
+    make -j"$(nproc)"
+    make install
+  )
+
+  fetch_src libvpl "$(yaml_url libvpl_src_url)"
+  cmake -S libvpl -B libvpl/build \
+    -DCMAKE_INSTALL_PREFIX="$prefix" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DBUILD_TESTS=OFF \
+    -DBUILD_TOOLS=OFF \
+    -DBUILD_EXAMPLES=OFF
+  cmake --build libvpl/build -j"$(nproc)"
+  cmake --install libvpl/build
+
+  fetch_src ffmpeg "$(yaml_url ffmpeg_src_url)"
+  (
+    cd ffmpeg
+    if [[ -f "$prefix/lib/pkgconfig/vpl.pc" ]]; then
+      sed -i 's/^Libs:.*/Libs: -L${libdir} -lvpl -ldl -lstdc++/' "$prefix/lib/pkgconfig/vpl.pc"
+    fi
     ./configure \
       --prefix="$prefix" \
-      --enable-gpl \
-      --enable-version3 \
-      --enable-libx264 \
-      --enable-vaapi \
-      --enable-libdrm \
-      --enable-static \
-      --disable-shared \
+      --extra-version=hwstatic \
       --disable-debug \
       --disable-doc \
       --disable-ffplay \
-      --extra-cflags="-I$x264_prefix/include" \
-      --extra-ldflags="-L$x264_prefix/lib"
+      --disable-shared \
+      --enable-static \
+      --disable-xlib \
+      --disable-libxcb \
+      --disable-libxcb-shm \
+      --disable-libxcb-xfixes \
+      --disable-libxcb-shape \
+      --disable-sdl2 \
+      --disable-autodetect \
+      --enable-gpl \
+      --enable-version3 \
+      --enable-pic \
+      --enable-libx264 \
+      --enable-libx265 \
+      --enable-libopus \
+      --enable-libdav1d \
+      --enable-libsvtav1 \
+      --enable-libvpx \
+      --enable-libmp3lame \
+      --enable-vaapi \
+      --enable-libdrm \
+      --enable-libvpl \
+      --enable-ffnvcodec \
+      --enable-nvenc \
+      --enable-nvdec \
+      --enable-cuvid \
+      --extra-cflags="-I$prefix/include" \
+      --extra-ldflags="-L$prefix/lib -L$prefix/lib64 -static-libgcc -static-libstdc++" \
+      --extra-libs="-lpthread -lm -ldl -lstdc++"
     make -j"$(nproc)"
     make install
   )
-  rm -rf "$tmp"
-  cp /opt/ffmpeg/bin/ffmpeg /opt/ffmpeg/bin/ffprobe "$CACHE/"
+  mkdir -p "$CACHE"
+  cp "$prefix/bin/ffmpeg" "$prefix/bin/ffprobe" "$CACHE/"
+  chmod a+x "$CACHE/ffmpeg" "$CACHE/ffprobe"
+  strip "$CACHE/ffmpeg" "$CACHE/ffprobe"
+  assert_host_linked_ffmpeg "$CACHE/ffmpeg"
+  assert_host_linked_ffmpeg "$CACHE/ffprobe"
   ffmpeg_lic="$(yaml_url ffmpeg_license_url)"
   retry -o "$CACHE/LICENSE" "$ffmpeg_lic"
   printf '%s\n' "$ffmpeg_lic" >"$CACHE/LICENSE.NOTICE"
+  cd /
+  rm -rf "$tmp"
 }
 
 stage() {
@@ -250,11 +372,70 @@ stage() {
   find "$OUT/vendor/ffmpeg" -type f \( -name ffmpeg -o -name ffprobe \) -exec chmod a+x {} +
 }
 
+appimage() {
+  local tarball="${1:-}"
+  if [[ -z "$tarball" || ! -f "$tarball" ]]; then
+    echo "error: appimage requires the package tarball" >&2
+    exit 1
+  fi
+  local work root qs appdir name
+  work="$(mktemp -d)"
+  tar -C "$work" -xzf "$tarball"
+  root="$work/servemedia"
+  for b in \
+    "$root/servemedia" \
+    "$root/vendor/ffmpeg/ffmpeg" \
+    "$root/vendor/ffmpeg/ffprobe" \
+    "$root/tools/matchmedia/matchmedia"
+  do
+    if [[ ! -f "$b" ]]; then
+      echo "error: missing $b in $tarball" >&2
+      exit 1
+    fi
+  done
+  name="$(basename "$tarball" .tar.gz).AppImage"
+  qs="$work/quick-sharun"
+  retry -o "$qs" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh"
+  chmod +x "$qs"
+  appdir="$work/AppDir"
+  export STRACE_MODE=0 ANYLINUX_LIB=1
+  export ARCH="$(uname -m)"
+  export APPDIR="$appdir"
+  export OUTPATH="$(dirname "$tarball")"
+  export OUTNAME="$name"
+  export DESKTOP="$root/share/applications/servemedia.desktop"
+  export ICON="$root/public/logo.svg"
+  "$qs" \
+    "$root/servemedia" \
+    "$root/tools/matchmedia/matchmedia"
+  mkdir -p "$appdir/servemedia"
+  cp -a "$root"/. "$appdir/servemedia/"
+  find "$appdir" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
+  cat >"$appdir/bin/00-servemedia-root.hook" <<'EOF'
+export SERVEMEDIA_ROOT="${APPDIR}/servemedia"
+EOF
+  chmod +x "$appdir/bin/00-servemedia-root.hook"
+  "$qs" --make-appimage
+  if [[ ! -f "$OUTPATH/$name" ]]; then
+    local produced
+    produced="$(find "$OUTPATH" -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+    if [[ -z "$produced" ]]; then
+      echo "error: quick-sharun produced no AppImage" >&2
+      exit 1
+    fi
+    mv "$produced" "$OUTPATH/$name"
+  fi
+  chmod a+rwx "$OUTPATH/$name"
+  echo "wrote $OUTPATH/$name"
+  rm -rf "$work"
+}
+
 case "${1:-}" in
   vendor) vendor ;;
   stage) stage ;;
+  appimage) appimage "${2:-}" ;;
   *)
-    echo "usage: $0 vendor|stage" >&2
+    echo "usage: $0 vendor|stage|appimage" >&2
     exit 1
     ;;
 esac

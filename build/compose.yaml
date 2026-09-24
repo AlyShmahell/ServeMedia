@@ -6,3 +6,4 @@ services:
     volumes:
       - ./dist:/out:z
       - ./cache:/cache:z
+      - ./package:/package:z

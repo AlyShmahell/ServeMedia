@@ -23,11 +23,20 @@ type Proc struct {
 }
 
 func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
-	bin := filepath.Join(exeDir, "tools", "matchmedia", "matchmedia")
+	srcHome := filepath.Join(exeDir, "tools", "matchmedia")
+	bin := filepath.Join(srcHome, "matchmedia")
 	if _, err := os.Stat(bin); err != nil {
 		return nil, fmt.Errorf("matchmedia binary: %w", err)
 	}
-	matchmediaHome := filepath.Join(exeDir, "tools", "matchmedia")
+	matchmediaHome := srcHome
+	if strings.TrimSpace(os.Getenv("APPIMAGE")) != "" {
+		home, err := prepareAppImageHome(srcHome, dataDir)
+		if err != nil {
+			return nil, err
+		}
+		matchmediaHome = home
+		bin = filepath.Join(matchmediaHome, "matchmedia")
+	}
 	_ = os.RemoveAll(filepath.Join(matchmediaHome, "vendor"))
 	if err := writeOverlay(matchmediaHome, dataDir, addr, browseRoot); err != nil {
 		return nil, err
@@ -121,15 +130,76 @@ func within(root, path string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
-func overlayDest(matchmediaHome string) string {
+func overlayDest(matchmediaHome, _ string) string {
 	if strings.TrimSpace(os.Getenv("FLATPAK_ID")) != "" {
 		return flatpakRunOverlay
 	}
 	return filepath.Join(matchmediaHome, "data", "config.yaml")
 }
 
+func prepareAppImageHome(srcHome, dataDir string) (string, error) {
+	dest := filepath.Join(filepath.Dir(filepath.Dir(dataDir)), "matchmedia-home")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return "", err
+	}
+	for _, name := range []string{"matchmedia", "config", "public"} {
+		src := filepath.Join(srcHome, name)
+		if _, err := os.Stat(src); err != nil {
+			if name == "matchmedia" {
+				return "", fmt.Errorf("matchmedia binary: %w", err)
+			}
+			continue
+		}
+		if err := copyTree(src, filepath.Join(dest, name)); err != nil {
+			return "", fmt.Errorf("matchmedia home %s: %w", name, err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(dest, "matchmedia"), 0o755); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+func copyTree(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, data, info.Mode().Perm())
+	}
+	return filepath.Walk(src, func(path string, fi os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if fi.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, fi.Mode().Perm())
+	})
+}
+
 func writeOverlay(matchmediaHome, dataDir, addr, browseRoot string) error {
-	path := overlayDest(matchmediaHome)
+	path := overlayDest(matchmediaHome, dataDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

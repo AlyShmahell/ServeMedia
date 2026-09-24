@@ -18,7 +18,7 @@ func ThirdParty(cfg config.Config) error {
 	if strings.TrimSpace(cfg.Vendor.HTMXURL) == "" {
 		return fmt.Errorf("vendor URLs missing from config")
 	}
-	flatpak := strings.TrimSpace(os.Getenv("FLATPAK_ID")) != ""
+	flatpak := strings.TrimSpace(os.Getenv("FLATPAK_ID")) != "" || strings.TrimSpace(os.Getenv("APPIMAGE")) != ""
 	vdir := cfg.VendorDir()
 	if err := os.MkdirAll(filepath.Join(vdir, "video.js"), 0o755); err != nil {
 		return err

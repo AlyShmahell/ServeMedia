@@ -14,7 +14,9 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates curl xz-utils bash \
     gcc g++ make nasm pkg-config \
+    cmake meson ninja-build python3 yasm \
     libva-dev libdrm-dev \
+    patchelf binutils \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /dist
 COPY --from=go /out/servemedia /dist/servemedia

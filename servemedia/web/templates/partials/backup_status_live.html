@@ -1,0 +1,9 @@
+{{define "partials/backup_status_live.html"}}
+{{template "partials/backup_status.html" .}}
+<table class="table" id="backup-archives-table" hx-swap-oob="outerHTML">
+  <thead><tr><th>File</th><th></th></tr></thead>
+  <tbody id="backup-archives">
+  {{template "partials/backup_archives.html" .}}
+  </tbody>
+</table>
+{{end}}

@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/alyshmahell/servemedia/internal/server"
 	"github.com/alyshmahell/servemedia/internal/transcode"
 	"github.com/alyshmahell/servemedia/internal/version"
+	"github.com/alyshmahell/servemedia/internal/watchdog"
 	"github.com/alyshmahell/servemedia/web"
 )
 
@@ -122,6 +124,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var shutdownOnce sync.Once
+	shutdownCh := make(chan struct{})
+	requestShutdown := func() {
+		shutdownOnce.Do(func() { close(shutdownCh) })
+	}
+	wd := watchdog.New(time.Duration(cfg.Watchdog.TTLSeconds)*time.Second, tr, requestShutdown)
+	srv.Watchdog = wd
+	go wd.Run()
 	srv.MigrateLegacyWebhooks(context.Background())
 	sc.Webhooks = srv
 	bak.StartScheduler(context.Background())
@@ -164,7 +174,11 @@ func main() {
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	select {
+	case <-sig:
+	case <-shutdownCh:
+		log.Printf("watchdog: all tabs closed, shutting down")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)

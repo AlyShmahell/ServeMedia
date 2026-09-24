@@ -605,6 +605,8 @@ button.secondary, .btn.secondary { background: var(--panel); color: var(--text);
 .strip .card { min-width: 120px; max-width: 120px; }
 .player-stage {
   position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   background: #000;
   border-radius: 8px;
@@ -612,8 +614,14 @@ button.secondary, .btn.secondary { background: var(--panel); color: var(--text);
 }
 .player-stage .video-js.servemedia-player {
   width: 100%;
-  max-height: 80vh;
+  height: 100%;
   background: #000;
+}
+.player-stage .video-js .vjs-tech {
+  object-fit: contain;
+}
+.content > #status {
+  flex: 0 0 auto;
 }
 .player-stage .video-js .vjs-control-bar {
   background: linear-gradient(to top, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.2));

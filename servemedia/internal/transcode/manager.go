@@ -25,6 +25,7 @@ const (
 	PipelineVAAPIHybrid
 	PipelineVAAPIFull
 	PipelineVAAPIFull10Bit
+	PipelineVAAPIFullAV110
 )
 
 func (p Pipeline) String() string {
@@ -33,6 +34,8 @@ func (p Pipeline) String() string {
 		return "vaapi_full"
 	case PipelineVAAPIFull10Bit:
 		return "vaapi_full_10bit"
+	case PipelineVAAPIFullAV110:
+		return "vaapi_full_av1_10"
 	case PipelineVAAPIHybrid:
 		return "vaapi_hybrid"
 	default:
@@ -48,11 +51,13 @@ type Manager struct {
 	useVAAPI    bool
 	vaapiDev    string
 	vaapiCodec  string // "h264" or "av1"
+	vaapiAV110  bool
 }
 
 type Job struct {
 	ID         string
 	OwnerKey   string
+	Tabs       map[string]struct{}
 	Source     string
 	AudioIndex int
 	Height     int
@@ -133,6 +138,12 @@ func (m *Manager) probeVAAPI() {
 		m.vaapiCodec = codec
 		if codec == "av1" {
 			log.Printf("transcode hwaccel=vaapi device=%s codec=av1 (h264 encode unavailable)", dev)
+			if err := vaapiSmokeTestAV110(dev); err == nil {
+				m.vaapiAV110 = true
+				log.Printf("transcode hwaccel: %s av1 10-bit encode OK", dev)
+			} else {
+				log.Printf("transcode hwaccel: %s av1 10-bit encode unavailable (%v)", dev, err)
+			}
 		} else {
 			log.Printf("transcode hwaccel=vaapi device=%s", dev)
 			if partial {
@@ -167,7 +178,11 @@ func (m *Manager) probeVAAPI() {
 func (m *Manager) HWAccelStatus() string {
 	if m.useVAAPI && m.vaapiDev != "" {
 		if m.vaapiCodec == "av1" {
-			return "vaapi " + m.vaapiDev + " av1"
+			s := "vaapi " + m.vaapiDev + " av1"
+			if m.vaapiAV110 {
+				s += " av1_10"
+			}
+			return s
 		}
 		return "vaapi " + m.vaapiDev
 	}
@@ -193,18 +208,34 @@ func (m *Manager) ActiveTranscodeStatus() string {
 	return best.Pipeline
 }
 
+func joinExistingLibVADriverDirs(dirs ...string) string {
+	var found []string
+	for _, dir := range dirs {
+		st, err := os.Stat(dir)
+		if err == nil && st.IsDir() {
+			found = append(found, dir)
+		}
+	}
+	return strings.Join(found, ":")
+}
+
 func ensureLibVADriversPath() {
 	if os.Getenv("LIBVA_DRIVERS_PATH") != "" {
 		return
 	}
-	for _, dir := range []string{"/usr/lib64/dri", "/usr/lib/dri"} {
-		st, err := os.Stat(dir)
-		if err == nil && st.IsDir() {
-			_ = os.Setenv("LIBVA_DRIVERS_PATH", dir)
-			log.Printf("transcode hwaccel: LIBVA_DRIVERS_PATH=%s", dir)
-			return
-		}
+	path := joinExistingLibVADriverDirs(
+		"/usr/lib64/dri-nonfree",
+		"/usr/lib64/dri-freeworld",
+		"/usr/lib64/dri",
+		"/usr/lib/dri-nonfree",
+		"/usr/lib/dri-freeworld",
+		"/usr/lib/dri",
+	)
+	if path == "" {
+		return
 	}
+	_ = os.Setenv("LIBVA_DRIVERS_PATH", path)
+	log.Printf("transcode hwaccel: LIBVA_DRIVERS_PATH=%s", path)
 }
 
 func listRenderNodes() []string {
@@ -221,16 +252,20 @@ func is10BitPixFmt(pixFmt string) bool {
 	return strings.Contains(pixFmt, "10") || strings.Contains(pixFmt, "p010")
 }
 
-func selectInitialPipeline(useVAAPI bool, pixFmt string) Pipeline {
+func selectInitialPipeline(useVAAPI bool, pixFmt, codec string, allowAV110 bool) Pipeline {
 	if !useVAAPI {
 		return PipelineSoftware
 	}
-	// 8-bit and 10-bit both try full GPU decode first; 10-bit falls back to hwdownload chain.
+	if allowAV110 && codec == "av1" && is10BitPixFmt(pixFmt) {
+		return PipelineVAAPIFullAV110
+	}
 	return PipelineVAAPIFull
 }
 
 func fallbackPipeline(p Pipeline, pixFmt string) Pipeline {
 	switch p {
+	case PipelineVAAPIFullAV110:
+		return PipelineVAAPIFull
 	case PipelineVAAPIFull:
 		if is10BitPixFmt(pixFmt) {
 			return PipelineVAAPIFull10Bit
@@ -289,7 +324,7 @@ func vaapiRealFileSmoke(dev, source string) error {
 	if p, err := media.Ffprobe(source); err == nil {
 		pixFmt = p.VideoPixFmt()
 	}
-	pipeline := selectInitialPipeline(true, pixFmt)
+	pipeline := selectInitialPipeline(true, pixFmt, "h264", false)
 	if pipeline == PipelineSoftware {
 		pipeline = PipelineVAAPIHybrid
 	}
@@ -379,6 +414,21 @@ func vaapiSmokeTestAV1(dev string) error {
 	return runFFmpegSmoke(smoke)
 }
 
+func vaapiSmokeTestAV110(dev string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	smoke := exec.CommandContext(ctx, ffbin.FFmpeg(),
+		"-hide_banner", "-loglevel", "error",
+		"-init_hw_device", "vaapi=va:"+dev,
+		"-filter_hw_device", "va",
+		"-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2",
+		"-vf", "format=p010le,hwupload",
+		"-c:v", "av1_vaapi",
+		"-f", "null", "-",
+	)
+	return runFFmpegSmoke(smoke)
+}
+
 func runFFmpegSmoke(cmd *exec.Cmd) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -395,9 +445,11 @@ func runFFmpegSmoke(cmd *exec.Cmd) error {
 	return err
 }
 
-// Start begins an HLS transcode. ownerKey identifies the client (e.g. user+IP);
-// a new start cancels any prior job for the same key. pixFmt may be empty to probe source.
-func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex, height int, startAt float64, pixFmt string) (*Job, error) {
+// Start begins an HLS transcode. ownerKey is the viewer tab id (or a fallback client key).
+// A new start for the same key drops that viewer from its previous job. A matching running
+// job is reused and this viewer is attached. pixFmt may be empty to probe source.
+// force8Bit skips 10-bit AV1 encode so a browser reject can re-enter the 8-bit cascade.
+func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex, height int, startAt float64, pixFmt string, force8Bit bool) (*Job, error) {
 	startSec := 0
 	if startAt > 0 {
 		startSec = int(startAt)
@@ -406,20 +458,32 @@ func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex
 	m.mu.Lock()
 	if ownerKey != "" {
 		if id, ok := m.activeByKey[ownerKey]; ok {
-			m.removeJobLocked(id)
+			if j := m.jobs[id]; j != nil && jobMatches(j, source, audioIndex, height, startSec) && !skipAV110Reuse(j, force8Bit) {
+				j.LastAccess = time.Now()
+				m.attachTabLocked(j, ownerKey)
+				m.mu.Unlock()
+				if err := m.WaitPlaylist(ctx, j, 30*time.Second); err != nil {
+					return nil, err
+				}
+				return j, nil
+			}
+			m.detachTabLocked(ownerKey)
 		}
 	}
-	m.mu.Unlock()
-
-	if j := m.getActive(source, audioIndex, height, startSec); j != nil {
+	if j := m.findActiveLocked(source, audioIndex, height, startSec); j != nil && !skipAV110Reuse(j, force8Bit) {
+		j.LastAccess = time.Now()
+		m.attachTabLocked(j, ownerKey)
+		m.mu.Unlock()
 		if err := m.WaitPlaylist(ctx, j, 30*time.Second); err != nil {
 			return nil, err
 		}
 		return j, nil
 	}
+	m.mu.Unlock()
 
 	pixFmt = videoPixFmt(source, pixFmt)
-	pipeline := selectInitialPipeline(m.useVAAPI, pixFmt)
+	allowAV110 := m.vaapiAV110 && !force8Bit
+	pipeline := selectInitialPipeline(m.useVAAPI, pixFmt, m.vaapiCodec, allowAV110)
 
 	for {
 		j, err := m.startJob(source, audioIndex, height, startSec, ownerKey, pipeline)
@@ -442,39 +506,95 @@ func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex
 	}
 }
 
-// Cancel stops the active transcode for ownerKey, if any.
+// Cancel drops ownerKey from its job and stops the transcode when no viewers remain.
 func (m *Manager) Cancel(ownerKey string) {
-	if ownerKey == "" {
+	m.ReleaseTab(ownerKey)
+}
+
+// ReleaseTab drops tabID from its job and stops the transcode when no viewers remain.
+func (m *Manager) ReleaseTab(tabID string) {
+	if tabID == "" {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if id, ok := m.activeByKey[ownerKey]; ok {
+	m.detachTabLocked(tabID)
+}
+
+// StopAll cancels every running transcode.
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ids := make([]string, 0, len(m.jobs))
+	for id := range m.jobs {
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
 		m.removeJobLocked(id)
 	}
 }
 
-func (m *Manager) getActive(source string, audioIndex, height, startSec int) *Job {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func jobMatches(j *Job, source string, audioIndex, height, startSec int) bool {
+	return j.Source == source && j.AudioIndex == audioIndex && j.Height == height && j.StartAt == startSec && (j.Status == "running" || j.Status == "ready")
+}
+
+func skipAV110Reuse(j *Job, force8Bit bool) bool {
+	return force8Bit && j != nil && j.Pipeline == PipelineVAAPIFullAV110.String()
+}
+
+func (m *Manager) findActiveLocked(source string, audioIndex, height, startSec int) *Job {
 	for _, j := range m.jobs {
-		if j.Source == source && j.AudioIndex == audioIndex && j.Height == height && j.StartAt == startSec && (j.Status == "running" || j.Status == "ready") {
-			j.LastAccess = time.Now()
+		if jobMatches(j, source, audioIndex, height, startSec) {
 			return j
 		}
 	}
 	return nil
 }
 
+func (m *Manager) attachTabLocked(j *Job, tabID string) {
+	if j == nil || tabID == "" {
+		return
+	}
+	if j.Tabs == nil {
+		j.Tabs = map[string]struct{}{}
+	}
+	j.Tabs[tabID] = struct{}{}
+	j.OwnerKey = tabID
+	m.activeByKey[tabID] = j.ID
+}
+
+func (m *Manager) detachTabLocked(tabID string) {
+	id, ok := m.activeByKey[tabID]
+	if !ok {
+		return
+	}
+	delete(m.activeByKey, tabID)
+	j := m.jobs[id]
+	if j == nil {
+		return
+	}
+	delete(j.Tabs, tabID)
+	if j.OwnerKey == tabID {
+		j.OwnerKey = ""
+		for other := range j.Tabs {
+			j.OwnerKey = other
+			break
+		}
+	}
+	if len(j.Tabs) == 0 {
+		m.removeJobLocked(id)
+	}
+}
+
 func (m *Manager) startJob(source string, audioIndex, height, startSec int, ownerKey string, pipeline Pipeline) (*Job, error) {
 	m.mu.Lock()
 	for _, j := range m.jobs {
 		if j.Source == source && j.AudioIndex == audioIndex && j.Height == height && j.StartAt == startSec && (j.Status == "running" || j.Status == "ready") {
-			j.LastAccess = time.Now()
-			if ownerKey != "" {
-				m.activeByKey[ownerKey] = j.ID
-				j.OwnerKey = ownerKey
+			if pipeline != PipelineVAAPIFullAV110 && j.Pipeline == PipelineVAAPIFullAV110.String() {
+				continue
 			}
+			j.LastAccess = time.Now()
+			m.attachTabLocked(j, ownerKey)
 			m.mu.Unlock()
 			return j, nil
 		}
@@ -488,13 +608,12 @@ func (m *Manager) startJob(source string, audioIndex, height, startSec int, owne
 	}
 	jobCtx, cancel := context.WithCancel(context.Background())
 	j := &Job{
-		ID: id, OwnerKey: ownerKey, Source: source, AudioIndex: audioIndex, Height: height, StartAt: startSec, OutputDir: out,
+		ID: id, Source: source, AudioIndex: audioIndex, Height: height, StartAt: startSec, OutputDir: out,
 		Status: "running", Pipeline: pipeline.String(), LastAccess: time.Now(), cancel: cancel,
+		Tabs: map[string]struct{}{},
 	}
 	m.jobs[id] = j
-	if ownerKey != "" {
-		m.activeByKey[ownerKey] = id
-	}
+	m.attachTabLocked(j, ownerKey)
 	args := m.ffmpegArgs(source, out, pipeline, audioIndex, height, startSec)
 	log.Printf("transcode pipeline=%s job=%s", pipeline, id)
 	log.Printf("ffmpeg %s: %s", id, strings.Join(args, " "))
@@ -533,8 +652,10 @@ func (m *Manager) removeJobLocked(id string) {
 		_ = j.cmd.Process.Kill()
 	}
 	outDir := j.OutputDir
-	if j.OwnerKey != "" && m.activeByKey[j.OwnerKey] == id {
-		delete(m.activeByKey, j.OwnerKey)
+	for tab, jid := range m.activeByKey {
+		if jid == id {
+			delete(m.activeByKey, tab)
+		}
 	}
 	delete(m.jobs, id)
 	go func() { _ = os.RemoveAll(outDir) }()
@@ -582,7 +703,7 @@ func ffmpegArgsForPipeline(vaapiDev, vaapiCodec, source string, pipeline Pipelin
 	}
 
 	switch pipeline {
-	case PipelineVAAPIFull, PipelineVAAPIFull10Bit, PipelineVAAPIHybrid:
+	case PipelineVAAPIFull, PipelineVAAPIFull10Bit, PipelineVAAPIFullAV110, PipelineVAAPIHybrid:
 		if vaapiDev == "" {
 			pipeline = PipelineSoftware
 			break
@@ -644,14 +765,18 @@ func ffmpegArgsForPipeline(vaapiDev, vaapiCodec, source string, pipeline Pipelin
 }
 
 func vaapiVideoFilter(pipeline Pipeline, height int) string {
-	scale := "scale_vaapi=format=nv12"
+	format := "nv12"
+	if pipeline == PipelineVAAPIFullAV110 {
+		format = "p010"
+	}
+	scale := "scale_vaapi=format=" + format
 	if height > 0 {
-		scale = fmt.Sprintf("scale_vaapi=w=-2:h=%d:format=nv12", height)
+		scale = fmt.Sprintf("scale_vaapi=w=-2:h=%d:format=%s", height, format)
 	}
 	switch pipeline {
 	case PipelineVAAPIFull10Bit:
 		return "hwdownload,format=p010le,format=nv12,hwupload," + scale
-	case PipelineVAAPIFull:
+	case PipelineVAAPIFull, PipelineVAAPIFullAV110:
 		return scale
 	default:
 		vf := "format=nv12,hwupload," + scale

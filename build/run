@@ -18,7 +18,7 @@ compose() {
 }
 
 rebuild() {
-  mkdir -p "$DIR/dist" "$DIR/cache"
+  mkdir -p "$DIR/dist" "$DIR/cache" "$DIR/package"
   : >"$DIR/dist/.gitkeep"
   : >"$DIR/cache/.gitkeep"
   compose up --build --force-recreate --abort-on-container-exit
@@ -72,8 +72,10 @@ package() {
 
   staging="$(mktemp -d)"
   stage_package "$staging"
-  write_tar "$staging" "servemedia-${version}-linux-amd64.tar.gz"
+  local name="servemedia-${version}-linux-amd64.tar.gz"
+  write_tar "$staging" "$name"
   rm -rf "$staging"
+  compose run --rm dist /build appimage "/package/$name"
 }
 
 start() {

@@ -43,10 +43,24 @@ func writeVendorJS(t *testing.T, dir string) config.Config {
 
 func TestThirdPartyRequiresFFmpeg(t *testing.T) {
 	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("APPIMAGE", "")
 	cfg := writeVendorJS(t, t.TempDir())
 	err := ThirdParty(cfg)
 	if err == nil {
 		t.Fatal("expected missing ffmpeg")
+	}
+}
+
+func TestThirdPartySkipsFFmpegWhenAppImage(t *testing.T) {
+	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("APPIMAGE", "/opt/ServeMedia.AppImage")
+	cfg := writeVendorJS(t, t.TempDir())
+	if err := ThirdParty(cfg); err != nil {
+		t.Fatal(err)
+	}
+	ffmpeg := filepath.Join(cfg.VendorDir(), "ffmpeg", "ffmpeg")
+	if _, err := os.Stat(ffmpeg); err == nil {
+		t.Fatal("appimage prepare should not require bundled ffmpeg")
 	}
 }
 

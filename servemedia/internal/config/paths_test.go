@@ -79,9 +79,26 @@ func TestLoadFlatpakUsesXDGData(t *testing.T) {
 
 func TestDataRootHostUnchanged(t *testing.T) {
 	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("APPIMAGE", "")
 	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-should-not-apply")
 	if got := DataRoot("/opt/servemedia"); got != "/opt/servemedia" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAppImageDataRoot(t *testing.T) {
+	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("APPIMAGE", "/opt/ServeMedia.AppImage")
+	xdg := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", xdg)
+	if got := DataRoot("/opt/servemedia"); got != filepath.Join(xdg, "servemedia") {
+		t.Fatalf("got %q", got)
+	}
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("HOME", "/home/user")
+	want := "/home/user/.local/share/servemedia"
+	if got := DataRoot("/opt/servemedia"); got != want {
+		t.Fatalf("got %q want %q", got, want)
 	}
 }
 

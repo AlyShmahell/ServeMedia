@@ -186,8 +186,9 @@ func TestWithinFilesystemRoot(t *testing.T) {
 
 func TestOverlayDestHost(t *testing.T) {
 	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("APPIMAGE", "")
 	home := t.TempDir()
-	got := overlayDest(home)
+	got := overlayDest(home, "/data/matchmedia")
 	want := filepath.Join(home, "data", "config.yaml")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
@@ -196,8 +197,50 @@ func TestOverlayDestHost(t *testing.T) {
 
 func TestOverlayDestFlatpak(t *testing.T) {
 	t.Setenv("FLATPAK_ID", "eu.alyshmahell.ServeMedia")
-	if got := overlayDest("/app/tools/matchmedia"); got != flatpakRunOverlay {
+	t.Setenv("APPIMAGE", "")
+	if got := overlayDest("/app/tools/matchmedia", "/data/matchmedia"); got != flatpakRunOverlay {
 		t.Fatalf("got %q want %q", got, flatpakRunOverlay)
+	}
+}
+
+func TestOverlayDestAppImage(t *testing.T) {
+	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("APPIMAGE", "/opt/ServeMedia.AppImage")
+	home := "/home/user/.local/share/servemedia/matchmedia-home"
+	data := "/home/user/.local/share/servemedia/data/matchmedia"
+	got := overlayDest(home, data)
+	want := filepath.Join(home, "data", "config.yaml")
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestPrepareAppImageHome(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "matchmedia"), []byte("bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "config", "default.yaml"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	data := filepath.Join(root, "data", "matchmedia")
+	dest, err := prepareAppImageHome(src, data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(root, "matchmedia-home")
+	if dest != want {
+		t.Fatalf("dest %q want %q", dest, want)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "matchmedia")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "config", "default.yaml")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -207,6 +250,7 @@ func TestWriteOverlayServeMediaKeysLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("FLATPAK_ID", "")
+	t.Setenv("APPIMAGE", "")
 	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", extra)
 	home := t.TempDir()
 	data := t.TempDir()
