@@ -11,6 +11,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const appName = "servemedia"
+
 type WebhookHeader struct {
 	Key   string `yaml:"key"`
 	Value string `yaml:"value"`
@@ -99,50 +101,80 @@ type Config struct {
 	OverlayPath string `yaml:"-"`
 }
 
-func ExeDir() (string, error) {
-	if root := strings.TrimSpace(os.Getenv("SERVEMEDIA_ROOT")); root != "" {
-		return filepath.Clean(root), nil
+func xdgBase(envKey, homeRel string) (string, error) {
+	if v := strings.TrimSpace(os.Getenv(envKey)); filepath.IsAbs(v) {
+		return v, nil
 	}
-	exe, err := os.Executable()
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" || !filepath.IsAbs(home) {
+		return "", fmt.Errorf("%s unset and HOME unavailable", envKey)
+	}
+	return filepath.Join(home, homeRel), nil
+}
+
+func appDir(name, envKey, homeRel string) (string, error) {
+	base, err := xdgBase(envKey, homeRel)
 	if err != nil {
 		return "", err
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
-	}
-	return filepath.Dir(exe), nil
+	return filepath.Join(base, name), nil
+}
+
+func dataDirDefault() (string, error) {
+	return appDir(appName, "XDG_DATA_HOME", filepath.Join(".local", "share"))
+}
+
+func cacheDirDefault() (string, error) {
+	return appDir(appName, "XDG_CACHE_HOME", ".cache")
 }
 
 func inFlatpak() bool {
 	return strings.TrimSpace(os.Getenv("FLATPAK_ID")) != ""
 }
 
-func inAppImage() bool {
-	return strings.TrimSpace(os.Getenv("APPIMAGE")) != ""
+func dataRoot() (string, error) {
+	if home := strings.TrimSpace(os.Getenv("SERVEMEDIA_HOME")); home != "" {
+		return filepath.Clean(home), nil
+	}
+	return dataDirDefault()
 }
 
-// DataRoot is the prefix for relative data/* paths (store, transcode, backups, overlay).
-// Host installs keep {exeDir}. Flatpak and AppImage payloads are read-only, so those
-// use a writable directory under $XDG_DATA_HOME/servemedia.
-func DataRoot(exeDir string) string {
-	if !inFlatpak() && !inAppImage() {
-		return exeDir
+// ExeDir is the payload root: SERVEMEDIA_ROOT, else the XDG data dir.
+func ExeDir() (string, error) {
+	if root := strings.TrimSpace(os.Getenv("SERVEMEDIA_ROOT")); root != "" {
+		return filepath.Clean(root), nil
 	}
-	if d := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); d != "" {
-		return filepath.Join(d, "servemedia")
-	}
-	home := strings.TrimSpace(os.Getenv("HOME"))
-	if home == "" {
-		home = "/var/data"
-	}
-	if inFlatpak() {
-		return filepath.Join(home, ".var", "app", strings.TrimSpace(os.Getenv("FLATPAK_ID")), "data", "servemedia")
-	}
-	return filepath.Join(home, ".local", "share", "servemedia")
+	return dataDirDefault()
 }
 
-func overlayPath(exeDir string) string {
-	return filepath.Join(DataRoot(exeDir), "data", "config.yaml")
+// DataRoot is the writable data dir: SERVEMEDIA_HOME, else the XDG data dir.
+func DataRoot() (string, error) {
+	return dataRoot()
+}
+
+// CacheRoot is $XDG_CACHE_HOME/servemedia (or $HOME/.cache/servemedia).
+func CacheRoot() (string, error) {
+	return cacheDirDefault()
+}
+
+func DefaultConfigPath() (string, error) {
+	dir, err := ExeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config", "default.yaml"), nil
+}
+
+func overlayPath() (string, error) {
+	dir, err := dataRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config", "overlay.yaml"), nil
+}
+
+func MatchMediaXDGDataDir() (string, error) {
+	return appDir("matchmedia", "XDG_DATA_HOME", filepath.Join(".local", "share"))
 }
 
 func resolvePath(base, p, fallback string) string {
@@ -156,14 +188,18 @@ func resolvePath(base, p, fallback string) string {
 	if filepath.IsAbs(p) {
 		return p
 	}
+	if base == "" {
+		return p
+	}
 	return filepath.Join(base, p)
 }
 
 func Defaults() Config {
 	var c Config
 	c.HTTP.Addr = ":7676"
-	c.Store.Path = "data/store"
-	c.Transcode.Path = "data/transcode"
+	c.Store.Path = "store"
+	c.Media.Path = "/mnt,/media,$XDG_VIDEOS_DIR,$XDG_MUSIC_DIR"
+	c.Transcode.Path = "transcode"
 	c.Transcode.MaxHeight = 2160
 	c.Transcode.CRF = 23
 	c.Transcode.SegmentSeconds = 6
@@ -172,7 +208,7 @@ func Defaults() Config {
 	c.Backup.Enabled = true
 	c.Backup.Interval = 24 * time.Hour
 	c.Backup.Retain = 7
-	c.Backup.Dir = "data/backups"
+	c.Backup.Dir = "backups"
 	c.Scan.OnStartup = true
 	c.Watchdog.TTLSeconds = 60
 	c.MatchMedia.Addr = "127.0.0.1:7680"
@@ -197,7 +233,10 @@ func Load(path string) (Config, error) {
 	}
 	c.ExeDir = root
 	if path == "" {
-		path = filepath.Join(root, "config", "default.yaml")
+		path, err = DefaultConfigPath()
+		if err != nil {
+			return c, err
+		}
 	}
 	c.ConfigPath = path
 	if b, err := os.ReadFile(path); err == nil {
@@ -209,8 +248,13 @@ func Load(path string) (Config, error) {
 	}
 	seedVersion := strings.TrimSpace(c.Version)
 	c.ExeDir = root
-	c.resolvePaths()
-	overlay := overlayPath(root)
+	if err := c.resolvePaths(); err != nil {
+		return c, err
+	}
+	overlay, err := overlayPath()
+	if err != nil {
+		return c, err
+	}
 	c.OverlayPath = overlay
 	if b, err := os.ReadFile(overlay); err == nil && len(b) > 0 {
 		if err := yaml.Unmarshal(b, &c); err != nil {
@@ -219,12 +263,16 @@ func Load(path string) (Config, error) {
 		c.ExeDir = root
 		c.ConfigPath = path
 		c.OverlayPath = overlay
-		c.resolvePaths()
+		if err := c.resolvePaths(); err != nil {
+			return c, err
+		}
 	}
 	c.Version = seedVersion
 	applyEnv(&c)
 	c.ExeDir = root
-	c.resolvePaths()
+	if err := c.resolvePaths(); err != nil {
+		return c, err
+	}
 	c.EnsureIntegrationDefaults()
 	return c, nil
 }
@@ -256,25 +304,96 @@ func (c Config) PrimaryMediaRoot() string {
 	return c.MediaRoots()[0]
 }
 
-func (c *Config) resolvePaths() {
-	base := DataRoot(c.ExeDir)
-	c.Store.Path = resolvePath(base, c.Store.Path, "data/store")
-	c.Transcode.Path = resolvePath(base, c.Transcode.Path, "data/transcode")
-	c.Backup.Dir = resolvePath(base, c.Backup.Dir, "data/backups")
+func (c *Config) resolvePaths() error {
+	data, err := dataRoot()
+	if err != nil {
+		return err
+	}
+	cache, err := cacheDirDefault()
+	if err != nil {
+		return err
+	}
+	c.Store.Path = resolvePath(data, c.Store.Path, "store")
+	c.Transcode.Path = resolvePath(cache, c.Transcode.Path, "transcode")
+	c.Backup.Dir = resolvePath(data, c.Backup.Dir, "backups")
 	parts := SplitMediaPaths(c.Media.Path)
 	if len(parts) > 0 {
 		for i, p := range parts {
-			if !filepath.IsAbs(p) {
-				parts[i] = resolvePath(base, p, "")
-			} else {
-				parts[i] = filepath.Clean(p)
+			parts[i] = expandMediaEntry(p)
+			if parts[i] != "" && !filepath.IsAbs(parts[i]) {
+				parts[i] = resolvePath(data, parts[i], "")
 			}
 		}
-		c.Media.Path = strings.Join(parts, ",")
+		var kept []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" && p != "." {
+				kept = append(kept, filepath.Clean(p))
+			}
+		}
+		c.Media.Path = strings.Join(kept, ",")
 	}
 	if strings.TrimSpace(c.MatchMedia.Addr) == "" {
 		c.MatchMedia.Addr = "127.0.0.1:7680"
 	}
+	return nil
+}
+
+func expandMediaEntry(entry string) string {
+	entry = strings.Trim(strings.TrimSpace(entry), `"'`)
+	switch entry {
+	case "$XDG_VIDEOS_DIR", "${XDG_VIDEOS_DIR}":
+		return userMediaDir("XDG_VIDEOS_DIR", "Videos")
+	case "$XDG_MUSIC_DIR", "${XDG_MUSIC_DIR}":
+		return userMediaDir("XDG_MUSIC_DIR", "Music")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" || !filepath.IsAbs(home) {
+		home = ""
+	}
+	if home != "" {
+		entry = strings.ReplaceAll(entry, "${HOME}", home)
+		entry = strings.ReplaceAll(entry, "$HOME", home)
+	}
+	return entry
+}
+
+func userMediaDir(key, fallback string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" || !filepath.IsAbs(home) {
+		return ""
+	}
+	raw := userDirValue(key)
+	if raw == "" {
+		return filepath.Join(home, fallback)
+	}
+	raw = strings.ReplaceAll(raw, "${HOME}", home)
+	raw = strings.ReplaceAll(raw, "$HOME", home)
+	if filepath.IsAbs(raw) {
+		return raw
+	}
+	return filepath.Join(home, raw)
+}
+
+func userDirValue(key string) string {
+	base, err := xdgBase("XDG_CONFIG_HOME", ".config")
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(base, "user-dirs.dirs"))
+	if err != nil {
+		return ""
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		val := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		return strings.Trim(val, `"'`)
+	}
+	return ""
 }
 
 func (c Config) Save(path string) error {
@@ -314,15 +433,58 @@ func (c Config) OverlaySavePath() string {
 	if strings.TrimSpace(c.OverlayPath) != "" {
 		return c.OverlayPath
 	}
-	return overlayPath(c.ExeDir)
+	path, err := overlayPath()
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func (c Config) MatchMediaDataDir() string {
-	return filepath.Join(DataRoot(c.ExeDir), "data", "matchmedia")
+	dir, err := MatchMediaXDGDataDir()
+	if err != nil {
+		return ""
+	}
+	return dir
 }
 
+func executableDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	return filepath.Dir(exe)
+}
+
+// MatchMediaBin is the MatchMedia binary: sibling of servemedia under .local/bin,
+// or /app/tools/matchmedia/matchmedia in Flatpak.
 func (c Config) MatchMediaBin() string {
-	return filepath.Join(c.ExeDir, "tools", "matchmedia", "matchmedia")
+	if inFlatpak() {
+		return "/app/tools/matchmedia/matchmedia"
+	}
+	if dir := executableDir(); dir != "" {
+		return filepath.Join(dir, "matchmedia")
+	}
+	return "matchmedia"
+}
+
+// MatchMediaShare is the bundled MatchMedia share tree (.local/share/matchmedia),
+// or /app/tools/matchmedia in Flatpak.
+func (c Config) MatchMediaShare() string {
+	if inFlatpak() {
+		return "/app/tools/matchmedia"
+	}
+	if dir := executableDir(); dir != "" {
+		return filepath.Clean(filepath.Join(dir, "..", "share", "matchmedia"))
+	}
+	return ""
+}
+
+func (c Config) MatchMediaSeed() string {
+	return filepath.Join(c.MatchMediaShare(), "config", "default.yaml")
 }
 
 func (c Config) VendorDir() string {

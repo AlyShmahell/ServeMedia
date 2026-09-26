@@ -9,25 +9,30 @@ Application lifecycle is `./build/run` (host binary). **All automated tests are 
 
 ## Dist
 
-[`build/Containerfile`](../../build/Containerfile) is a one-shot **builder**, not a runtime. Host driver is [`./build/run`](../../build/run) (TTY menu, `podman-compose up --build`). Image helper is [`build/build`](../../build/build) (`vendor` at image build, `stage` at container start). Go stage: `docker.io/library/golang:1.26-bookworm`, `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`. The image copies the binary, `share/config` → `config/`, first-party static → `public/`, `LICENSE`, and curls third-party JS into `vendor/` at image build. MatchMedia is installed at **stage** (cache is mounted then): `build/cache/matchmedia-<matchmedia.version>-linux-amd64.tar.gz` when the filename and the archive’s inner `version:` both match the pin, otherwise `matchmedia.url` (basename must be that same archive name). Compose bind-mounts `build/dist` (`:z`) and `build/cache` (`:z`). At container start, **`build/dist` is wiped first** (including `data/`; `.gitkeep` kept). ffmpeg is copied from `build/cache/ffmpeg` when `ffmpeg`, `ffprobe`, and `LICENSE` are present; otherwise it is compiled into the cache, then copied to dist. Codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) are static; `libva` / `libdrm` stay dynamic so the host VA driver loads. NVENC is headers only. The container writes `/dist` to `/out` and exits. `build/cache` is never deleted. Delete `build/cache/ffmpeg` to force a recompile after bumping the ffmpeg vendor URLs. The app version is `version` in `servemedia/share/config/default.yaml` only. The MatchMedia pin is `matchmedia.version` in the same file.
+[`build/Containerfile`](../../build/Containerfile) is a one-shot **builder**, not a runtime. Host driver is [`./build/run`](../../build/run) (TTY menu, `podman-compose up --build`). Image helper is [`build/build`](../../build/build) (`vendor` at image build, `stage` at container start). Go stage: `docker.io/library/golang:1.26-bookworm`, `CGO_ENABLED=0 GOOS=linux GOARCH=amd64`. The image writes an XDG tree: binary → `.local/bin/servemedia`, `share/config` → `.local/share/servemedia/config/`, first-party static → `.local/share/servemedia/public/`, desktop → `.local/share/applications/`, `LICENSE` at the dist root and under share, and curls third-party JS into `.local/share/servemedia/vendor/` at image build. MatchMedia is installed at **stage** (cache is mounted then): `build/cache/matchmedia-<matchmedia.version>-linux-amd64.tar.gz` when the filename and the archive’s inner `version:` both match the pin, otherwise `matchmedia.url` (basename must be that same archive name). The 0.0.9 archive’s `.local/bin/matchmedia` and `.local/share/matchmedia/{config,public}` are kept as sibling XDG paths in the ServeMedia dist (not nested under `servemedia`). Compose bind-mounts `build/dist` (`:z`) and `build/cache` (`:z`). At container start, **`build/dist` is wiped first** (`.gitkeep` kept). ffmpeg is copied from `build/cache/ffmpeg` when `ffmpeg`, `ffprobe`, and `LICENSE` are present; otherwise it is compiled into the cache, then copied to dist. Codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) are static; `libva` / `libdrm` stay dynamic so the host VA driver loads. NVENC is headers only. The container writes `/dist` to `/out` and exits. `build/cache` is never deleted. Delete `build/cache/ffmpeg` to force a recompile after bumping the ffmpeg vendor URLs. The app version is `version` in `servemedia/share/config/default.yaml` only. The MatchMedia pin is `matchmedia.version` in the same file.
 
 ```bash
 ./build/run
 ```
 
-Choose **run**, **(re)build & run**, **(re)build & prepare**, or **(re)build & package** (arrow keys, Enter). **run** execs the current `build/dist/servemedia` (error if missing). Prepare verifies `tools/matchmedia/matchmedia`, fetches third-party `vendor/` if missing, then exits (local dist only, not an install step). Package rebuilds dist and writes the host tarball with root `servemedia/` and ServeMedia’s `LICENSE` (`servemedia-<ver>-linux-amd64.tar.gz`: `tools/matchmedia/` plus `vendor/` with htmx, video.js, hls.js, ffmpeg; version from `config/default.yaml`). It then packs that same tarball, inside the builder image, with quick-sharun, sharun, and uruntime into `servemedia-<ver>-linux-amd64.AppImage` beside the tarball. The AppImage keeps the read-only tree and writes data under `$XDG_DATA_HOME/servemedia` (default `~/.local/share/servemedia`). `ffmpeg` and `ffprobe` stay the raw ELFs under `SERVEMEDIA_ROOT/vendor/ffmpeg`; the host supplies `libva.so.2` and Mesa. GPU encode still needs `/dev/dri`. It does not build a Flatpak.
+Choose **run**, **(re)build & run**, **(re)build & prepare**, or **(re)build & package** (arrow keys, Enter). **run** copies `build/dist/.local` into `build/cache/xdg` and execs that tree with `HOME` set there (error if `build/dist/.local/bin/servemedia` is missing). Prepare verifies `.local/bin/matchmedia`, fetches third-party `vendor/` if missing, then exits (local dist only, not an install step). Package rebuilds dist and writes the host tarball with root `servemedia/` and ServeMedia’s `LICENSE` (`servemedia-<ver>-linux-amd64.tar.gz`: `.local/bin/{servemedia,matchmedia}` plus `.local/share/servemedia/{config,public,vendor}` and `.local/share/matchmedia/{config,public}`; version from the share seed). It then packs that same tarball, inside the builder image, with quick-sharun, sharun, and uruntime into `servemedia-<ver>-linux-amd64.AppImage` beside the tarball. The AppImage sets `SERVEMEDIA_ROOT` to the bundled share tree and writes data under `$XDG_DATA_HOME/servemedia` (default `~/.local/share/servemedia`). `ffmpeg` and `ffprobe` stay the raw ELFs under `SERVEMEDIA_ROOT/vendor/ffmpeg`; the host supplies `libva.so.2` and Mesa. GPU encode still needs `/dev/dri`. It does not build a Flatpak.
 
-Standalone `.flatpak` is [`./flatpak/build`](../../flatpak/build) (TTY arrow menu; `flatpak-builder` runs inside the Fedora image from [`flatpak/containerfile`](../../flatpak/containerfile)). Choose **build**, **lint**, **regen**, or **sync**. **build** compiles the ServeMedia and MatchMedia git tags in [`flatpak/eu.alyshmahell.ServeMedia.yml`](../../flatpak/eu.alyshmahell.ServeMedia.yml): online when Flathub is reachable, otherwise the cached image and `build/cache/flatpak` only. **lint** runs `flatpak-builder-lint` and prints the metainfo version plus git tags. **regen** rewrites Go module lists in [`flatpak/pins/`](../../flatpak/pins/). **sync** updates git tags, JS checksums, and metainfo from the latest GitHub release, then regen (does not commit). Host Flatpak tools are not required. Runtimes and SDK stay in `build/cache/flatpak` (never wiped). First online **build** or **lint** pulls Freedesktop **25.08** Platform/SDK, the golang extension, and `org.flatpak.Builder` (~GB). Outputs:
+Standalone `.flatpak` is [`./flatpak/build`](../../flatpak/build) (TTY arrow menu; `flatpak-builder` runs inside the Fedora image from [`flatpak/containerfile`](../../flatpak/containerfile)). Choose **online** or **offline**; each runs **resync → regen → lint → build → package → install**.
+
+- **online** — resync from the latest GitHub ServeMedia release (git tags/commits, vendor JS checksums, metainfo release); regen Go pins from those tags with `modules.txt` as URL+sha256; lint; build from pinned git sources; package `build/package/servemedia-<ver>-linux-amd64.flatpak`; `flatpak install --user` that bundle.
+- **offline** — resync from local [`servemedia/share/config/default.yaml`](../../servemedia/share/config/default.yaml) (version SoT; MatchMedia pin; metainfo date = today UTC); regen from the local `servemedia/` tree (MatchMedia still cloned by tag); lint; build with ServeMedia as a local `type: dir` source (wrapper/metainfo from `flatpak/` in that tree); package and install the same way. Pin `modules.txt` stays `path:` for unpublished trees.
+
+Wrapper and pins live in this repo ([`flatpak/servemedia-wrapper`](../../flatpak/servemedia-wrapper), [`flatpak/pins/`](../../flatpak/pins/)); the manifest installs the wrapper from the ServeMedia source tree, not a Flathub-local file. Host needs `podman` and `flatpak` (for the final install). Runtimes and SDK stay in `build/cache/flatpak` (never wiped). First online pull fetches Freedesktop **26.08** Platform/SDK, the golang extension, and `org.flatpak.Builder` (~GB). Outputs:
 
 | Artifact | ffmpeg |
 |----------|--------|
 | `servemedia-<ver>-linux-amd64.tar.gz` | vendored (`vendor/ffmpeg`, static codecs, host libva) |
 | `servemedia-<ver>-linux-amd64.AppImage` | same `vendor/ffmpeg` ELFs; host `libva` / Mesa |
-| `servemedia-<ver>-linux-amd64.flatpak` | no `vendor/ffmpeg`; `org.freedesktop.Platform.ffmpeg-full` (25.08) |
+| `servemedia-<ver>-linux-amd64.flatpak` | no `vendor/ffmpeg`; `org.freedesktop.Platform.ffmpeg-full` (26.08) |
 
-App id is `eu.alyshmahell.ServeMedia`. Manifest: [`flatpak/eu.alyshmahell.ServeMedia.yml`](../../flatpak/eu.alyshmahell.ServeMedia.yml) (Go build, no `vendor/ffmpeg`). Go module lists live in [`flatpak/pins/`](../../flatpak/pins/). Runtime wrapper is [`flatpak/servemedia`](../../flatpak/servemedia) (`SERVEMEDIA_ROOT=/app`). Data in the sandbox is `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` (`$XDG_DATA_HOME/servemedia`), not next to the binary.
+App id is `eu.alyshmahell.ServeMedia`. Manifest: [`flatpak/eu.alyshmahell.ServeMedia.yml`](../../flatpak/eu.alyshmahell.ServeMedia.yml) (Go build, no `vendor/ffmpeg`). Go module lists live in [`flatpak/pins/`](../../flatpak/pins/). Runtime wrapper is [`flatpak/servemedia-wrapper`](../../flatpak/servemedia-wrapper) (`SERVEMEDIA_ROOT=/app`). Data in the sandbox is `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` (`$XDG_DATA_HOME/servemedia`), not next to the binary.
 
-Sideload:
+Sideload (also done by the pipeline’s **install** step):
 
 ```bash
 flatpak install --user build/package/servemedia-<ver>-linux-amd64.flatpak
@@ -36,7 +41,7 @@ flatpak run eu.alyshmahell.ServeMedia
 
 The `.flatpak` needs the ffmpeg-full extension (installed automatically when online). The sandbox can read and write `/media`, `/mnt`, `/run/media`, `~/Videos`, and `~/Music`; libraries outside those paths need `flatpak override --filesystem=...`. Flathub **acceptance** does not need a file on [alyshmahell.eu](https://alyshmahell.eu). The **verified badge** is later: Developer Portal token in `https://alyshmahell.eu/.well-known/org.flathub.VerifiedApps.txt` (GitHub Pages: `.nojekyll` or Jekyll `include: [".well-known"]`) or a TXT record at `_flathub.alyshmahell.eu`. Do not invent a token in this repo.
 
-The binary defaults to `{exeDir}/config/default.yaml`. Writable data: `{exeDir}/data` on a host install (store, transcode, backups, optional `config.yaml` overlay). Media root: `SERVEMEDIA_MEDIA_PATH` or overlay `media.path` (comma-separated paths share one picker tree). ffmpeg is `{exeDir}/vendor/ffmpeg` (`SERVEMEDIA_FFMPEG` override), or `ffmpeg` on `PATH` when that tree is absent (Flatpak).
+The binary defaults to `{payload}/config/default.yaml` (`SERVEMEDIA_ROOT` or `$XDG_DATA_HOME/servemedia`). Writable data: `$XDG_DATA_HOME/servemedia` (store, backups, `config/overlay.yaml`; `SERVEMEDIA_HOME` override). Transcode cache: `$XDG_CACHE_HOME/servemedia/transcode`. Media root: `SERVEMEDIA_MEDIA_PATH` or overlay `media.path` (comma-separated paths share one picker tree; `$XDG_VIDEOS_DIR` / `$XDG_MUSIC_DIR` expand). ffmpeg is `{payload}/vendor/ffmpeg` (`SERVEMEDIA_FFMPEG` override), or `ffmpeg` on `PATH` when that tree is absent (Flatpak).
 
 ## Run tests
 
@@ -62,17 +67,17 @@ Non-interactive (CI):
 
 - Never `go test`, `npm test`, or `npx playwright` on the host for this repo’s automated test path
 - Never use Docker as the test runner (`./tests/run` refuses Docker-only environments)
-- App data for manual use lives in `{exeDir}/data` (gitignored); test data uses a compose volume
+- App data for manual use lives in `$XDG_DATA_HOME/servemedia` (or `build/cache/xdg` for `./build/run`); test data uses a compose XDG volume
 
 ## App quick start (manual)
 
-1. `./build/run` → **(re)build & run** (or **run** if `build/dist/servemedia` already exists)
+1. `./build/run` → **(re)build & run** (or **run** if `build/dist/.local/bin/servemedia` already exists)
 2. Register the admin in the browser
 3. Set `SERVEMEDIA_MEDIA_PATH` to your library root(s) if they are not already in the overlay (comma-separated)
 
 ## Process stats
 
-Idle `servemedia` uses ~0% CPU, so default `top` (sorted by CPU) hides it. `./build/run` `exec`s `build/dist/servemedia`; Ctrl+C stops it. MatchMedia is a second process (`matchmedia` on `127.0.0.1:7680`).
+Idle `servemedia` uses ~0% CPU, so default `top` (sorted by CPU) hides it. `./build/run` `exec`s the binary from `build/cache/xdg/.local/bin/servemedia`; Ctrl+C stops it. MatchMedia is a second process (`matchmedia` on `127.0.0.1:7680`).
 
 ```bash
 pgrep -a servemedia
@@ -84,7 +89,7 @@ ps -o pid,pcpu,rss,comm -p "$(pgrep -n -f '/servemedia$')"
 
 GPU encode uses **host** Mesa/libva and `/dev/dri` (same idea as MatchMedia’s Vulkan note). Dist ffmpeg is built in the Podman builder from pinned FFmpeg source and stored in `build/cache/ffmpeg` so later rebuilds skip compile: codecs are statically linked; **libva/libdrm stay dynamic** so the published tarball and AppImage can use the host GPU. The AppImage does not ship `libva.so.2`. Fully static builds (for example BtbN) cannot drive host VAAPI. Software `libx264` remains the probe fallback. A host without `libva.so.2` cannot start the bundled `ffmpeg`.
 
-Runtime on the target: `libva.so.2`, `libdrm.so.2`, and Mesa DRI/VA (Fedora: `libva libdrm mesa-dri-drivers mesa-va-drivers`; Debian: `libva2 libdrm2 mesa-va-drivers`). Fedora H.264/HEVC VA needs RPM Fusion `mesa-va-drivers-freeworld` in addition to stock `mesa-va-drivers`. Set `hwaccel: none` in `{exeDir}/data/config.yaml` to skip the probe.
+Runtime on the target: `libva.so.2`, `libdrm.so.2`, and Mesa DRI/VA (Fedora: `libva libdrm mesa-dri-drivers mesa-va-drivers`; Debian: `libva2 libdrm2 mesa-va-drivers`). Fedora H.264/HEVC VA needs RPM Fusion `mesa-va-drivers-freeworld` in addition to stock `mesa-va-drivers`. Set `hwaccel: none` in `$XDG_DATA_HOME/servemedia/config/overlay.yaml` to skip the probe.
 
 ServeMedia probes render nodes and prefers **GPU decode + VAAPI H.264 encode**:
 

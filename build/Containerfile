@@ -19,11 +19,12 @@ RUN apt-get update \
     patchelf binutils \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /dist
-COPY --from=go /out/servemedia /dist/servemedia
-COPY servemedia/share/config /dist/config
-COPY servemedia/share/applications /dist/share/applications
-COPY servemedia/web/static/app.css servemedia/web/static/app.js servemedia/web/static/controls.js servemedia/web/static/logo.svg servemedia/web/static/placeholder.svg /dist/public/
+COPY --from=go /out/servemedia /dist/.local/bin/servemedia
+COPY servemedia/share/config /dist/.local/share/servemedia/config
+COPY servemedia/share/applications /dist/.local/share/applications
+COPY servemedia/web/static/app.css servemedia/web/static/app.js servemedia/web/static/controls.js servemedia/web/static/logo.svg servemedia/web/static/placeholder.svg /dist/.local/share/servemedia/public/
 COPY LICENSE /dist/LICENSE
+COPY LICENSE /dist/.local/share/servemedia/LICENSE
 COPY build/build /build
 RUN chmod +x /build && /build vendor
 CMD ["/build", "stage"]

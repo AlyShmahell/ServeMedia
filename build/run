@@ -43,12 +43,13 @@ stage_package() {
   cp -a "$DIR/dist"/. "$staging/servemedia/"
   rm -f "$staging/servemedia/.gitkeep"
   rm -rf "$staging/servemedia/data"
-  rm -rf "$staging/servemedia/tools/matchmedia/vendor"
-  if [[ ! -f "$DIR/../LICENSE" ]]; then
-    echo "error: $DIR/../LICENSE not found" >&2
-    exit 1
+  if [[ ! -f "$staging/servemedia/LICENSE" ]]; then
+    if [[ ! -f "$DIR/../LICENSE" ]]; then
+      echo "error: $DIR/../LICENSE not found" >&2
+      exit 1
+    fi
+    cp "$DIR/../LICENSE" "$staging/servemedia/LICENSE"
   fi
-  cp "$DIR/../LICENSE" "$staging/servemedia/LICENSE"
 }
 
 write_tar() {
@@ -58,17 +59,20 @@ write_tar() {
 }
 
 package() {
-  if [[ ! -x "$DIR/dist/servemedia" ]]; then
-    echo "error: build/dist/servemedia not found; rebuild first" >&2
+  if [[ ! -x "$DIR/dist/.local/bin/servemedia" ]]; then
+    echo "error: build/dist/.local/bin/servemedia not found; rebuild first" >&2
     exit 1
   fi
   mkdir -p "$DIR/package"
   : >"$DIR/package/.gitkeep"
   local version staging
-  version="$(yaml_field version "$DIR/dist/config/default.yaml")"
+  version="$(yaml_field version "$DIR/dist/.local/share/servemedia/config/default.yaml")"
   version="${version:-0.0.0}"
 
-  "$DIR/dist/servemedia" --prepare
+  HOME="$DIR/cache/xdg" \
+    XDG_DATA_HOME="$DIR/cache/xdg/.local/share" \
+    SERVEMEDIA_ROOT="$DIR/dist/.local/share/servemedia" \
+    "$DIR/dist/.local/bin/servemedia" --prepare
 
   staging="$(mktemp -d)"
   stage_package "$staging"
@@ -79,11 +83,24 @@ package() {
 }
 
 start() {
-  if [[ ! -x "$DIR/dist/servemedia" ]]; then
-    echo "error: build/dist/servemedia not found; pick a rebuild option" >&2
+  if [[ ! -x "$DIR/dist/.local/bin/servemedia" ]]; then
+    echo "error: build/dist/.local/bin/servemedia not found; pick a rebuild option" >&2
     exit 1
   fi
-  exec "$DIR/dist/servemedia" "$@"
+  local xdg="$DIR/cache/xdg"
+  mkdir -p "$xdg/.local/bin" \
+    "$xdg/.local/share/servemedia" \
+    "$xdg/.local/share/applications" \
+    "$xdg/.local/state" \
+    "$xdg/.cache" \
+    "$xdg/.config"
+  rm -rf "$xdg/.local/bin/servemedia" \
+    "$xdg/.local/share/servemedia" \
+    "$xdg/.local/share/applications/servemedia.desktop"
+  cp -a "$DIR/dist/.local/." "$xdg/.local/"
+  export HOME="$xdg"
+  unset XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_CONFIG_HOME SERVEMEDIA_ROOT
+  exec "$xdg/.local/bin/servemedia" "$@"
 }
 
 menu() {

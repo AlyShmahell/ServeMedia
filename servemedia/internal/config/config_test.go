@@ -31,6 +31,7 @@ func TestSplitMediaPaths(t *testing.T) {
 
 func TestMediaRoots(t *testing.T) {
 	c := config.Defaults()
+	c.Media.Path = ""
 	if got := c.MediaRoots(); len(got) != 1 || got[0] != "/media" {
 		t.Fatalf("empty path fallback: %#v", got)
 	}

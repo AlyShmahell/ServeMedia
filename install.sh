@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
-# Install a published ServeMedia release into ~/.servemedia (userscope desktop + bin).
+# Install a published ServeMedia release into XDG HOME (.local/bin + .local/share).
 set -euo pipefail
 
 REPO="${SERVEMEDIA_REPO:-AlyShmahell/servemedia}"
-DEST="${SERVEMEDIA_HOME:-$HOME/.servemedia}"
 BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
-APP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+SHARE_DIR="$DATA_HOME/servemedia"
+APP_DIR="$DATA_HOME/applications"
+ICON_DIR="$DATA_HOME/icons/hicolor/scalable/apps"
 
 usage() {
   cat <<EOF
 Usage: curl -fsSL https://raw.githubusercontent.com/AlyShmahell/servemedia/main/install.sh | bash
   Interactive TTY menu: pick a GitHub release.
-  Installs into ~/.servemedia, links ~/.local/bin/servemedia, and installs a userscope .desktop.
+  Unpacks the XDG tarball into ~/.local (bin + share) and installs a userscope .desktop.
 
   SERVEMEDIA_REPO   GitHub owner/name (default AlyShmahell/servemedia)
-  SERVEMEDIA_HOME   Install prefix (default ~/.servemedia)
+  XDG_BIN_HOME      Binary dir (default ~/.local/bin)
+  XDG_DATA_HOME     Share dir (default ~/.local/share)
 EOF
 }
 
@@ -152,7 +154,9 @@ echo "Downloading ${ASSET_URL}"
 curl -fL -A servemedia-install --retry 3 --retry-delay 1 -o "$tarball" "$ASSET_URL"
 tar -xzf "$tarball" -C "$work"
 src=""
-if [[ -x "$work/servemedia/servemedia" ]]; then
+if [[ -x "$work/servemedia/.local/bin/servemedia" ]]; then
+  src="$work/servemedia"
+elif [[ -x "$work/servemedia/servemedia" ]]; then
   src="$work/servemedia"
 elif [[ -x "$work/servemedia" && -d "$work/config" ]]; then
   src="$work"
@@ -161,19 +165,53 @@ else
   exit 1
 fi
 
-mkdir -p "$DEST"
-for item in servemedia config public tools vendor share LICENSE; do
-  if [[ -e "$src/$item" ]]; then
-    rm -rf "$DEST/$item"
-    cp -a "$src/$item" "$DEST/"
+mkdir -p "$BIN_DIR" "$SHARE_DIR" "$APP_DIR" "$ICON_DIR"
+MM_SHARE="$DATA_HOME/matchmedia"
+if [[ -x "$src/.local/bin/servemedia" ]]; then
+  cp -a "$src/.local/bin/servemedia" "$BIN_DIR/servemedia"
+  if [[ -x "$src/.local/bin/matchmedia" ]]; then
+    cp -a "$src/.local/bin/matchmedia" "$BIN_DIR/matchmedia"
   fi
-done
-chmod +x "$DEST/servemedia"
+  if [[ -d "$src/.local/share/servemedia" ]]; then
+    cp -a "$src/.local/share/servemedia"/. "$SHARE_DIR/"
+  fi
+  if [[ -d "$src/.local/share/matchmedia" ]]; then
+    mkdir -p "$MM_SHARE"
+    cp -a "$src/.local/share/matchmedia"/. "$MM_SHARE/"
+  fi
+  if [[ -f "$src/.local/share/applications/servemedia.desktop" ]]; then
+    cp -a "$src/.local/share/applications/servemedia.desktop" "$APP_DIR/servemedia.desktop"
+  fi
+else
+  cp -a "$src/servemedia" "$BIN_DIR/servemedia"
+  for item in config public tools vendor LICENSE; do
+    if [[ -e "$src/$item" ]]; then
+      rm -rf "$SHARE_DIR/$item"
+      cp -a "$src/$item" "$SHARE_DIR/"
+    fi
+  done
+  if [[ -x "$SHARE_DIR/tools/matchmedia/matchmedia" ]]; then
+    cp -a "$SHARE_DIR/tools/matchmedia/matchmedia" "$BIN_DIR/matchmedia"
+    mkdir -p "$MM_SHARE"
+    for item in config public LICENSE; do
+      if [[ -e "$SHARE_DIR/tools/matchmedia/$item" ]]; then
+        cp -a "$SHARE_DIR/tools/matchmedia/$item" "$MM_SHARE/"
+      fi
+    done
+  fi
+  if [[ -f "$src/share/applications/servemedia.desktop" ]]; then
+    cp -a "$src/share/applications/servemedia.desktop" "$APP_DIR/servemedia.desktop"
+  fi
+fi
+if [[ -f "$src/LICENSE" && ! -f "$SHARE_DIR/LICENSE" ]]; then
+  cp -a "$src/LICENSE" "$SHARE_DIR/LICENSE"
+fi
+chmod +x "$BIN_DIR/servemedia"
+if [[ -x "$BIN_DIR/matchmedia" ]]; then
+  chmod +x "$BIN_DIR/matchmedia"
+fi
 
-mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
-ln -sfn "$DEST/servemedia" "$BIN_DIR/servemedia"
-
-icon_src="$DEST/public/logo.svg"
+icon_src="$SHARE_DIR/public/logo.svg"
 if [[ -f "$icon_src" ]]; then
   cp -a "$icon_src" "$ICON_DIR/servemedia.svg"
 fi
@@ -181,8 +219,7 @@ if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -f -t "$(dirname "$(dirname "$ICON_DIR")")" >/dev/null 2>&1 || true
 fi
 
-desktop_src="$DEST/share/applications/servemedia.desktop"
-desktop_dst="$APP_DIR/servemedia.desktop"
+desktop_src="$APP_DIR/servemedia.desktop"
 if [[ ! -f "$desktop_src" ]]; then
   echo "error: desktop file missing from release" >&2
   exit 1
@@ -191,12 +228,13 @@ icon_path="$ICON_DIR/servemedia.svg"
 if [[ ! -f "$icon_path" ]]; then
   icon_path="$icon_src"
 fi
-sed -e "s|^Exec=.*|Exec=${DEST}/servemedia|" -e "s|^Icon=.*|Icon=${icon_path}|" "$desktop_src" >"$desktop_dst"
+sed -e "s|^Exec=.*|Exec=${BIN_DIR}/servemedia|" -e "s|^Icon=.*|Icon=${icon_path}|" "$desktop_src" >"${desktop_src}.tmp"
+mv "${desktop_src}.tmp" "$desktop_src"
 if command -v update-desktop-database >/dev/null 2>&1; then
   update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
 fi
 
-echo "Installed ${TAG} to ${DEST}"
+echo "Installed ${TAG} to ${SHARE_DIR}"
 echo "  ${BIN_DIR}/servemedia"
-echo "  ${desktop_dst}"
+echo "  ${desktop_src}"
 echo "Add ${BIN_DIR} to PATH if servemedia is not found."

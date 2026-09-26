@@ -1,12 +1,6 @@
-# Sideload and Flathub Flatpak. Compiles ServeMedia and MatchMedia from
-# git tags. Does not ship vendor/ffmpeg; uses
-# org.freedesktop.Platform.ffmpeg-full at runtime.
-#
-# ./flatpak/build menu: build, lint, regen, sync.
-# Host tarball is ./build/run package only — not used here.
 id: eu.alyshmahell.ServeMedia
 runtime: org.freedesktop.Platform
-runtime-version: "25.08"
+runtime-version: "26.08"
 sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.golang
@@ -15,7 +9,7 @@ add-extensions:
   org.freedesktop.Platform.ffmpeg-full:
     directory: lib/ffmpeg
     add-ld-path: .
-    version: "25.08"
+    version: "26.08"
     autodelete: false
 finish-args:
   - --share=network
@@ -52,8 +46,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/AlyShmahell/MatchMedia.git
-        tag: v0.0.8
-        commit: bd1a79d2eebcfd16ca1a9d60612669f484ea35c5
+        tag: v0.0.9
+        commit: c822e4a4e98c781105b294397742970e4e0d60ae
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$
@@ -81,8 +75,8 @@ modules:
       - install -Dm644 servemedia/share/applications/servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - sed -i 's|^Icon=.*|Icon=eu.alyshmahell.ServeMedia|' /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - install -Dm644 servemedia/web/static/logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
-      - install -Dm644 eu.alyshmahell.ServeMedia.metainfo.xml /app/share/metainfo/eu.alyshmahell.ServeMedia.metainfo.xml
-      - install -Dm755 servemedia-wrapper /app/bin/servemedia
+      - install -Dm644 flatpak/eu.alyshmahell.ServeMedia.metainfo.xml /app/share/metainfo/eu.alyshmahell.ServeMedia.metainfo.xml
+      - install -Dm755 flatpak/servemedia-wrapper /app/bin/servemedia
       - install -Dm644 htmx.min.js /app/vendor/htmx.min.js
       - install -Dm644 htmx.min.js.LICENSE /app/vendor/htmx.min.js.LICENSE
       - printf '%s\n' 'https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE' >/app/vendor/htmx.min.js.NOTICE
@@ -97,17 +91,12 @@ modules:
     sources:
       - type: git
         url: https://github.com/AlyShmahell/ServeMedia.git
-        tag: v0.0.7
+        tag: v0.0.9
         commit: 8fd108aeb867457c500138e1747311fba5e5078e
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$
       - pins/servemedia-go-sources.yml
-      - type: file
-        path: servemedia
-        dest-filename: servemedia-wrapper
-      - type: file
-        path: eu.alyshmahell.ServeMedia.metainfo.xml
       - type: file
         url: https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js
         sha256: e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447

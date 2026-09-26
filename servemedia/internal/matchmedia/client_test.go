@@ -184,87 +184,70 @@ func TestWithinFilesystemRoot(t *testing.T) {
 	}
 }
 
-func TestOverlayDestHost(t *testing.T) {
-	t.Setenv("FLATPAK_ID", "")
-	t.Setenv("APPIMAGE", "")
-	home := t.TempDir()
-	got := overlayDest(home, "/data/matchmedia")
-	want := filepath.Join(home, "data", "config.yaml")
+func TestOverlayDest(t *testing.T) {
+	data := t.TempDir()
+	got := overlayDest(data)
+	want := filepath.Join(data, "config", "overlay.yaml")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
 
-func TestOverlayDestFlatpak(t *testing.T) {
-	t.Setenv("FLATPAK_ID", "eu.alyshmahell.ServeMedia")
-	t.Setenv("APPIMAGE", "")
-	if got := overlayDest("/app/tools/matchmedia", "/data/matchmedia"); got != flatpakRunOverlay {
-		t.Fatalf("got %q want %q", got, flatpakRunOverlay)
-	}
-}
-
-func TestOverlayDestAppImage(t *testing.T) {
-	t.Setenv("FLATPAK_ID", "")
-	t.Setenv("APPIMAGE", "/opt/ServeMedia.AppImage")
-	home := "/home/user/.local/share/servemedia/matchmedia-home"
-	data := "/home/user/.local/share/servemedia/data/matchmedia"
-	got := overlayDest(home, data)
-	want := filepath.Join(home, "data", "config.yaml")
-	if got != want {
-		t.Fatalf("got %q want %q", got, want)
-	}
-}
-
-func TestPrepareAppImageHome(t *testing.T) {
+func TestSeedXDGSkipsExisting(t *testing.T) {
 	src := t.TempDir()
-	if err := os.WriteFile(filepath.Join(src, "matchmedia"), []byte("bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Join(src, "config"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(src, "config", "default.yaml"), []byte("ok"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(src, "config", "default.yaml"), []byte("seed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
-	data := filepath.Join(root, "data", "matchmedia")
-	dest, err := prepareAppImageHome(src, data)
+	if err := os.MkdirAll(filepath.Join(src, "public"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "public", "index.html"), []byte("pub"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(data, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "config", "default.yaml"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedXDG(src, data); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(data, "config", "default.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(root, "matchmedia-home")
-	if dest != want {
-		t.Fatalf("dest %q want %q", dest, want)
+	if string(got) != "keep" {
+		t.Fatalf("seed overwrote existing: %q", got)
 	}
-	if _, err := os.Stat(filepath.Join(dest, "matchmedia")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dest, "config", "default.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(data, "public", "index.html")); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestWriteOverlayServeMediaKeysLast(t *testing.T) {
 	extra := filepath.Join(t.TempDir(), "extra.yaml")
-	if err := os.WriteFile(extra, []byte("browse_root: /media\nproviders:\n  omdb:\n    base: http://omdb-stub:8080\n"), 0o644); err != nil {
+	if err := os.WriteFile(extra, []byte("browse_roots: [/media]\nbrowse_root: /media\ndata_dir: /old\nproviders:\n  omdb:\n    base: http://omdb-stub:8080\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FLATPAK_ID", "")
-	t.Setenv("APPIMAGE", "")
 	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", extra)
-	home := t.TempDir()
 	data := t.TempDir()
-	if err := writeOverlay(home, data, "127.0.0.1:7680", "/"); err != nil {
+	if err := writeOverlay(data, "127.0.0.1:7680", []string{"/", "/mnt"}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(home, "data", "config.yaml"))
+	raw, err := os.ReadFile(filepath.Join(data, "config", "overlay.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var cfg struct {
-		BrowseRoot string `yaml:"browse_root"`
-		DataDir    string `yaml:"data_dir"`
-		HTTP       struct {
+		BrowseRoot  string   `yaml:"browse_root"`
+		BrowseRoots []string `yaml:"browse_roots"`
+		DataDir     string   `yaml:"data_dir"`
+		HTTP        struct {
 			Addr string `yaml:"addr"`
 		} `yaml:"http"`
 		Providers struct {
@@ -276,16 +259,19 @@ func TestWriteOverlayServeMediaKeysLast(t *testing.T) {
 	if err := yaml.Unmarshal(raw, &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BrowseRoot != "/" {
-		t.Fatalf("browse_root=%q want / (ServeMedia key must win)", cfg.BrowseRoot)
+	if cfg.BrowseRoot != "" {
+		t.Fatalf("browse_root should be dropped, got %q", cfg.BrowseRoot)
+	}
+	if cfg.DataDir != "" {
+		t.Fatalf("data_dir should be dropped, got %q", cfg.DataDir)
+	}
+	if len(cfg.BrowseRoots) != 2 || cfg.BrowseRoots[0] != "/" || cfg.BrowseRoots[1] != "/mnt" {
+		t.Fatalf("browse_roots=%#v (ServeMedia keys must win)", cfg.BrowseRoots)
 	}
 	if cfg.Providers.OMDb.Base != "http://omdb-stub:8080" {
 		t.Fatalf("omdb.base=%q", cfg.Providers.OMDb.Base)
 	}
 	if cfg.HTTP.Addr != "127.0.0.1:7680" {
 		t.Fatalf("http.addr=%q", cfg.HTTP.Addr)
-	}
-	if cfg.DataDir != data {
-		t.Fatalf("data_dir=%q", cfg.DataDir)
 	}
 }

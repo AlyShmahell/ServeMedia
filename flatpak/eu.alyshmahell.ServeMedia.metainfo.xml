@@ -13,23 +13,18 @@
   <url type="vcs-browser">https://github.com/AlyShmahell/servemedia</url>
   <description>
     <p>
-      ServeMedia is The Self-hosted Media-Server for Linux.
-    </p>
-    <p>
-      Point it at folders on disk, add libraries, and scan with local NFO and
-      posters or fetch from online metadata providers with MatchMedia. 
-      Playback stays in the browser on the same machine or over the network.
-    </p>
-    <p>
-      Built for Linux desktops. Keyboard and gamepad can move focus through
-      Home, libraries, titles, and Settings.
+      ServeMedia is The Self-Hosted Media-Server for Linux. 
+      It is built around a core application called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. 
+      ServeMedia is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. 
+      ServeMedia provides a desktop entry which starts its services then opens the browser pointed to its webpage (port 7676), which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback. 
     </p>
   </description>
   <keywords>
     <keyword>media</keyword>
     <keyword>server</keyword>
     <keyword>library</keyword>
-    <keyword>anime</keyword>
+    <keyword>local</keyword>
+    <keyword>selfhosted</keyword>
     <keyword>playback</keyword>
   </keywords>
   <branding>
@@ -77,6 +72,6 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.0.7" date="2026-09-20"/>
+    <release version="0.0.9" date="2026-09-26"/>
   </releases>
 </component>

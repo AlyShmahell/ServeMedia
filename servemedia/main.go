@@ -31,16 +31,16 @@ import (
 )
 
 func main() {
-	exeDir, err := config.ExeDir()
-	if err != nil {
-		log.Fatal(err)
-	}
 	configPath := flag.String("config", "", "path to default.yaml")
 	doPrepare := flag.Bool("prepare", false, "fetch third-party vendor if missing, then exit")
 	flag.Parse()
 	path := *configPath
 	if path == "" {
-		path = filepath.Join(exeDir, "config", "default.yaml")
+		var err error
+		path, err = config.DefaultConfigPath()
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -49,7 +49,6 @@ func main() {
 	ffbin.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
 	version.Init(cfg.Version)
 
-	matchmediaData := cfg.MatchMediaDataDir()
 	if *doPrepare {
 		if _, err := os.Stat(cfg.MatchMediaBin()); err != nil {
 			log.Fatal(err)
@@ -66,7 +65,7 @@ func main() {
 	_ = os.MkdirAll(cfg.Transcode.Path, 0o755)
 	_ = os.MkdirAll(cfg.Backup.Dir, 0o755)
 
-	proc, err := matchmedia.Start(cfg.ExeDir, matchmediaData, cfg.MatchMedia.Addr, matchmedia.CommonRoot(cfg.MediaRoots()))
+	proc, err := matchmedia.Start(cfg.MatchMedia.Addr, cfg.MediaRoots())
 	if err != nil {
 		log.Printf("matchmedia: %v (metadata may be unavailable)", err)
 	}

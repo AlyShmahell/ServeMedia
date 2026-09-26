@@ -12,33 +12,37 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alyshmahell/servemedia/internal/config"
 	"gopkg.in/yaml.v3"
 )
-
-// MatchMedia v0.0.8 merges this file before {data_dir}/config.yaml.
-const flatpakRunOverlay = "/run/matchmedia/config.yaml"
 
 type Proc struct {
 	cmd *exec.Cmd
 }
 
-func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
-	srcHome := filepath.Join(exeDir, "tools", "matchmedia")
-	bin := filepath.Join(srcHome, "matchmedia")
+func Start(addr string, browseRoots []string) (*Proc, error) {
+	cfg := config.Config{}
+	bin := cfg.MatchMediaBin()
 	if _, err := os.Stat(bin); err != nil {
 		return nil, fmt.Errorf("matchmedia binary: %w", err)
 	}
-	matchmediaHome := srcHome
-	if strings.TrimSpace(os.Getenv("APPIMAGE")) != "" {
-		home, err := prepareAppImageHome(srcHome, dataDir)
-		if err != nil {
-			return nil, err
-		}
-		matchmediaHome = home
-		bin = filepath.Join(matchmediaHome, "matchmedia")
+	bundled := cfg.MatchMediaShare()
+	seed := filepath.Join(bundled, "config", "default.yaml")
+	if _, err := os.Stat(seed); err != nil {
+		return nil, fmt.Errorf("matchmedia seed: %w", err)
 	}
-	_ = os.RemoveAll(filepath.Join(matchmediaHome, "vendor"))
-	if err := writeOverlay(matchmediaHome, dataDir, addr, browseRoot); err != nil {
+	dataDir, err := config.MatchMediaXDGDataDir()
+	if err != nil {
+		return nil, err
+	}
+	if err := seedXDG(bundled, dataDir); err != nil {
+		return nil, err
+	}
+	xdgSeed := filepath.Join(dataDir, "config", "default.yaml")
+	if _, err := os.Stat(xdgSeed); err == nil {
+		seed = xdgSeed
+	}
+	if err := writeOverlay(dataDir, addr, browseRoots); err != nil {
 		return nil, err
 	}
 	base := "http://" + addr
@@ -49,8 +53,8 @@ func Start(exeDir, dataDir, addr, browseRoot string) (*Proc, error) {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	cmd := exec.Command(bin)
-	cmd.Dir = matchmediaHome
+	cmd := exec.Command(bin, "-config", seed)
+	cmd.Dir = filepath.Dir(bin)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -130,34 +134,34 @@ func within(root, path string) bool {
 	return strings.HasPrefix(path, prefix)
 }
 
-func overlayDest(matchmediaHome, _ string) string {
-	if strings.TrimSpace(os.Getenv("FLATPAK_ID")) != "" {
-		return flatpakRunOverlay
-	}
-	return filepath.Join(matchmediaHome, "data", "config.yaml")
+func overlayDest(dataDir string) string {
+	return filepath.Join(dataDir, "config", "overlay.yaml")
 }
 
-func prepareAppImageHome(srcHome, dataDir string) (string, error) {
-	dest := filepath.Join(filepath.Dir(filepath.Dir(dataDir)), "matchmedia-home")
-	if err := os.MkdirAll(dest, 0o755); err != nil {
-		return "", err
+func seedXDG(srcHome, dataDir string) error {
+	if err := os.MkdirAll(filepath.Join(dataDir, "config"), 0o755); err != nil {
+		return err
 	}
-	for _, name := range []string{"matchmedia", "config", "public"} {
-		src := filepath.Join(srcHome, name)
+	for _, rel := range []string{
+		filepath.Join("config", "default.yaml"),
+		"public",
+	} {
+		src := filepath.Join(srcHome, rel)
+		dst := filepath.Join(dataDir, rel)
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
 		if _, err := os.Stat(src); err != nil {
-			if name == "matchmedia" {
-				return "", fmt.Errorf("matchmedia binary: %w", err)
+			if rel == filepath.Join("config", "default.yaml") {
+				return fmt.Errorf("matchmedia seed %s: %w", rel, err)
 			}
 			continue
 		}
-		if err := copyTree(src, filepath.Join(dest, name)); err != nil {
-			return "", fmt.Errorf("matchmedia home %s: %w", name, err)
+		if err := copyTree(src, dst); err != nil {
+			return fmt.Errorf("matchmedia seed %s: %w", rel, err)
 		}
 	}
-	if err := os.Chmod(filepath.Join(dest, "matchmedia"), 0o755); err != nil {
-		return "", err
-	}
-	return dest, nil
+	return nil
 }
 
 func copyTree(src, dst string) error {
@@ -198,16 +202,16 @@ func copyTree(src, dst string) error {
 	})
 }
 
-func writeOverlay(matchmediaHome, dataDir, addr, browseRoot string) error {
-	path := overlayDest(matchmediaHome, dataDir)
+func writeOverlay(dataDir, addr string, browseRoots []string) error {
+	path := overlayDest(dataDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
 	}
-	if strings.TrimSpace(browseRoot) == "" {
-		browseRoot = "/"
+	if len(browseRoots) == 0 {
+		browseRoots = []string{"/"}
 	}
 	out := map[string]any{}
 	if extra := strings.TrimSpace(os.Getenv("SERVEMEDIA_MATCHMEDIA_OVERLAY")); extra != "" {
@@ -223,10 +227,11 @@ func writeOverlay(matchmediaHome, dataDir, addr, browseRoot string) error {
 		}
 	}
 	mergeOverlay(out, map[string]any{
-		"http":        map[string]any{"addr": addr},
-		"data_dir":    dataDir,
-		"browse_root": browseRoot,
+		"http":         map[string]any{"addr": addr},
+		"browse_roots": browseRoots,
 	})
+	delete(out, "data_dir")
+	delete(out, "browse_root")
 	body, err := yaml.Marshal(out)
 	if err != nil {
 		return err

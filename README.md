@@ -21,7 +21,7 @@ GPU transcode uses host Mesa/`libva` when available; software encode is the fall
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AlyShmahell/servemedia/main/install.sh | bash
 ```
-The installer writes `~/.servemedia`, links `~/.local/bin/servemedia`, and adds a user-scope desktop entry. Add `~/.local/bin` to `PATH` if `servemedia` is not found. Override the install prefix with **env var** `SERVEMEDIA_HOME`.
+The installer unpacks the XDG tarball into `~/.local/bin/{servemedia,matchmedia}` and `~/.local/share/{servemedia,matchmedia}`, and adds a user-scope desktop entry. Add `~/.local/bin` to `PATH` if `servemedia` is not found. `SERVEMEDIA_HOME` overrides the writable data dir; `XDG_BIN_HOME` / `XDG_DATA_HOME` override install locations.
 ## Start
 
 Run `servemedia` or the desktop entry. With a display, the browser opens automatically (`SERVEMEDIA_NO_BROWSER=1` skips that). If ServeMedia is already listening, a second start opens the app and exits.
@@ -89,7 +89,7 @@ The same Filesystem grant works in Flatseal. Other Flatpak browsers (Chromium, C
 
 ## Media
 
-Default library roots are `/media` and `/mnt`. Point ServeMedia at your files with `SERVEMEDIA_MEDIA_PATH` or `media.path` in `~/.servemedia/data/config.yaml` (comma-separated paths show as one folder tree). Seed config stays in `~/.servemedia/config/default.yaml`; your changes go in the overlay.
+Default library roots are `/mnt`, `/media`, `$XDG_VIDEOS_DIR`, and `$XDG_MUSIC_DIR`. Point ServeMedia at your files with `SERVEMEDIA_MEDIA_PATH` or `media.path` in `~/.local/share/servemedia/config/overlay.yaml` (comma-separated paths show as one folder tree). Seed config stays in `~/.local/share/servemedia/config/default.yaml`; your changes go in the overlay.
 
 On Home, add a library and Scan (local NFO/posters, or MatchMedia when metadata is ready). Provider keys live under Settings → Integrations. Playback is in the browser. Settings → Backup does one-shot and periodic `tar.zst` of the store.
 
@@ -97,9 +97,11 @@ On Home, add a library and Scan (local NFO/posters, or MatchMedia when metadata 
 
 | Path | Purpose |
 |------|---------|
-| `~/.servemedia` | Binary, seed config, tools |
-| `~/.servemedia/data` | Library database, transcode cache, backups, overlay config |
 | `~/.local/bin/servemedia` | Command on `PATH` |
+| `~/.local/bin/matchmedia` | Bundled MatchMedia binary |
+| `~/.local/share/servemedia` | Seed config, vendor, store, backups, overlay |
+| `~/.local/share/matchmedia` | MatchMedia seed config and public assets |
+| `~/.cache/servemedia/transcode` | HLS transcode cache |
 
 ## Building from source
 

@@ -12,7 +12,7 @@ import (
 	"github.com/alyshmahell/servemedia/internal/config"
 )
 
-// ThirdParty fetches htmx, video.js, and hls.js into {exeDir}/vendor when missing.
+// ThirdParty fetches htmx, video.js, and hls.js into the payload vendor dir when missing.
 // ffmpeg/ffprobe come from the dist builder (static x264, dynamic VAAPI).
 func ThirdParty(cfg config.Config) error {
 	if strings.TrimSpace(cfg.Vendor.HTMXURL) == "" {

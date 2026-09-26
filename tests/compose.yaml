@@ -29,6 +29,12 @@ services:
       context: ./images
       dockerfile: runtime.Containerfile
     environment:
+      HOME: /xdg
+      XDG_DATA_HOME: /xdg/.local/share
+      XDG_CACHE_HOME: /xdg/.cache
+      XDG_STATE_HOME: /xdg/.local/state
+      XDG_CONFIG_HOME: /xdg/.config
+      SERVEMEDIA_ROOT: /app/.local/share/servemedia
       SERVEMEDIA_MEDIA_PATH: /media
       SERVEMEDIA_MATCHMEDIA_OVERLAY: /overlay/matchmedia.yaml
     depends_on:
@@ -38,7 +44,7 @@ services:
         condition: service_started
     volumes:
       - ../build/dist:/app:z
-      - servemedia-test-data:/app/data:Z
+      - servemedia-test-data:/xdg:Z
       - ./fixtures/media:/media:ro,z
       - ./matchmedia-overlay.yaml:/overlay/matchmedia.yaml:ro,z
     working_dir: /app
