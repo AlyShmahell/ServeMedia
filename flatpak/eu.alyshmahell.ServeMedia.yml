@@ -96,8 +96,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/AlyShmahell/ServeMedia.git
-        tag: v0.0.9
-        commit: a8a8ec67a64e4759b189b51b8802718cfc34e58a
+        tag: v0.1.0
+        commit: db2f542ebb36bb28989faf9bae94dbe0c0685ae1
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$
