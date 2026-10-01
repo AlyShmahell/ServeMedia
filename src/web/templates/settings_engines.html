@@ -1,0 +1,159 @@
+{{define "settings_engines.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engines — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/vendor/codemirror/codemirror.min.css">
+{{template "partials/head_scripts.html" .}}
+<script src="/static/vendor/codemirror/codemirror.min.js"></script>
+<script src="/static/vendor/codemirror/yaml.min.js"></script>
+</head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content">
+  <div class="page-main-card">
+    <div class="settings-tabs" role="tablist">
+      <button type="button" class="settings-tab {{if eq .Tab "matchmedia"}}active{{end}}" role="tab" aria-selected="{{if eq .Tab "matchmedia"}}true{{else}}false{{end}}" data-tab="matchmedia">MatchMedia</button>
+      <button type="button" class="settings-tab {{if eq .Tab "ffmpeg"}}active{{end}}" role="tab" aria-selected="{{if eq .Tab "ffmpeg"}}true{{else}}false{{end}}" data-tab="ffmpeg">ffmpeg</button>
+    </div>
+    <div class="settings-tab-panel {{if eq .Tab "matchmedia"}}active{{end}}" id="tab-matchmedia" role="tabpanel" {{if ne .Tab "matchmedia"}}hidden{{end}}>
+      <section class="page-sub-card">
+        <h2>Status</h2>
+        <div class="page-sub-card-body-scroll">
+          <div class="row engines-status-row" id="engines-status">{{template "partials/engines_status.html" .}}</div>
+          <form method="post" action="/settings/engines/restart" id="engines-restart-form">
+            <button type="submit" class="secondary" id="engines-restart">Restart</button>
+          </form>
+        </div>
+      </section>
+      <form method="post" action="/settings/engines" id="engines-matchmedia-form">
+        <section class="page-sub-card">
+          <h2>Provider keys</h2>
+          <div class="page-sub-card-body-scroll">
+            <p class="muted">Provider keys are stored by MatchMedia, not in overlay YAML. Leave a field blank to keep the current value.</p>
+            {{range .SecretKeys}}
+            <label>{{if eq . "omdb"}}OMDb{{else if eq . "tmdb"}}TMDB{{else}}{{.}}{{end}} API key {{if index $.Secrets .}}<span class="muted">(set)</span>{{else}}<span class="muted">(not set)</span>{{end}}</label>
+            <input type="password" name="secret_{{.}}" id="secret-{{.}}" placeholder="Leave blank to keep current" autocomplete="off">
+            {{else}}
+            <p class="muted">No MatchMedia secret keys available.</p>
+            {{end}}
+          </div>
+        </section>
+        <section class="page-sub-card">
+          <h2>Config</h2>
+          <div class="page-sub-card-body-scroll">
+            <p class="muted">MatchMedia overlay.yaml. Restore default wipes it back to the shipped seed.</p>
+            {{if .OverlayError}}<p class="muted">{{.OverlayError}}</p>{{end}}
+            <textarea name="overlay_yaml" id="overlay-yaml" rows="24" spellcheck="false">{{.OverlayYAML}}</textarea>
+          </div>
+        </section>
+        <p class="row tab-footer">
+          <button type="submit" id="engines-save">Save</button>
+          <button type="submit" class="secondary" id="engines-restore" formaction="/settings/engines/restore" formmethod="post" onclick="return confirm('Restore MatchMedia default overlay? Custom overlay keys will be removed. Secrets are kept.')">Restore default</button>
+        </p>
+      </form>
+    </div>
+    <div class="settings-tab-panel {{if eq .Tab "ffmpeg"}}active{{end}}" id="tab-ffmpeg" role="tabpanel" {{if ne .Tab "ffmpeg"}}hidden{{end}}>
+      <section class="page-sub-card">
+        <h2>ffmpeg</h2>
+        <div class="page-sub-card-body-scroll">
+          <p class="muted">Transcode: H.264 CRF {{.Config.Transcode.CRF}}, max height {{.Config.Transcode.MaxHeight}}p</p>
+          <p class="muted">Hardware acceleration: {{.TranscodeHW}}</p>
+          {{if .ActiveTranscode}}
+          <p class="muted">Active transcode pipeline: {{.ActiveTranscode}}</p>
+          {{end}}
+          <p class="muted">VAAPI uses GPU decode when supported; 10-bit sources convert on CPU after GPU decode. Hybrid CPU decode runs only as fallback.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</main></div>
+<script>
+(function () {
+  var tabs = document.querySelectorAll(".settings-tab");
+  var panels = {
+    matchmedia: document.getElementById("tab-matchmedia"),
+    ffmpeg: document.getElementById("tab-ffmpeg")
+  };
+  var cm;
+  function initCM() {
+    if (cm || typeof CodeMirror === "undefined") return;
+    var ta = document.getElementById("overlay-yaml");
+    if (!ta) return;
+    cm = CodeMirror.fromTextArea(ta, { mode: "yaml", lineNumbers: true, lineWrapping: true, theme: "servemedia" });
+  }
+  function showTab(name) {
+    tabs.forEach(function (t) {
+      var on = t.getAttribute("data-tab") === name;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    Object.keys(panels).forEach(function (k) {
+      if (!panels[k]) return;
+      var show = k === name;
+      panels[k].hidden = !show;
+      panels[k].classList.toggle("active", show);
+    });
+    if (name === "matchmedia") {
+      initCM();
+      if (cm) cm.refresh();
+    }
+  }
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function () { showTab(tab.getAttribute("data-tab")); });
+  });
+  var form = document.getElementById("engines-matchmedia-form");
+  if (form) {
+    form.addEventListener("submit", function () {
+      if (cm) cm.save();
+    });
+  }
+  var restartForm = document.getElementById("engines-restart-form");
+  var statusEl = document.getElementById("engines-status");
+  function swapStatus(html) {
+    if (!statusEl) return;
+    statusEl.innerHTML = html;
+  }
+  function statusReady(html) {
+    return html.indexOf("MatchMedia ready") !== -1;
+  }
+  function pollStatus(left) {
+    fetch("/hx/engines/matchmedia/status", { credentials: "same-origin" })
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        swapStatus(html);
+        if (!statusReady(html) && left > 0) {
+          setTimeout(function () { pollStatus(left - 1); }, 1000);
+        }
+      })
+      .catch(function () {
+        if (left > 0) setTimeout(function () { pollStatus(left - 1); }, 1000);
+      });
+  }
+  if (restartForm) {
+    restartForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!confirm("Restart MatchMedia?")) return;
+      fetch("/settings/engines/restart", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "HX-Request": "true" }
+      }).then(function (r) {
+        if (!r.ok) {
+          swapStatus('<p class="muted" id="engines-status-text">MatchMedia unavailable</p>');
+          pollStatus(60);
+          return;
+        }
+        return r.text().then(function (html) {
+          swapStatus(html);
+          if (!statusReady(html)) pollStatus(60);
+        });
+      }).catch(function () {
+        swapStatus('<p class="muted" id="engines-status-text">MatchMedia unavailable</p>');
+        pollStatus(60);
+      });
+    });
+  }
+  if (panels.matchmedia && !panels.matchmedia.hidden) initCM();
+})();
+</script>
+</body></html>
+{{end}}

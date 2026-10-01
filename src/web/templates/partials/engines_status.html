@@ -1,0 +1,7 @@
+{{define "partials/engines_status.html"}}
+{{if .Ready}}
+<p class="muted" id="engines-status-text">MatchMedia ready{{if .MetaVersion}} ({{.MetaVersion}}){{else if .Version}} ({{.Version}}){{end}}</p>
+{{else}}
+<p class="muted" id="engines-status-text">{{if .Reason}}{{.Reason}}{{else}}MatchMedia unavailable{{end}}</p>
+{{end}}
+{{end}}
