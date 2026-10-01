@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
 func TestFFmpegArgsVAAPIFull(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/db"
 )
 
 func TestPerUserLibraries(t *testing.T) {
@@ -54,6 +54,10 @@ func TestPerUserLibraries(t *testing.T) {
 	}
 	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='match_error'`).Scan(&errCol); err != nil || errCol != 1 {
 		t.Fatalf("media_items.match_error missing: %d %v", errCol, err)
+	}
+	var candCol int
+	if err := d.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('media_items') WHERE name='match_candidates'`).Scan(&candCol); err != nil || candCol != 1 {
+		t.Fatalf("media_items.match_candidates missing: %d %v", candCol, err)
 	}
 
 	alist, err := d.ListLibraries(ctx, a.ID)

@@ -55,11 +55,18 @@ BY_ID = {
 }
 
 
+def _is_film_title_query(q: str) -> bool:
+    q = " ".join(q.lower().split())
+    if any(tok in q for tok in ("legend", "pack", "longer", "variant", "stray")):
+        return False
+    return "film title" in q
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         return
 
-    def _json(self, code: int, body: dict):
+    def _json(self, code: int, body: dict | list):
         data = json.dumps(body).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -79,17 +86,118 @@ class Handler(BaseHTTPRequestHandler):
 
         qs = parse_qs(parsed.query)
         path = parsed.path.rstrip("/") or "/"
+        qblob = " ".join(
+            v[0] for v in (qs.get("q"), qs.get("query"), qs.get("s"), qs.get("t")) if v
+        ).lower()
+        wants_film = _is_film_title_query(qblob)
+        film_hit = {
+            "id": 2016,
+            "title": "Film Title.",
+            "name": "Film Title.",
+            "release_date": "2016-01-01",
+            "first_air_date": "2016-01-01",
+            "poster_path": "/poster.jpg",
+        }
 
-        # TVMaze / Jikan / TMDB search shapes — empty so synthetic show names stay unmatched.
-        if path == "/search/shows" or path.endswith("/search/movie") or path.endswith("/search/tv"):
+        # TVMaze / Jikan / TMDB search — Film Title hits; synthetic shows stay unmatched.
+        if path == "/search/shows":
+            if wants_film:
+                self._json(
+                    200,
+                    [
+                        {
+                            "show": {
+                                "id": 2016,
+                                "name": "Film Title.",
+                                "premiered": "2016-01-01",
+                                "image": {"medium": POSTER},
+                            }
+                        }
+                    ],
+                )
+                return
             self._json(200, [])
             return
+        if path.endswith("/search/movie") or path.endswith("/search/tv"):
+            if wants_film:
+                self._json(200, {"results": [film_hit]})
+            else:
+                self._json(200, {"results": []})
+            return
         if path == "/anime" or path.endswith("/anime"):
+            if wants_film:
+                self._json(
+                    200,
+                    {
+                        "data": [
+                            {
+                                "mal_id": 2016,
+                                "title": "Film Title.",
+                                "year": 2016,
+                                "images": {"jpg": {"image_url": POSTER}},
+                            }
+                        ]
+                    },
+                )
+                return
             self._json(200, {"data": []})
             return
         if path.startswith("/3/"):
+            if path.rstrip("/").endswith("/movie/2016"):
+                self._json(
+                    200,
+                    {
+                        "id": 2016,
+                        "title": "Film Title.",
+                        "release_date": "2016-01-01",
+                        "poster_path": POSTER,
+                    },
+                )
+                return
+            if wants_film:
+                self._json(
+                    200,
+                    {
+                        "results": [
+                            {
+                                "id": 2016,
+                                "title": "Film Title.",
+                                "release_date": "2016-01-01",
+                                "poster_path": POSTER,
+                            }
+                        ]
+                    },
+                )
+                return
             self._json(200, {"results": []})
             return
+
+        parts = [p for p in path.strip("/").split("/") if p]
+        if parts and parts[-1] == "2016" and "search" not in path:
+            if "anime" in parts:
+                self._json(
+                    200,
+                    {
+                        "data": {
+                            "mal_id": 2016,
+                            "title": "Film Title.",
+                            "year": 2016,
+                            "images": {"jpg": {"image_url": POSTER}},
+                        }
+                    },
+                )
+                return
+            if "movie" in parts or path.startswith("/3/"):
+                self._json(
+                    200,
+                    {
+                        "id": 2016,
+                        "title": "Film Title.",
+                        "release_date": "2016-01-01",
+                        "poster_path": POSTER,
+                    },
+                )
+                return
 
         if "i" in qs:
             imdb = qs["i"][0]
@@ -101,7 +209,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if "s" in qs:
             title = qs["s"][0].lower()
-            if "film title" in title:
+            if _is_film_title_query(title):
                 self._json(
                     200,
                     {

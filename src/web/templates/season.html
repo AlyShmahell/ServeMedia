@@ -7,25 +7,32 @@
   <div class="season-main-card" data-scroll-key="season-main">
     <header class="season-sticky-head">
       <div class="season-head-row">
-        <h1>{{if .Season.Title.Valid}}{{.Season.Title.String}}{{else}}Season {{.Season.SeasonNumber}}{{end}}</h1>
+        <div class="poster-wrap season-head-poster" data-upload-url="/hx/shows/{{.Item.ID}}/seasons/{{.Season.SeasonNumber}}/poster">
+          <img class="poster" src="{{if .Season.PosterPath.Valid}}{{posterURL .Season.PosterPath.String}}{{else}}{{posterURL ""}}{{end}}" alt="">
+          <button type="button" class="field-icon field-icon-upload" data-role="upload" title="Upload poster" aria-label="Upload poster">{{template "partials/icon_upload.html"}}</button>
+        </div>
+        <div class="season-head-copy">
+          <h1><span class="editable" data-edit-url="/hx/shows/{{.Item.ID}}/seasons/{{.Season.SeasonNumber}}/meta" data-edit-field="title"><span class="editable-text">{{if .Season.Title.Valid}}{{.Season.Title.String}}{{else}}Season {{.Season.SeasonNumber}}{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span></h1>
+          <p class="plot editable{{if not .Season.Plot.Valid}} is-empty{{end}}{{if and .Season.Plot.Valid (eq .Season.Plot.String "")}} is-empty{{end}}" data-edit-url="/hx/shows/{{.Item.ID}}/seasons/{{.Season.SeasonNumber}}/meta" data-edit-field="plot" data-edit-multiline="1" data-empty-label="No synopsis"><span class="editable-text">{{if and .Season.Plot.Valid .Season.Plot.String}}{{.Season.Plot.String}}{{else}}No synopsis{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit synopsis" aria-label="Edit synopsis">{{template "partials/icon_edit.html"}}</button></p>
+        </div>
       </div>
-      {{if .Season.Plot.Valid}}<p class="plot">{{.Season.Plot.String}}</p>{{end}}
     </header>
     <div class="season-main-body">
       <div class="episode-grid">
         {{range .Episodes}}
         <article class="episode-card">
-          <div class="episode-still-wrap">
+          <div class="episode-still-wrap" data-upload-url="/hx/episodes/{{.Episode.ID}}/poster">
             <a class="episode-still" href="/play/episode/{{.Episode.ID}}">
               <img class="poster" src="{{posterURL .Episode.StillPath.String .Episode.MetaID.String}}" alt="">
               <span class="play-overlay" aria-hidden="true">▶</span>
               <span class="visually-hidden">Play</span>
               <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
             </a>
+            <button type="button" class="field-icon field-icon-upload" data-role="upload" title="Upload still" aria-label="Upload still">{{template "partials/icon_upload.html"}}</button>
           </div>
           <div class="episode-card-body">
-            <h3><span class="muted">E{{.Episode.EpisodeNumber}}</span> {{if .Episode.Title.Valid}}{{.Episode.Title.String}}{{else}}Episode {{.Episode.EpisodeNumber}}{{end}}</h3>
-            {{if .Episode.Plot.Valid}}<p class="plot">{{.Episode.Plot.String}}</p>{{else}}<p class="muted">No synopsis</p>{{end}}
+            <h3><span class="muted">E{{.Episode.EpisodeNumber}}</span> <span class="editable" data-edit-url="/hx/episodes/{{.Episode.ID}}/meta" data-edit-field="title"><span class="editable-text">{{if .Episode.Title.Valid}}{{.Episode.Title.String}}{{else}}Episode {{.Episode.EpisodeNumber}}{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span></h3>
+            <p class="plot editable{{if not .Episode.Plot.Valid}} is-empty{{end}}{{if and .Episode.Plot.Valid (eq .Episode.Plot.String "")}} is-empty{{end}}" data-edit-url="/hx/episodes/{{.Episode.ID}}/meta" data-edit-field="plot" data-edit-multiline="1" data-empty-label="No synopsis"><span class="editable-text">{{if and .Episode.Plot.Valid .Episode.Plot.String}}{{.Episode.Plot.String}}{{else}}No synopsis{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit synopsis" aria-label="Edit synopsis">{{template "partials/icon_edit.html"}}</button></p>
           </div>
         </article>
         {{else}}
@@ -35,5 +42,6 @@
     </div>
   </div>
 </main></div>
+{{template "partials/poster_dialog.html" .}}
 </body></html>
 {{end}}

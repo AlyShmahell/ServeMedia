@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
-	"github.com/alyshmahell/servemedia/web"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/web"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -164,5 +164,71 @@ func TestHandleMatchGetRendersCandidates(t *testing.T) {
 	}
 	if !strings.Contains(html, "2016") {
 		t.Fatalf("missing 2016: %s", html)
+	}
+}
+
+func TestHandleMatchGetUsesSnapshotWhenLiveJobsEmpty(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "/media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "show", Title: "Frieren", Path: "/media/Frieren", Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sess = "sess-snap"
+	if err := d.SetMatchMediaMatch(ctx, id, sess, "job-show", "manual", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMatchCandidates(ctx, id, `{"candidates":[{"provider":"tvmaze","id":"99","title":"Frieren","year":"2023","score":0.91}]}`); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-show", "status": "manual",
+		}})
+	})
+	stub := httptest.NewServer(mux)
+	defer stub.Close()
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Store.Path = store
+	s := &Server{
+		Cfg: cfg, DB: d, Templates: MustParseTemplates(tplFS),
+		Meta: &matchmedia.Client{Base: stub.URL, HTTP: stub.Client()},
+	}
+	rtr := chi.NewRouter()
+	rtr.Get("/hx/media/{id}/match", s.handleMatchGet)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/hx/media/%d/match", id), nil)
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	rtr.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	html := w.Body.String()
+	if !strings.Contains(html, `class="cand"`) {
+		t.Fatalf("missing cand buttons: %s", html)
+	}
+	if !strings.Contains(html, "Frieren") {
+		t.Fatalf("missing snapshot title: %s", html)
 	}
 }

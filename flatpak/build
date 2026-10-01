@@ -8,7 +8,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/.." && pwd)"
 BUILD="$ROOT/build"
 PINS="$DIR/pins"
-DEFAULT_YAML="$ROOT/servemedia/share/config/default.yaml"
+DEFAULT_YAML="$ROOT/src/share/config/default.yaml"
 APP_ID="eu.alyshmahell.ServeMedia"
 YML="$DIR/${APP_ID}.yml"
 META="$DIR/${APP_ID}.metainfo.xml"
@@ -90,6 +90,7 @@ keys = (
     "htmx_url", "htmx_license_url",
     "videojs_js_url", "videojs_css_url", "videojs_license_url",
     "hls_url", "hls_license_url",
+    "codemirror_js_url", "codemirror_css_url", "codemirror_yaml_url", "codemirror_license_url",
 )
 in_mm = in_vendor = False
 for line in open(sys.argv[1]):
@@ -170,7 +171,7 @@ prepare_work() {
   cp "$src/flatpak/pins/"*.txt "$work/pins/"
   if [[ "$mode" == offline ]]; then
     mkdir -p "$work/local-src"
-    cp -a "$src/servemedia" "$work/local-src/"
+    cp -a "$src/src" "$work/local-src/"
     cp -a "$src/flatpak" "$work/local-src/"
     cp -a "$src/LICENSE" "$work/local-src/"
     python3 - "$work/$APP_ID.yml" <<'PY'
@@ -284,7 +285,6 @@ inner_build() {
 
 inner_package() {
   local offline="${1:-}"
-  local version="${VERSION:?}"
   local cache="${CACHE:-/cache}"
   local out="${OUT:-/out}"
   local work="${WORK:-$cache/work}"
@@ -298,7 +298,7 @@ inner_package() {
     exit 1
   fi
   mkdir -p "$out"
-  dest="$out/servemedia-${version}-linux-amd64.flatpak"
+  dest="$out/servemedia-linux-amd64.flatpak"
   if [[ -n "$offline" ]]; then
     flatpak build-bundle "$repo" "$dest" "$APP_ID"
   else
@@ -344,24 +344,24 @@ inner_regen() {
     git clone --depth 1 --branch "$sm_tag" "https://github.com/${SM_REPO}.git" "$work/servemedia-src"
   else
     mkdir -p "$work/servemedia-src"
-    cp -a "${src}/servemedia" "$work/servemedia-src/servemedia"
+    cp -a "${src}/src" "$work/servemedia-src/src"
   fi
-  sm_src="$work/servemedia-src/servemedia"
+  sm_src="$work/servemedia-src/src"
   rm -rf "$sm_src/vendor"
 
   git clone --depth 1 --branch "$mm_tag" "https://github.com/${MM_REPO}.git" "$work/matchmedia-src"
-  mm_src="$work/matchmedia-src/matchmedia"
+  mm_src="$work/matchmedia-src/src"
   rm -rf "$mm_src/vendor"
 
   export GOFLAGS=-buildvcs=false
   export GOPROXY=https://proxy.golang.org,direct
   mkdir -p "$work/sm" "$work/mm" "${src}/flatpak/pins"
   go run github.com/dennwc/flatpak-go-mod@latest \
-    -dest-pref servemedia/ \
+    -dest-pref src/ \
     -out "$work/sm" \
     "$sm_src"
   go run github.com/dennwc/flatpak-go-mod@latest \
-    -dest-pref matchmedia/ \
+    -dest-pref src/ \
     -out "$work/mm" \
     "$mm_src"
 
@@ -379,9 +379,9 @@ inner_regen() {
     sm_sha="$(sha256sum "${src}/flatpak/pins/servemedia.modules.txt" | awk '{print $1}')"
     mm_sha="$(sha256sum "${src}/flatpak/pins/matchmedia.modules.txt" | awk '{print $1}')"
     rewrite_modules_to_url "$work/sm/go.mod.yml" \
-      "${src}/flatpak/pins/servemedia-go-sources.yml" "servemedia/" "$sm_url" "$sm_sha"
+      "${src}/flatpak/pins/servemedia-go-sources.yml" "src/" "$sm_url" "$sm_sha"
     rewrite_modules_to_url "$work/mm/go.mod.yml" \
-      "${src}/flatpak/pins/matchmedia-go-sources.yml" "matchmedia/" "$mm_url" "$mm_sha"
+      "${src}/flatpak/pins/matchmedia-go-sources.yml" "src/" "$mm_url" "$mm_sha"
   else
     rewrite_go_sources_path "$work/sm/go.mod.yml" pins/servemedia.modules.txt \
       "${src}/flatpak/pins/servemedia-go-sources.yml"
@@ -610,12 +610,12 @@ def pin_file(yml, dest, url, sha):
         sys.exit(5)
     return out
 
-if len(args) < 24:
+if len(args) < 37:
     sys.exit("error: apply_yml_vendor_and_git arg count")
-for j in range(7):
+for j in range(11):
     dest, url, sha = args[j * 3], args[j * 3 + 1], args[j * 3 + 2]
     yml = pin_file(yml, dest, url, sha)
-notices = args[21:24]
+notices = args[33:37]
 
 def pin_notice(yml, dest, url):
     block = rf"(printf '%s\\n' ')[^']+(' >/app/vendor/{re.escape(dest)})"
@@ -627,6 +627,7 @@ def pin_notice(yml, dest, url):
 yml = pin_notice(yml, "htmx.min.js.NOTICE", notices[0])
 yml = pin_notice(yml, "video.js/LICENSE.NOTICE", notices[1])
 yml = pin_notice(yml, "hls.min.js.NOTICE", notices[2])
+yml = pin_notice(yml, "codemirror/LICENSE.NOTICE", notices[3])
 yml_path.write_text(yml)
 PY
 }
@@ -660,7 +661,7 @@ print("DATE=" + json.dumps(pub))
   }
   SM_COMMIT="$(tag_commit "https://api.github.com/repos/${SM_REPO}/git/refs/tags/${TAG}")"
   curl -fL -A "$UA" --retry 3 --retry-delay 1 -o "$cfg" \
-    "https://raw.githubusercontent.com/${SM_REPO}/${TAG}/servemedia/share/config/default.yaml"
+    "https://raw.githubusercontent.com/${SM_REPO}/${TAG}/src/share/config/default.yaml"
   eval "$(parse_default_yaml "$cfg")" || {
     echo "error: default.yaml on ${TAG} missing fields" >&2
     exit 1
@@ -674,6 +675,10 @@ print("DATE=" + json.dumps(pub))
   VIDEOJS_LIC_SHA="$(hash_url "$VIDEOJS_LICENSE_URL")"
   HLS_SHA="$(hash_url "$HLS_URL")"
   HLS_LIC_SHA="$(hash_url "$HLS_LICENSE_URL")"
+  CM_JS_SHA="$(hash_url "$CODEMIRROR_JS_URL")"
+  CM_CSS_SHA="$(hash_url "$CODEMIRROR_CSS_URL")"
+  CM_YAML_SHA="$(hash_url "$CODEMIRROR_YAML_URL")"
+  CM_LIC_SHA="$(hash_url "$CODEMIRROR_LICENSE_URL")"
   apply_yml_vendor_and_git \
     "$TAG" "$SM_COMMIT" "$MM_TAG" "$MM_COMMIT" \
     htmx.min.js "$HTMX_URL" "$HTMX_SHA" \
@@ -683,7 +688,11 @@ print("DATE=" + json.dumps(pub))
     videojs.LICENSE "$VIDEOJS_LICENSE_URL" "$VIDEOJS_LIC_SHA" \
     hls.min.js "$HLS_URL" "$HLS_SHA" \
     hls.min.js.LICENSE "$HLS_LICENSE_URL" "$HLS_LIC_SHA" \
-    "$HTMX_LICENSE_URL" "$VIDEOJS_LICENSE_URL" "$HLS_LICENSE_URL"
+    codemirror.min.js "$CODEMIRROR_JS_URL" "$CM_JS_SHA" \
+    codemirror.min.css "$CODEMIRROR_CSS_URL" "$CM_CSS_SHA" \
+    yaml.min.js "$CODEMIRROR_YAML_URL" "$CM_YAML_SHA" \
+    codemirror.LICENSE "$CODEMIRROR_LICENSE_URL" "$CM_LIC_SHA" \
+    "$HTMX_LICENSE_URL" "$VIDEOJS_LICENSE_URL" "$HLS_LICENSE_URL" "$CODEMIRROR_LICENSE_URL"
   update_metainfo "$VER" "$DATE"
   echo "resync online: ${TAG}@${SM_COMMIT} ${MM_TAG}@${MM_COMMIT}"
   SERVEMEDIA_TAG="$TAG"
@@ -713,6 +722,10 @@ do_resync_offline() {
     VIDEOJS_LIC_SHA="$(hash_url "$VIDEOJS_LICENSE_URL")"
     HLS_SHA="$(hash_url "$HLS_URL")"
     HLS_LIC_SHA="$(hash_url "$HLS_LICENSE_URL")"
+    CM_JS_SHA="$(hash_url "$CODEMIRROR_JS_URL")"
+    CM_CSS_SHA="$(hash_url "$CODEMIRROR_CSS_URL")"
+    CM_YAML_SHA="$(hash_url "$CODEMIRROR_YAML_URL")"
+    CM_LIC_SHA="$(hash_url "$CODEMIRROR_LICENSE_URL")"
     apply_yml_vendor_and_git \
       "${SM_TAG:-v0.0.0}" "${SM_COMMIT:-0}" "$MM_TAG" "${MM_COMMIT:-0}" \
       htmx.min.js "$HTMX_URL" "$HTMX_SHA" \
@@ -722,7 +735,11 @@ do_resync_offline() {
       videojs.LICENSE "$VIDEOJS_LICENSE_URL" "$VIDEOJS_LIC_SHA" \
       hls.min.js "$HLS_URL" "$HLS_SHA" \
       hls.min.js.LICENSE "$HLS_LICENSE_URL" "$HLS_LIC_SHA" \
-      "$HTMX_LICENSE_URL" "$VIDEOJS_LICENSE_URL" "$HLS_LICENSE_URL"
+      codemirror.min.js "$CODEMIRROR_JS_URL" "$CM_JS_SHA" \
+      codemirror.min.css "$CODEMIRROR_CSS_URL" "$CM_CSS_SHA" \
+      yaml.min.js "$CODEMIRROR_YAML_URL" "$CM_YAML_SHA" \
+      codemirror.LICENSE "$CODEMIRROR_LICENSE_URL" "$CM_LIC_SHA" \
+      "$HTMX_LICENSE_URL" "$VIDEOJS_LICENSE_URL" "$HLS_LICENSE_URL" "$CODEMIRROR_LICENSE_URL"
   else
     python3 - "$YML" "$MM_TAG" "${MM_COMMIT:-}" <<'PY'
 import pathlib, re, sys
@@ -753,10 +770,9 @@ PY
 }
 
 do_install_host() {
-  local ver bundle
+  local bundle
   need_flatpak
-  ver="$(app_version)"
-  bundle="$BUILD/package/servemedia-${ver}-linux-amd64.flatpak"
+  bundle="$BUILD/package/servemedia-linux-amd64.flatpak"
   if [[ ! -f "$bundle" ]]; then
     echo "error: package missing: $bundle" >&2
     exit 1

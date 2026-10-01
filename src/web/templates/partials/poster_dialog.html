@@ -1,0 +1,28 @@
+{{define "partials/poster_dialog.html"}}
+<dialog id="poster-edit-dialog" class="modal poster-dialog">
+  <form method="dialog" class="modal-form" onsubmit="return false">
+    <header class="modal-head">
+      <h2 id="poster-edit-title">Poster</h2>
+      <button type="button" class="btn-icon secondary" id="poster-edit-exit" aria-label="Close">×</button>
+    </header>
+    <div class="poster-edit-preview">
+      <img id="poster-edit-img" class="poster" src="/static/placeholder.svg" alt="Poster preview">
+    </div>
+    <input id="poster-edit-file" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+    <footer class="modal-foot poster-edit-actions">
+      <button type="button" id="poster-edit-upload">Upload</button>
+      <button type="button" id="poster-edit-discard" disabled>Discard</button>
+      <button type="button" id="poster-edit-remove" class="poster-edit-remove" title="Remove poster" aria-label="Remove poster">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+          <path d="M10 11v6"></path>
+          <path d="M14 11v6"></path>
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path>
+        </svg>
+      </button>
+      <button type="button" id="poster-edit-save" disabled>Save</button>
+    </footer>
+  </form>
+</dialog>
+{{end}}

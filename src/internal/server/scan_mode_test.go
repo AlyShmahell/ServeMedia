@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/fetch"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/fetch"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 	"github.com/go-chi/chi/v5"
 )
 

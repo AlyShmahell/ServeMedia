@@ -1,0 +1,43 @@
+{{define "support.html"}}
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css">{{template "partials/head_scripts.html" .}}</head>
+<body><div class="shell">{{template "nav" .}}
+<main class="content support-page">
+  <div class="support-card">
+    <h2>Support ServeMedia</h2>
+    <div class="support-qr-wrap">
+      <a href="https://ko-fi.com/alyshmahell" target="_blank" rel="noopener noreferrer">
+        <img class="support-qr" src="/static/support-qr.svg" alt="Ko-fi QR code">
+        <span class="support-qr-cup" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
+            <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
+            <line x1="6" y1="1" x2="6" y2="4"></line>
+            <line x1="10" y1="1" x2="10" y2="4"></line>
+            <line x1="14" y1="1" x2="14" y2="4"></line>
+          </svg>
+        </span>
+      </a>
+    </div>
+    <a class="support-btn support-btn-primary" href="https://github.com/sponsors/AlyShmahell" target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.7-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3z"></path></svg>
+      Sponsor Me
+      <span aria-hidden="true">♥</span>
+    </a>
+    <a class="support-btn" href="https://github.com/AlyShmahell/ServeMedia" target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 17.3l-6.2 3.7 1.6-7L2 9.2l7.1-.6L12 2l2.9 6.6 7.1.6-5.4 4.8 1.6 7z"></path></svg>
+      Star ServeMedia
+    </a>
+    <a class="support-btn" href="https://github.com/AlyShmahell/ServeMedia/graphs/contributors" target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+        <circle cx="9" cy="7" r="4"></circle>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+      </svg>
+      Contributors
+    </a>
+  </div>
+</main></div></body></html>
+{{end}}

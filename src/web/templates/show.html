@@ -5,17 +5,21 @@
 <body><div class="shell">{{template "nav" .}}
 <main class="content hero-meta show-page">
   <div class="media-hero show-hero-card" data-scroll-key="show-hero">
-    <div class="poster-wrap media-hero-poster">
+    <div class="poster-wrap media-hero-poster" data-upload-url="/hx/media/{{.Item.ID}}/poster">
       <div class="poster-play static">
         <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
       </div>
+      <button type="button" class="field-icon field-icon-upload" data-role="upload" title="Upload poster" aria-label="Upload poster">{{template "partials/icon_upload.html"}}</button>
       {{template "partials/card_actions.html" (mediaActions "show" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
     </div>
     <div class="media-meta">
-      <h1>{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>
+      {{$plot := ""}}
+      {{with .NFO}}{{if .Plot}}{{$plot = .Plot}}{{else}}{{$plot = .Outline}}{{end}}{{end}}
+      {{if eq $plot ""}}{{if .Item.Plot.Valid}}{{$plot = .Item.Plot.String}}{{end}}{{end}}
+      <h1><span class="editable" data-edit-url="/hx/media/{{.Item.ID}}/meta" data-edit-field="title"><span class="editable-text">{{.Item.Title}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span>{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>
+      {{with .NFO}}{{if .Tagline}}<p class="tagline">{{.Tagline}}</p>{{end}}{{end}}
+      <p class="plot editable{{if eq $plot ""}} is-empty{{end}}" data-edit-url="/hx/media/{{.Item.ID}}/meta" data-edit-field="plot" data-edit-multiline="1" data-empty-label="No synopsis"><span class="editable-text">{{if $plot}}{{$plot}}{{else}}No synopsis{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit synopsis" aria-label="Edit synopsis">{{template "partials/icon_edit.html"}}</button></p>
       {{with .NFO}}
-        {{if .Tagline}}<p class="tagline">{{.Tagline}}</p>{{end}}
-        {{if .Plot}}<p class="plot">{{.Plot}}</p>{{else if .Outline}}<p class="plot">{{.Outline}}</p>{{end}}
         <dl class="nfo-dl">
           {{if .OriginalTitle}}<div><dt>Original title</dt><dd>{{.OriginalTitle}}</dd></div>{{end}}
           {{if .Runtime}}<div><dt>Runtime</dt><dd>{{.Runtime}} min</dd></div>{{end}}
@@ -37,8 +41,6 @@
           {{end}}
         </ul>
         {{end}}
-      {{else}}
-        {{if .Item.Plot.Valid}}<p class="plot">{{.Item.Plot.String}}</p>{{end}}
       {{end}}
     </div>
   </div>
@@ -49,14 +51,15 @@
         {{range .SeasonCards}}
         {{if gt .EpisodeCount 0}}
         <a class="season-card" href="/shows/{{$.Item.ID}}/seasons/{{.Season.SeasonNumber}}">
-          <div class="poster-wrap season-poster-wrap">
+          <div class="poster-wrap season-poster-wrap" data-upload-url="/hx/shows/{{$.Item.ID}}/seasons/{{.Season.SeasonNumber}}/poster">
             <img class="poster" src="{{if .Season.PosterPath.Valid}}{{posterURL .Season.PosterPath.String $.Item.MetaID.String}}{{else}}{{posterURL $.Item.PosterPath.String $.Item.MetaID.String}}{{end}}" alt="">
+            <button type="button" class="field-icon field-icon-upload" data-role="upload" title="Upload poster" aria-label="Upload poster">{{template "partials/icon_upload.html"}}</button>
             <div class="poster-progress"><span style="width:{{.ProgressPct}}%"></span></div>
           </div>
           <div class="season-card-body">
-            <h3>{{if .Season.Title.Valid}}{{.Season.Title.String}}{{else}}Season {{.Season.SeasonNumber}}{{end}}</h3>
+            <h3><span class="editable" data-edit-url="/hx/shows/{{$.Item.ID}}/seasons/{{.Season.SeasonNumber}}/meta" data-edit-field="title"><span class="editable-text">{{if .Season.Title.Valid}}{{.Season.Title.String}}{{else}}Season {{.Season.SeasonNumber}}{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span></h3>
             <p class="muted">{{.EpisodeCount}} episode{{if ne .EpisodeCount 1}}s{{end}}</p>
-            {{if .Season.Plot.Valid}}<p class="plot">{{.Season.Plot.String}}</p>{{end}}
+            <p class="plot editable{{if not .Season.Plot.Valid}} is-empty{{end}}{{if and .Season.Plot.Valid (eq .Season.Plot.String "")}} is-empty{{end}}" data-edit-url="/hx/shows/{{$.Item.ID}}/seasons/{{.Season.SeasonNumber}}/meta" data-edit-field="plot" data-edit-multiline="1" data-empty-label="No synopsis"><span class="editable-text">{{if and .Season.Plot.Valid .Season.Plot.String}}{{.Season.Plot.String}}{{else}}No synopsis{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit synopsis" aria-label="Edit synopsis">{{template "partials/icon_edit.html"}}</button></p>
           </div>
         </a>
         {{end}}
@@ -80,6 +83,7 @@
 </main></div>
 {{template "partials/fetch_modal.html" .}}
 {{template "partials/entry_scan_modal.html" .}}
+{{template "partials/poster_dialog.html" .}}
 <div id="match-modal-host"></div>
 </body></html>
 {{end}}

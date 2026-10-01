@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/metadata"
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
 )
 
 func TestParseEpisode(t *testing.T) {

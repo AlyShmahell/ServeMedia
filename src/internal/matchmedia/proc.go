@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -274,6 +274,7 @@ func writeOverlay(dataDir, seedPath string) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("matchmedia seed: %w", err)
 	}
+	seedKinds := groupKinds(out)
 	if existing, err := loadYAMLMap(path); err == nil {
 		mergeOverlay(out, existing)
 	} else if !os.IsNotExist(err) {
@@ -286,6 +287,7 @@ func writeOverlay(dataDir, seedPath string) error {
 		}
 		mergeOverlay(out, more)
 	}
+	setGroupKinds(out, seedKinds)
 	delete(out, "data_dir")
 	delete(out, "browse_root")
 	body, err := yaml.Marshal(out)
@@ -306,6 +308,26 @@ func mergeOverlay(dst, src map[string]any) {
 		}
 		dst[k] = v
 	}
+}
+
+func groupKinds(cfg map[string]any) any {
+	g, ok := cfg["group"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return g["kinds"]
+}
+
+func setGroupKinds(cfg map[string]any, kinds any) {
+	if kinds == nil {
+		return
+	}
+	g, ok := cfg["group"].(map[string]any)
+	if !ok {
+		cfg["group"] = map[string]any{"kinds": kinds}
+		return
+	}
+	g["kinds"] = kinds
 }
 
 func stopExisting(bin string) {

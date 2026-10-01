@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/web"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/web"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -98,8 +98,8 @@ func TestHandleShowOmitsEmptySeasons(t *testing.T) {
 	if strings.Contains(body, "secret plot") {
 		t.Fatal("nested plot should be omitted")
 	}
-	if strings.Contains(body, "No synopsis") {
-		t.Fatal("no synopsis placeholder")
+	if !strings.Contains(body, `data-edit-url="/hx/media/` ) {
+		t.Fatal("show edit control")
 	}
 }
 

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -386,6 +386,45 @@ func TestWriteOverlayExistingWins(t *testing.T) {
 	}
 	if cfg.Match.MinScore != 0.8 {
 		t.Fatalf("min_score=%v", cfg.Match.MinScore)
+	}
+}
+
+func TestWriteOverlaySeedWinsGroupKinds(t *testing.T) {
+	seed := filepath.Join(t.TempDir(), "default.yaml")
+	if err := os.WriteFile(seed, []byte("group:\n  kinds: [ova, specials]\nmatch:\n  min_score: 0.72\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	data := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(data, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(data, "config", "overlay.yaml"), []byte("group:\n  kinds: [ova, specials, movie, movies, film]\nmatch:\n  min_score: 0.8\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
+	if err := writeOverlay(data, seed); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(data, "config", "overlay.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Group struct {
+			Kinds []string `yaml:"kinds"`
+		} `yaml:"group"`
+		Match struct {
+			MinScore float64 `yaml:"min_score"`
+		} `yaml:"match"`
+	}
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Match.MinScore != 0.8 {
+		t.Fatalf("min_score=%v", cfg.Match.MinScore)
+	}
+	if len(cfg.Group.Kinds) != 2 || cfg.Group.Kinds[0] != "ova" || cfg.Group.Kinds[1] != "specials" {
+		t.Fatalf("kinds=%#v", cfg.Group.Kinds)
 	}
 }
 

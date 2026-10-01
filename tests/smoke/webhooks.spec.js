@@ -25,7 +25,8 @@ test('integrations page shows webhook settings', async ({ page }) => {
   await ensureAdmin(page);
   await page.goto('/settings/integrations');
   await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Webhooks' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Webhooks' })).toBeVisible();
+  await expect(page.locator('#tab-metadata')).toHaveCount(0);
   await expect(page.locator('#webhook-api-key')).not.toHaveValue('');
 });
 

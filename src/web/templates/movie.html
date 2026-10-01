@@ -5,18 +5,22 @@
 <body><div class="shell">{{template "nav" .}}
 <main class="content hero-meta">
   <div class="media-hero">
-    <div class="poster-wrap media-hero-poster">
+    <div class="poster-wrap media-hero-poster" data-upload-url="/hx/media/{{.Item.ID}}/poster">
       <a class="poster-play" href="/play/movie/{{.Item.ID}}" title="Play">
         <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
         <span class="play-icon" aria-hidden="true"></span>
       </a>
+      <button type="button" class="field-icon field-icon-upload" data-role="upload" title="Upload poster" aria-label="Upload poster">{{template "partials/icon_upload.html"}}</button>
       {{template "partials/card_actions.html" (mediaActions "movie" .Item.ID .Item.Title .MetaReady .MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
     </div>
     <div class="media-meta">
-      <h1>{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>
+      {{$plot := ""}}
+      {{with .NFO}}{{if .Plot}}{{$plot = .Plot}}{{else}}{{$plot = .Outline}}{{end}}{{end}}
+      {{if eq $plot ""}}{{if .Item.Plot.Valid}}{{$plot = .Item.Plot.String}}{{end}}{{end}}
+      <h1><span class="editable" data-edit-url="/hx/media/{{.Item.ID}}/meta" data-edit-field="title"><span class="editable-text">{{.Item.Title}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span>{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</h1>
+      {{with .NFO}}{{if .Tagline}}<p class="tagline">{{.Tagline}}</p>{{end}}{{end}}
+      <p class="plot editable{{if eq $plot ""}} is-empty{{end}}" data-edit-url="/hx/media/{{.Item.ID}}/meta" data-edit-field="plot" data-edit-multiline="1" data-empty-label="No synopsis"><span class="editable-text">{{if $plot}}{{$plot}}{{else}}No synopsis{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit synopsis" aria-label="Edit synopsis">{{template "partials/icon_edit.html"}}</button></p>
       {{with .NFO}}
-        {{if .Tagline}}<p class="tagline">{{.Tagline}}</p>{{end}}
-        {{if .Plot}}<p class="plot">{{.Plot}}</p>{{else if .Outline}}<p class="plot">{{.Outline}}</p>{{end}}
         <dl class="nfo-dl">
           {{if .OriginalTitle}}<div><dt>Original title</dt><dd>{{.OriginalTitle}}</dd></div>{{end}}
           {{if .Runtime}}<div><dt>Runtime</dt><dd>{{.Runtime}} min</dd></div>{{end}}
@@ -38,7 +42,6 @@
         </ul>
         {{end}}
       {{else}}
-        {{if .Item.Plot.Valid}}<p class="plot">{{.Item.Plot.String}}</p>{{end}}
         {{if .Item.RuntimeSeconds.Valid}}<p class="muted">Runtime: {{.Item.RuntimeSeconds.Int64}} min</p>{{end}}
       {{end}}
     </div>
@@ -46,6 +49,7 @@
 </main></div>
 {{template "partials/fetch_modal.html" .}}
 {{template "partials/entry_scan_modal.html" .}}
+{{template "partials/poster_dialog.html" .}}
 <div id="match-modal-host"></div>
 </body></html>
 {{end}}

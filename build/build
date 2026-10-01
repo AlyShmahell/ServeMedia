@@ -184,6 +184,7 @@ overlay_matchmedia() {
 
 vendor() {
   local htmx_url htmx_lic videojs_js videojs_css videojs_lic hls_url hls_lic
+  local cm_js cm_css cm_yaml cm_lic
   htmx_url="$(yaml_url htmx_url)"
   htmx_lic="$(yaml_url htmx_license_url)"
   videojs_js="$(yaml_url videojs_js_url)"
@@ -191,7 +192,11 @@ vendor() {
   videojs_lic="$(yaml_url videojs_license_url)"
   hls_url="$(yaml_url hls_url)"
   hls_lic="$(yaml_url hls_license_url)"
-  mkdir -p "$SHARE/vendor/video.js" "$SHARE/vendor/ffmpeg"
+  cm_js="$(yaml_url codemirror_js_url)"
+  cm_css="$(yaml_url codemirror_css_url)"
+  cm_yaml="$(yaml_url codemirror_yaml_url)"
+  cm_lic="$(yaml_url codemirror_license_url)"
+  mkdir -p "$SHARE/vendor/video.js" "$SHARE/vendor/ffmpeg" "$SHARE/vendor/codemirror"
   retry -o "$SHARE/vendor/htmx.min.js" "$htmx_url"
   retry -o "$SHARE/vendor/htmx.min.js.LICENSE" "$htmx_lic"
   printf '%s\n' "$htmx_lic" >"$SHARE/vendor/htmx.min.js.NOTICE"
@@ -202,6 +207,11 @@ vendor() {
   retry -o "$SHARE/vendor/hls.min.js" "$hls_url"
   retry -o "$SHARE/vendor/hls.min.js.LICENSE" "$hls_lic"
   printf '%s\n' "$hls_lic" >"$SHARE/vendor/hls.min.js.NOTICE"
+  retry -o "$SHARE/vendor/codemirror/codemirror.min.js" "$cm_js"
+  retry -o "$SHARE/vendor/codemirror/codemirror.min.css" "$cm_css"
+  retry -o "$SHARE/vendor/codemirror/yaml.min.js" "$cm_yaml"
+  retry -o "$SHARE/vendor/codemirror/LICENSE" "$cm_lic"
+  printf '%s\n' "$cm_lic" >"$SHARE/vendor/codemirror/LICENSE.NOTICE"
 }
 
 fetch_src() {
@@ -418,7 +428,10 @@ appimage() {
       exit 1
     fi
   done
-  name="$(basename "$tarball" .tar.gz).AppImage"
+  name="servemedia-linux-amd64.AppImage"
+  local version
+  version="$(yaml_version_from_text < "$share/config/default.yaml")"
+  version="${version:-0.0.0}"
   qs="$work/quick-sharun"
   retry -o "$qs" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh"
   chmod +x "$qs"
@@ -430,11 +443,16 @@ appimage() {
   export OUTNAME="$name"
   export DESKTOP="$root/.local/share/applications/servemedia.desktop"
   export ICON="$share/public/logo.svg"
+  export VERSION="$version"
+  export STARTUPWMCLASS=eu.alyshmahell.ServeMedia
+  export UPINFO="gh-releases-zsync|AlyShmahell|servemedia|latest|servemedia-linux-amd64.AppImage.zsync"
   "$qs" \
     "$root/.local/bin/servemedia" \
     "$root/.local/bin/matchmedia"
   mkdir -p "$appdir/servemedia"
   cp -a "$root"/. "$appdir/servemedia/"
+  mkdir -p "$appdir/shared/share"
+  cp -a "$root/.local/share/matchmedia" "$appdir/shared/share/matchmedia"
   find "$appdir" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
   cat >"$appdir/bin/00-servemedia-root.hook" <<'EOF'
 export SERVEMEDIA_ROOT="${APPDIR}/servemedia/.local/share/servemedia"

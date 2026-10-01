@@ -18,15 +18,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/backup"
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/fetch"
-	"github.com/alyshmahell/servemedia/internal/media"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
-	"github.com/alyshmahell/servemedia/internal/server"
-	"github.com/alyshmahell/servemedia/internal/watchdog"
-	"github.com/alyshmahell/servemedia/web"
+	"github.com/alyshmahell/servemedia/src/internal/backup"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/fetch"
+	"github.com/alyshmahell/servemedia/src/internal/media"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/server"
+	"github.com/alyshmahell/servemedia/src/internal/watchdog"
+	"github.com/alyshmahell/servemedia/src/web"
 )
 
 func main() {

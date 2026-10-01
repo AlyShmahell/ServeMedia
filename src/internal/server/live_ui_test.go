@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/backup"
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/web"
+	"github.com/alyshmahell/servemedia/src/internal/backup"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/web"
 	"github.com/go-chi/chi/v5"
 )
 

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/metadata"
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
 )
 
 func TestTitleYearFromVideoPath_flatMoviesUsesFilename(t *testing.T) {
@@ -42,6 +42,21 @@ func TestPreferBareMovieSidecar_flat(t *testing.T) {
 	path := filepath.Join(movies, "Film A (2016).mp4")
 	if metadata.PreferBareMovieSidecar(path) {
 		t.Fatal("flat should not prefer bare")
+	}
+}
+
+func TestPreferBareMovieSidecar_tvshowNFO(t *testing.T) {
+	dir := t.TempDir()
+	show := filepath.Join(dir, "KonoSuba")
+	_ = os.MkdirAll(filepath.Join(show, "Season 1"), 0o755)
+	movie := filepath.Join(show, "Legend of Crimson.mkv")
+	_ = os.WriteFile(movie, []byte("x"), 0o644)
+	_ = os.WriteFile(filepath.Join(show, "tvshow.nfo"), []byte("<tvshow/>"), 0o644)
+	if metadata.PreferBareMovieSidecar(movie) {
+		t.Fatal("show folder must not use bare movie poster.jpg")
+	}
+	if !metadata.DirHasTVShowNFO(movie) {
+		t.Fatal("tvshow.nfo")
 	}
 }
 

@@ -24,19 +24,6 @@ rebuild() {
   compose up --build --force-recreate --abort-on-container-exit
 }
 
-yaml_field() {
-  local key="$1" file="$2"
-  awk -v k="$key" '
-    $1 == k ":" {
-      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
-      gsub(/^"/, "")
-      gsub(/"[[:space:]]*$/, "")
-      print
-      exit
-    }
-  ' "$file"
-}
-
 stage_package() {
   local staging="$1"
   mkdir -p "$staging/servemedia"
@@ -65,9 +52,7 @@ package() {
   fi
   mkdir -p "$DIR/package"
   : >"$DIR/package/.gitkeep"
-  local version staging
-  version="$(yaml_field version "$DIR/dist/.local/share/servemedia/config/default.yaml")"
-  version="${version:-0.0.0}"
+  local staging
 
   HOME="$DIR/cache/xdg" \
     XDG_DATA_HOME="$DIR/cache/xdg/.local/share" \
@@ -76,7 +61,7 @@ package() {
 
   staging="$(mktemp -d)"
   stage_package "$staging"
-  local name="servemedia-${version}-linux-amd64.tar.gz"
+  local name="servemedia-linux-amd64.tar.gz"
   write_tar "$staging" "$name"
   rm -rf "$staging"
   compose run --rm dist /build appimage "/package/$name"

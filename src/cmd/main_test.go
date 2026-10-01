@@ -6,7 +6,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
 func TestPublicURL(t *testing.T) {

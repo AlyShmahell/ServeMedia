@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 )
 
 func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
@@ -423,6 +423,221 @@ func TestMatchPathAppliesJobWhileGrouping(t *testing.T) {
 	late, err := d.GetMediaItemByPath(ctx, lib.ID, latePath)
 	if err != nil || late == nil || late.Title != "Late Film" {
 		t.Fatalf("late %#v %v", late, err)
+	}
+}
+
+func TestStreamJobsReportsProgressPerApply(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstDir := filepath.Join(media, "First Film")
+	firstPath := filepath.Join(firstDir, "First Film.mkv")
+	secondDir := filepath.Join(media, "Second Film")
+	secondPath := filepath.Join(secondDir, "Second Film.mkv")
+	for _, dir := range []string{firstDir, secondDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(firstPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secondPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const sess = "20260829T122800Z-progressbatch0001"
+	releaseSecond := make(chan struct{})
+	var sawMid atomic.Bool
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":2}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"files":2,"done":2,"running":false}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{
+				"id": "job-first", "status": "matched", "path": firstDir, "source": "scan",
+				"files": []map[string]any{{"path": firstPath}},
+				"match": map[string]any{"provider": "tmdb", "id": "1", "title": "First Film", "year": "2016"},
+			},
+			{
+				"id": "job-second", "status": "matched", "path": secondDir, "source": "scan",
+				"files": []map[string]any{{"path": secondPath}},
+				"match": map[string]any{"provider": "tmdb", "id": "2", "title": "Second Film", "year": "2017"},
+			},
+		})
+	})
+	mux.HandleFunc("/v1/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = io.WriteString(w, "fakejpeg")
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/v1/catalog/tmdb/")
+		if id == "2" {
+			select {
+			case <-releaseSecond:
+			case <-time.After(3 * time.Second):
+				http.Error(w, "timeout waiting for mid progress", http.StatusGatewayTimeout)
+				return
+			}
+		}
+		title, year := "First Film", "2016"
+		if id == "2" {
+			title, year = "Second Film", "2017"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"provider": "tmdb", "id": id, "title": title, "year": year, "type": "movie",
+			"synopsis": "plot", "poster": "/v1/catalog/tmdb/" + id + "/poster.jpg",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	scanJobID, err := d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true, ScanJobID: scanJobID})
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		job, _ := d.GetScanJob(ctx, scanJobID)
+		if job != nil && strings.Contains(job.Message.String, "Applied 1/2") {
+			sawMid.Store(true)
+			close(releaseSecond)
+			break
+		}
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Fatal("scan finished before mid-batch progress")
+		default:
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !sawMid.Load() {
+		t.Fatal("expected Applied 1/2 before the second title finished")
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamJobsKeepsRunningOnStatusError(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	filmDir := filepath.Join(media, "Film Title")
+	filmPath := filepath.Join(filmDir, "Film Title.mkv")
+	if err := os.MkdirAll(filmDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filmPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const sess = "20260829T122800Z-statuserrorkeep01"
+	var statusHits atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"` + sess + `","files":1}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		n := statusHits.Add(1)
+		switch {
+		case n == 1:
+			_, _ = w.Write([]byte(`{"files":1,"done":0,"running":true}`))
+		case n < 4:
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+		default:
+			_, _ = w.Write([]byte(`{"files":1,"done":1,"running":false}`))
+		}
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if statusHits.Load() < 4 {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-film", "status": "matched", "path": filmDir, "source": "scan",
+			"files": []map[string]any{{"path": filmPath}},
+			"match": map[string]any{"provider": "tmdb", "id": "11", "title": "Film Title", "year": "2016"},
+		}})
+	})
+	mux.HandleFunc("/v1/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = io.WriteString(w, "fakejpeg")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"provider": "tmdb", "id": "11", "title": "Film Title", "year": "2016", "type": "movie",
+			"synopsis": "plot", "poster": "/v1/catalog/tmdb/11/poster.jpg",
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	scanJobID, err := d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true, ScanJobID: scanJobID}); err != nil {
+		t.Fatal(err)
+	}
+	if statusHits.Load() < 4 {
+		t.Fatalf("status hits %d: worker returned during grouping errors", statusHits.Load())
+	}
+	got, err := d.GetMediaItemByPath(ctx, lib.ID, filmPath)
+	if err != nil || got == nil || got.Title != "Film Title" {
+		t.Fatalf("film %#v %v", got, err)
 	}
 }
 
@@ -1241,6 +1456,58 @@ func TestFranchiseSiblingsStayUnnested(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSameCatalogSiblingsStayUnnested(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(media, "Knights of Sidonia")
+	aDir := filepath.Join(root, "Sidonia no Kishi")
+	bDir := filepath.Join(root, "Sidonia no Kishi S2")
+	epA := filepath.Join(aDir, "Season 1", "S01E01.mkv")
+	epB := filepath.Join(bDir, "Season 1", "S01E01.mkv")
+	for _, p := range []string{epA, epB} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const sess = "20261001T060000Z-sidoniasiblings000"
+	mux := twoShowMatchMux(t, sess, aDir, bDir, "Sidonia no Kishi", "Sidonia no Kishi", "2060", "2060")
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true}); err != nil {
+		t.Fatal(err)
+	}
+	items, err := d.ListMediaItems(ctx, lib.ID, "", "")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("library cards %#v %v", items, err)
+	}
+	for _, it := range items {
+		if it.ParentID.Valid {
+			t.Fatalf("same-catalog sibling nested: %#v", it)
+		}
+		if it.MetaID.String != "2060" {
+			t.Fatalf("meta %#v", it)
+		}
 	}
 }
 
@@ -3068,7 +3335,7 @@ func TestRescanOverwriteOffStillHitsCatalog(t *testing.T) {
 	}
 }
 
-func TestMoviesInsideShowBecomeSeason0(t *testing.T) {
+func TestUnmatchedMoviesUnderShowStayMovieCards(t *testing.T) {
 	ctx := context.Background()
 	store := t.TempDir()
 	media := t.TempDir()
@@ -3134,18 +3401,31 @@ func TestMoviesInsideShowBecomeSeason0(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Kind != "show" {
 		t.Fatalf("library cards %#v %v", items, err)
 	}
-	if got, _ := d.GetMediaItemByPath(ctx, lib.ID, legend); got != nil {
-		t.Fatalf("legend must not be a card %#v", got)
+	show := items[0]
+	legendItem, err := d.GetMediaItemByPath(ctx, lib.ID, legend)
+	if err != nil || legendItem == nil || legendItem.Kind != "movie" {
+		t.Fatalf("legend card %#v %v", legendItem, err)
 	}
-	if got, _ := d.GetMediaItemByPath(ctx, lib.ID, pack); got != nil {
-		t.Fatalf("pack must not be a card %#v", got)
+	if !legendItem.ParentID.Valid || legendItem.ParentID.Int64 != show.ID {
+		t.Fatalf("legend parent %#v want %d", legendItem.ParentID, show.ID)
 	}
-	eps, err := d.ListEpisodesByShow(ctx, items[0].ID)
+	packItem, err := d.GetMediaItemByPath(ctx, lib.ID, pack)
+	if err != nil || packItem == nil || packItem.Kind != "movie" {
+		t.Fatalf("pack card %#v %v", packItem, err)
+	}
+	if !packItem.ParentID.Valid || packItem.ParentID.Int64 != show.ID {
+		t.Fatalf("pack parent %#v want %d", packItem.ParentID, show.ID)
+	}
+	children, err := d.ListChildMediaItems(ctx, show.ID)
+	if err != nil || len(children) != 2 {
+		t.Fatalf("children %#v %v", children, err)
+	}
+	eps, err := d.ListEpisodesByShow(ctx, show.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s0 := 0
-	seasons, err := d.ListSeasons(ctx, items[0].ID)
+	seasons, err := d.ListSeasons(ctx, show.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3158,8 +3438,8 @@ func TestMoviesInsideShowBecomeSeason0(t *testing.T) {
 			s0++
 		}
 	}
-	if s0 != 2 {
-		t.Fatalf("season-0 count %d want 2 eps %#v", s0, eps)
+	if s0 != 0 {
+		t.Fatalf("season-0 count %d want 0 eps %#v", s0, eps)
 	}
 }
 

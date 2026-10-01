@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="servemedia/web/static/logo.svg" alt="ServeMedia" width="200">
+  <img src="src/web/static/logo.svg" alt="ServeMedia" width="200">
 </p>
 
 <h1 align="center">ServeMedia</h1>
@@ -8,25 +8,53 @@
 <b>ServeMedia</b> is <it>The Self-Hosted Media-Server for Linux</it>. It is built around a core application called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. <b>ServeMedia</b> is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. <b>ServeMedia</b> provides a desktop entry which starts its services then opens the browser pointed to its webpage (port <b>7676</b>), which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback.
 </p>
 
+> [!WARNING]
+> ServeMedia is currently in Beta, users might face some breaking bugs or incomplete functionality.
+> Work is being done to remedy any issues, please feel free to open up [issues on github](https://github.com/AlyShmahell/ServeMedia/issues )
+
 ## Requirements
 
 - Linux x86_64
-- `curl` and `python3` (for the installer)
-- A real terminal (the installer shows a menu)
-
-GPU transcode uses host Mesa/`libva` when available; software encode is the fallback.
+- GPU transcode: 
+  1. host Mesa/`libva` when present for Harware Acceleration (on GPU/iGPU)
+  2. otherwise software encode (on CPU)
 
 ## Install
-- from [GitHub Releases](https://github.com/AlyShmahell/servemedia/releases), using the automated installer:
+
+### As a Desktop Application
+
+| AppImage (Download) | Flatpak (Download) | AppImage (Install with AppManager) | Flatpak (Install with Gnome Software) |
+| --- | --- | --- | --- |
+| [![Download AppImage](https://img.shields.io/badge/AppImage-download-informational?style=for-the-badge&logo=appimage&logoColor=white)](https://github.com/AlyShmahell/ServeMedia/releases/latest/download/servemedia-linux-amd64.AppImage) | [![Download Flatpak](https://img.shields.io/badge/Flatpak-download-informational?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/AlyShmahell/ServeMedia/releases/latest/download/servemedia-linux-amd64.flatpak) | [![Install AppImage with AppManager](https://img.shields.io/badge/AppImage-install-informational?style=for-the-badge&logo=appimage&logoColor=white)](appimg://install?url=https%3A%2F%2Fgithub.com%2FAlyShmahell%2FServeMedia%2Freleases%2Flatest%2Fdownload%2Fservemedia-linux-amd64.AppImage) | [![Install Flatpak with GNOME Software](https://img.shields.io/badge/Flatpak-install-informational?style=for-the-badge&logo=flatpak&logoColor=white)](flatpak+https://github.com/AlyShmahell/ServeMedia/releases/latest/download/servemedia-linux-amd64.flatpak) |
+
+#### Flatpak
+
+Needs `org.freedesktop.Platform.ffmpeg-full` (26.08).
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlyShmahell/servemedia/main/install.sh | bash
+flatpak run eu.alyshmahell.ServeMedia
 ```
-The installer unpacks the XDG tarball into `~/.local/bin/{servemedia,matchmedia}` and `~/.local/share/{servemedia,matchmedia}`, and adds a user-scope desktop entry. Add `~/.local/bin` to `PATH` if `servemedia` is not found. `SERVEMEDIA_HOME` overrides the writable data dir; `XDG_BIN_HOME` / `XDG_DATA_HOME` override install locations.
+
+- Sandbox can already read `/media`, `/mnt`, `/run/media`, `~/Videos`, and `~/Music`. 
+- Extra media library directories:
+  ```bash
+  flatpak override --user --filesystem=/path/to/library eu.alyshmahell.ServeMedia
+  ```
+
+### As a Server Application
+
+```bash
+curl -fL https://github.com/AlyShmahell/ServeMedia/releases/latest/download/servemedia-linux-amd64.tar.gz \
+  | tar -xz -C "$HOME" --strip-components=1 servemedia/.local
+```
+
 ## Start
 
-Run `servemedia` or the desktop entry. With a display, the browser opens automatically (`SERVEMEDIA_NO_BROWSER=1` skips that). If ServeMedia is already listening, a second start opens the app and exits.
-
-The first visit goes to `/register` and creates the **admin**. After that, `/register` is gone. Add other users under Settings → Users.
+- Desktop entry, `flatpak run eu.alyshmahell.ServeMedia`, or `servemedia`
+- Browser opens on port **7676** (`SERVEMEDIA_NO_BROWSER=1` skips that)
+- A second start opens the app and exits if ServeMedia is already listening
+- First visit is `/register` and creates the **admin**; after that `/register` is gone
+- Other users: Settings → Users
 
 ## How to
 
@@ -73,36 +101,33 @@ Browser playback.
 Arrow keys or a gamepad move focus on Home, libraries, titles, and Settings. The focus outline appears while using arrows or a pad, not for mouse-only use.
 
 <p align="center">
-  <img src="servemedia/share/assets/controls-gamepad.svg" alt="Gamepad: D-pad and left stick move focus, or seek 10 seconds and change volume on the player. A activates or plays and pauses. B goes back or leaves the player." width="640">
+  <img src="src/share/assets/controls-gamepad.svg" alt="Gamepad: D-pad and left stick move focus, or seek 10 seconds and change volume on the player. A activates or plays and pauses. B goes back or leaves the player." width="640">
 </p>
 <p align="center">
-  <img src="servemedia/share/assets/controls-keyboard.svg" alt="Keyboard: arrow keys move focus, or seek and change volume on the player. Enter activates. Space plays and pauses on the player." width="640">
+  <img src="src/share/assets/controls-keyboard.svg" alt="Keyboard: arrow keys move focus, or seek and change volume on the player. Enter activates. Space plays and pauses on the player." width="640">
 </p>
 
-If the pad does nothing in **Firefox from Flathub**, Linux often already sees it (`/dev/input/js*`) but Firefox cannot list it: the sandbox has device access and still lacks host udev (`/run/udev`). Grant it, then fully quit Firefox and reopen ServeMedia:
+If the pad does nothing in **Firefox from Flathub**, grant host udev, then fully quit Firefox and reopen ServeMedia:
 
 ```bash
 flatpak override --user --filesystem=/run/udev:ro org.mozilla.firefox
 ```
 
-The same Filesystem grant works in Flatseal. Other Flatpak browsers (Chromium, Chrome) hit the same udev gap — use that app’s ID instead of `org.mozilla.firefox`. Distro-packaged Firefox usually needs nothing extra.
+Same grant works in Flatseal. Other Flatpak browsers: use that app’s ID. Distro Firefox usually needs nothing extra.
 
 ## Media
 
-Default library roots are `/mnt`, `/media`, `$XDG_VIDEOS_DIR`, and `$XDG_MUSIC_DIR`. Point ServeMedia at your files with `SERVEMEDIA_MEDIA_PATH` or `media.path` in `~/.local/share/servemedia/config/overlay.yaml` (comma-separated paths show as one folder tree). Seed config stays in `~/.local/share/servemedia/config/default.yaml`; your changes go in the overlay.
+Default media library roots: `/mnt`, `/media`, `$XDG_VIDEOS_DIR`, `$XDG_MUSIC_DIR`.
 
-On Home, add a library and Scan (local NFO/posters, or MatchMedia when metadata is ready). Provider keys live under Settings → Integrations. Playback is in the browser. Settings → Backup does one-shot and periodic `tar.zst` of the store.
+| | Flatpak | AppImage |
+|--|---------|----------|
+| Data | `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` | `~/.local/share/servemedia/` |
+| MatchMedia Config Overlay | `…/config/overlay.yaml` | `…/config/overlay.yaml` |
+| Cache | `~/.var/app/eu.alyshmahell.ServeMedia/cache/servemedia/transcode` | `~/.cache/servemedia/transcode` |
+## Misc
+- Provider keys and MatchMedia YAML: Settings → Engines → MatchMedia
+- FFMPEG Hardware Acceleration Status: Settings → Engines → FFMPEG
+- Scan: Home → add a library (3 Scan modes to choose from)
 
-## Files
-
-| Path | Purpose |
-|------|---------|
-| `~/.local/bin/servemedia` | Command on `PATH` |
-| `~/.local/bin/matchmedia` | Bundled MatchMedia binary |
-| `~/.local/share/servemedia` | Seed config, vendor, store, backups, overlay |
-| `~/.local/share/matchmedia` | MatchMedia seed config and public assets |
-| `~/.cache/servemedia/transcode` | HLS transcode cache |
-
-## Building from source
-
-See [docs/dev/workflow.md](docs/dev/workflow.md).
+## Developers: 
+[docs/architecture.md](docs/architecture.md).

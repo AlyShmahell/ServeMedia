@@ -3,7 +3,7 @@ package config_test
 import (
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
 func TestEnsureIntegrationDefaults(t *testing.T) {

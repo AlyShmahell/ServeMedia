@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
 type Pipeline int
@@ -223,20 +223,23 @@ func joinExistingLibVADriverDirs(dirs ...string) string {
 	return strings.Join(found, ":")
 }
 
+// Host Fedora/RPM Fusion paths first. Do not include Freedesktop multiarch
+// /usr/lib/x86_64-linux-gnu/dri — that dir exists in the Flatpak sandbox and
+// pinning LIBVA_DRIVERS_PATH to it blocks ffmpeg-full's default driver search.
+var libvaDriverSearchDirs = []string{
+	"/usr/lib64/dri-nonfree",
+	"/usr/lib64/dri-freeworld",
+	"/usr/lib64/dri",
+	"/usr/lib/dri-nonfree",
+	"/usr/lib/dri-freeworld",
+	"/usr/lib/dri",
+}
+
 func ensureLibVADriversPath() {
 	if os.Getenv("LIBVA_DRIVERS_PATH") != "" {
 		return
 	}
-	path := joinExistingLibVADriverDirs(
-		"/usr/lib64/dri-nonfree",
-		"/usr/lib64/dri-freeworld",
-		"/usr/lib64/dri",
-		"/usr/lib/dri-nonfree",
-		"/usr/lib/dri-freeworld",
-		"/usr/lib/dri",
-		"/usr/lib/x86_64-linux-gnu/dri",
-		"/usr/lib/aarch64-linux-gnu/dri",
-	)
+	path := joinExistingLibVADriverDirs(libvaDriverSearchDirs...)
 	if path == "" {
 		return
 	}

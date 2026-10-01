@@ -13,7 +13,7 @@
 *.so
 *.dylib
 *.test
-servemedia/servemedia
+src/servemedia
 
 # Test / coverage
 *.out
@@ -29,6 +29,7 @@ go.work.sum
 .env
 /data/
 !data/.gitkeep
+__pycache__/
 
 # Editor
 .idea/

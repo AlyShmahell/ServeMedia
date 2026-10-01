@@ -6,8 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alyshmahell/servemedia/internal/fetch"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/fetch"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -42,15 +43,21 @@ func (s *Server) handleMatchGet(w http.ResponseWriter, r *http.Request) {
 			jobErr = "no MatchMedia job for this title — rescan to match again"
 		} else {
 			job = j
-			if job.Match != nil {
-				job.Match.Poster = s.Meta.ResolveURL(job.Match.Poster, session)
-			}
-			for i := range job.Candidates {
-				job.Candidates[i].Poster = s.Meta.ResolveURL(job.Candidates[i].Poster, session)
-			}
 		}
 	} else {
 		jobErr = "no MatchMedia job for this title — rescan to match again"
+	}
+	job = mergePickerSnapshot(job, it)
+	if len(pickerCandidates(job)) > 0 {
+		jobErr = ""
+	}
+	if s.Meta != nil {
+		if job.Match != nil {
+			job.Match.Poster = s.Meta.ResolveURL(job.Match.Poster, session)
+		}
+		for i := range job.Candidates {
+			job.Candidates[i].Poster = s.Meta.ResolveURL(job.Candidates[i].Poster, session)
+		}
 	}
 	cands := pickerCandidates(job)
 	sort.Slice(cands, func(i, j int) bool { return cands[i].Score > cands[j].Score })
@@ -108,6 +115,23 @@ func pickerCandidates(job matchmedia.Job) []matchmedia.Candidate {
 		}
 	}
 	return append([]matchmedia.Candidate{m}, cands...)
+}
+
+func mergePickerSnapshot(job matchmedia.Job, it *db.MediaItem) matchmedia.Job {
+	if it == nil || !it.MatchCandidates.Valid || strings.TrimSpace(it.MatchCandidates.String) == "" {
+		return job
+	}
+	if len(pickerCandidates(job)) > 0 {
+		return job
+	}
+	snap := fetch.DecodePickerSnapshot(it.MatchCandidates.String)
+	if job.Match == nil {
+		job.Match = snap.Match
+	}
+	if len(job.Candidates) == 0 {
+		job.Candidates = snap.Candidates
+	}
+	return job
 }
 
 // RefreshFetchConfig re-syncs the MatchMedia-backed fetch worker after config save / reopen.

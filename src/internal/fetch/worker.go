@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
-	"github.com/alyshmahell/servemedia/internal/metadata"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
 )
 
 type Worker struct {
@@ -102,7 +102,10 @@ func (w *Worker) matchIngest(ctx context.Context, lib *db.Library, item *db.Medi
 	if err != nil {
 		return err
 	}
-	return w.streamJobs(ctx, lib, scanned.Session, item, opts)
+	if _, err := w.streamJobs(ctx, lib, scanned.Session, item, opts); err != nil {
+		return err
+	}
+	return w.extractMissingStills(ctx, lib, item, opts)
 }
 
 func ingestYear(item *db.MediaItem, title string) string {
@@ -128,27 +131,41 @@ func (w *Worker) MatchPath(ctx context.Context, lib *db.Library, scanPath string
 	if err != nil {
 		return err
 	}
-	return w.streamJobs(ctx, lib, scanned.Session, only, opts)
+	jobs, err := w.streamJobs(ctx, lib, scanned.Session, only, opts)
+	if err != nil {
+		return err
+	}
+	if only == nil {
+		if err := w.retryUnmatchedShows(ctx, lib, jobs, opts); err != nil {
+			return err
+		}
+	}
+	return w.extractMissingStills(ctx, lib, only, opts)
 }
 
-func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string, only *db.MediaItem, opts Opts) error {
-	applied := map[string]struct{}{}
+func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string, only *db.MediaItem, opts Opts) ([]matchmedia.Job, error) {
+	applied := map[string]string{}
 	deadline := time.Now().Add(75 * time.Minute)
+	var last matchmedia.ScanProgress
+	var lastJobs []matchmedia.Job
 	for {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return lastJobs, ctx.Err()
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("matchmedia timed out")
+			return lastJobs, fmt.Errorf("matchmedia timed out")
 		}
 		p, err := w.Meta.ScanStatus(session)
 		if err != nil {
-			p = matchmedia.ScanProgress{}
+			p = last
+		} else {
+			last = p
 		}
 		jobs, err := w.Meta.Jobs(session)
 		if err != nil {
-			return err
+			return lastJobs, err
 		}
+		lastJobs = jobs
 		pending := 0
 		for _, j := range jobs {
 			if j.Status == "pending" || j.Status == "" {
@@ -156,30 +173,88 @@ func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string
 			}
 		}
 		w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
-		appliedBatch := 0
 		for _, j := range jobs {
 			if j.Status == "pending" || j.Status == "" {
 				continue
 			}
-			if _, ok := applied[j.ID]; ok {
+			fp := jobApplyFingerprint(j)
+			if prev, ok := applied[j.ID]; ok && prev == fp {
+				continue
+			}
+			status := strings.ToLower(strings.TrimSpace(j.Status))
+			if p.Running && (status == "unmatched" || status == "error") && j.Match == nil && len(j.Candidates) == 0 {
 				continue
 			}
 			if err := w.applyFinishedJob(ctx, lib, j, only, opts, session); err != nil {
-				return err
+				return lastJobs, err
 			}
-			applied[j.ID] = struct{}{}
-			appliedBatch++
-		}
-		if appliedBatch > 0 {
+			applied[j.ID] = fp
 			w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
 		}
 		if pending == 0 && !p.Running {
-			return nil
+			return lastJobs, nil
 		}
-		if appliedBatch == 0 {
-			time.Sleep(400 * time.Millisecond)
+		time.Sleep(400 * time.Millisecond)
+	}
+}
+
+func (w *Worker) retryUnmatchedShows(ctx context.Context, lib *db.Library, jobs []matchmedia.Job, opts Opts) error {
+	var targets []matchmedia.Job
+	for _, j := range jobs {
+		if !retryableUnmatchedShow(j) {
+			continue
+		}
+		path := strings.TrimSpace(j.Path)
+		if path == "" {
+			continue
+		}
+		it, err := w.DB.GetMediaItemByPath(ctx, lib.ID, path)
+		if err != nil {
+			return err
+		}
+		if it == nil || it.Kind != "show" || it.MatchSkipped() {
+			continue
+		}
+		st := strings.ToLower(strings.TrimSpace(it.MatchStatus.String))
+		if st == "matched" || (st == "manual" && it.MatchCandidates.Valid && strings.TrimSpace(it.MatchCandidates.String) != "") {
+			continue
+		}
+		targets = append(targets, j)
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	w.progress(ctx, opts.ScanJobID, 88, "Retrying unmatched shows…")
+	for _, j := range targets {
+		path := strings.TrimSpace(j.Path)
+		scanned, err := w.Meta.Scan(path, opts.ScanMode, nil)
+		if err != nil {
+			log.Printf("retry unmatched show %s: %v", path, err)
+			continue
+		}
+		it, err := w.DB.GetMediaItemByPath(ctx, lib.ID, path)
+		if err != nil {
+			return err
+		}
+		if _, err := w.streamJobs(ctx, lib, scanned.Session, it, opts); err != nil {
+			log.Printf("retry unmatched show %s: %v", path, err)
 		}
 	}
+	return nil
+}
+
+func retryableUnmatchedShow(j matchmedia.Job) bool {
+	if extrasShapedJob(j) {
+		return false
+	}
+	if kindFromJob(j, expandJobFiles(j)) != "show" {
+		return false
+	}
+	if j.Match != nil || JobHasPickerCandidates(j) {
+		return false
+	}
+	st := strings.ToLower(strings.TrimSpace(j.Status))
+	return st == "unmatched" || st == "error"
 }
 
 func (w *Worker) reportStreamProgress(ctx context.Context, jobID int64, p matchmedia.ScanProgress, applied, total int) {
@@ -236,6 +311,9 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchm
 		return nil
 	}
 	if changesSkipApply(opts, it, j) {
+		return nil
+	}
+	if extrasShapedJob(j) {
 		return nil
 	}
 	if err := w.applyJob(ctx, it, j, opts, session); err != nil {
@@ -309,7 +387,7 @@ func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedi
 		_ = w.DB.TouchMediaItemMtime(ctx, existing.ID, mtime)
 		return w.DB.GetMediaItem(ctx, existing.ID)
 	}
-	if parent != nil && (extrasShapedJob(j) || movieUnderShow(parent, kind, itemPath, j)) {
+	if parent != nil && extrasShapedJob(j) {
 		return w.attachExtrasToShow(ctx, libraryID, parent, j, files, itemPath)
 	}
 	keepMeta := existing != nil && existing.MetaID.Valid && strings.TrimSpace(existing.MetaID.String) != "" && !overwrite
@@ -418,32 +496,10 @@ func jobTitle(j matchmedia.Job, itemPath string) string {
 }
 
 func extrasShapedJob(j matchmedia.Job) bool {
-	if strings.EqualFold(strings.TrimSpace(j.Role), "extras") {
-		return true
-	}
-	return strings.TrimSpace(j.CatalogFor) != ""
-}
-
-func movieUnderShow(parent *db.MediaItem, kind, itemPath string, j matchmedia.Job) bool {
-	if parent == nil || parent.Kind != "show" || kind != "movie" || !pathUnder(itemPath, parent.Path) {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(j.Status), "matched") && j.Match != nil {
-		return false
-	}
-	return true
+	return strings.EqualFold(strings.TrimSpace(j.Role), "extras")
 }
 
 func (w *Worker) findParentShow(ctx context.Context, libraryID int64, j matchmedia.Job, kind, itemPath string) (*db.MediaItem, error) {
-	if cf := strings.TrimSpace(j.CatalogFor); cf != "" {
-		host, err := w.DB.GetMediaItemByPath(ctx, libraryID, cf)
-		if err != nil {
-			return nil, err
-		}
-		if host != nil && host.Kind == "show" && filepath.Clean(host.Path) != filepath.Clean(itemPath) {
-			return host, nil
-		}
-	}
 	if extrasShapedJob(j) && j.Match != nil {
 		host, err := w.DB.GetMediaItemByMeta(ctx, libraryID, j.Match.Provider, j.Match.ID)
 		if err != nil {
@@ -514,6 +570,9 @@ func (w *Worker) findTitleSimilarShow(ctx context.Context, libraryID int64, j ma
 		if filepath.Clean(show.Path) == filepath.Clean(itemPath) {
 			continue
 		}
+		if sameCatalog(show, j) {
+			continue
+		}
 		if pathUnder(show.Path, jobPath) {
 			continue
 		}
@@ -545,8 +604,23 @@ func (w *Worker) findTitleSimilarShow(ctx context.Context, libraryID int64, j ma
 	return best, nil
 }
 
+func sameCatalog(show *db.MediaItem, j matchmedia.Job) bool {
+	if show == nil || j.Match == nil {
+		return false
+	}
+	id := strings.TrimSpace(j.Match.ID)
+	if id == "" || !show.MetaID.Valid || strings.TrimSpace(show.MetaID.String) != id {
+		return false
+	}
+	prov := strings.TrimSpace(j.Match.Provider)
+	if prov == "" || !show.MetaProvider.Valid {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(show.MetaProvider.String), prov)
+}
+
 func tokensPrefix(small, big []string) bool {
-	if len(small) == 0 || len(small) > len(big) {
+	if len(small) == 0 || len(small) >= len(big) {
 		return false
 	}
 	for i, t := range small {
@@ -608,15 +682,6 @@ func (w *Worker) nestMediaItem(ctx context.Context, libraryID int64, it *db.Medi
 			continue
 		}
 		if !pathUnder(other.Path, root) || filepath.Clean(other.Path) == root {
-			continue
-		}
-		if other.Kind == "movie" && emptyPath(other.MetaID) {
-			if err := w.IngestVideosAsSeason0(ctx, it.ID, []string{other.Path}); err != nil {
-				return err
-			}
-			if err := w.DB.DeleteMediaItem(ctx, other.ID); err != nil {
-				return err
-			}
 			continue
 		}
 		if err := w.DB.SetMediaItemParent(ctx, other.ID, it.ID); err != nil {
@@ -785,26 +850,32 @@ func (w *Worker) applyJob(ctx context.Context, it *db.MediaItem, j matchmedia.Jo
 	switch j.Status {
 	case "manual", "multiple":
 		if opts.ManualSelect || !(hasMeta && !opts.Overwrite) {
-			return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "manual", "")
+			return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
 		}
 		return nil
 	case "unmatched":
 		if opts.ManualSelect || !(hasMeta && !opts.Overwrite) {
-			return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "unmatched", "")
+			if JobHasPickerCandidates(j) {
+				return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
+			}
+			return w.setJobMatch(ctx, it, session, j.ID, "unmatched", "", j)
 		}
 		return nil
 	case "error":
 		if hasMeta && !opts.Overwrite && !opts.ManualSelect {
 			return nil
 		}
+		if JobHasPickerCandidates(j) {
+			return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
+		}
 		msg := strings.TrimSpace(j.Error)
 		if msg == "" {
 			msg = "Match failed"
 		}
-		return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "error", msg)
+		return w.setJobMatch(ctx, it, session, j.ID, "error", msg, j)
 	case "matched":
 		if opts.ManualSelect {
-			return w.DB.SetMatchMediaMatch(ctx, it.ID, session, j.ID, "manual", "")
+			return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
 		}
 		if hasMeta && !opts.Overwrite {
 			return w.fillMissingArt(ctx, it, opts.Persist, session)
@@ -813,6 +884,17 @@ func (w *Worker) applyJob(ctx context.Context, it *db.MediaItem, j matchmedia.Jo
 	default:
 		return nil
 	}
+}
+
+func (w *Worker) setJobMatch(ctx context.Context, it *db.MediaItem, session, jobID, status, matchErr string, j matchmedia.Job) error {
+	if err := w.DB.SetMatchMediaMatch(ctx, it.ID, session, jobID, status, matchErr); err != nil {
+		return err
+	}
+	raw := ""
+	if status == "manual" || JobHasPickerCandidates(j) {
+		raw = EncodePickerSnapshot(j)
+	}
+	return w.DB.SetMatchCandidates(ctx, it.ID, raw)
 }
 
 func (w *Worker) applyMatched(ctx context.Context, it *db.MediaItem, j matchmedia.Job, persist bool, session string) error {
@@ -857,12 +939,15 @@ func (w *Worker) applyMovie(ctx context.Context, it *db.MediaItem, cat matchmedi
 		return err
 	}
 	bareOK := metadata.PreferBareMovieSidecar(it.Path)
+	shareShow := metadata.DirHasTVShowNFO(it.Path)
 	if persist {
 		if bareOK {
 			_ = metadata.CopyFile(storeNFO, filepath.Join(mediaDir, "movie.nfo"))
 		} else {
-			metadata.QuarantineServeMediaRejected(filepath.Join(mediaDir, "movie.nfo"))
-			metadata.QuarantineServeMediaRejected(filepath.Join(mediaDir, "poster.jpg"))
+			if !shareShow {
+				metadata.QuarantineServeMediaRejected(filepath.Join(mediaDir, "movie.nfo"))
+				metadata.QuarantineServeMediaRejected(filepath.Join(mediaDir, "poster.jpg"))
+			}
 			_ = metadata.CopyFile(storeNFO, filepath.Join(mediaDir, base+".nfo"))
 		}
 	}
@@ -877,11 +962,22 @@ func (w *Worker) applyMovie(ctx context.Context, it *db.MediaItem, cat matchmedi
 			}
 		}
 	}
-	if posterRel == "" {
+	if posterRel == "" && !shareShow {
 		if p := metadata.FindSidecar(mediaDir, base, "poster.jpg", "poster.png", "folder.jpg", "folder.png"); p != "" {
 			dst := filepath.Join(cacheDir, "poster"+filepath.Ext(p))
 			if err := metadata.CopyFile(p, dst); err == nil {
 				posterRel = filepath.Join("metadata", "movies", cacheKey, filepath.Base(dst))
+			}
+		}
+	} else if posterRel == "" {
+		for _, ext := range []string{".jpg", ".png", ".webp"} {
+			cand := filepath.Join(mediaDir, base+"-poster"+ext)
+			if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+				dst := filepath.Join(cacheDir, "poster"+ext)
+				if err := metadata.CopyFile(cand, dst); err == nil {
+					posterRel = filepath.Join("metadata", "movies", cacheKey, filepath.Base(dst))
+				}
+				break
 			}
 		}
 	}

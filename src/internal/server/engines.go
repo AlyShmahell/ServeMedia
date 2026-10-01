@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,11 +25,9 @@ func (s *Server) enginesStatus() (ready bool, version, reason string) {
 }
 
 func (s *Server) handleEnginesStatus(w http.ResponseWriter, r *http.Request) {
-	ready, ver, reason := s.enginesStatus()
+	ready, _, _ := s.enginesStatus()
 	s.render(w, r, "partials/engines_status.html", map[string]any{
-		"Ready":   ready,
-		"Version": ver,
-		"Reason":  reason,
+		"Ready": ready,
 	})
 }
 
@@ -64,9 +62,11 @@ func (s *Server) handleSettingsEngines(w http.ResponseWriter, r *http.Request) {
 	}
 	hw := ""
 	active := ""
+	hwOn := false
 	if s.Transcode != nil {
 		hw = s.Transcode.HWAccelStatus()
 		active = s.Transcode.ActiveTranscodeStatus()
+		hwOn = strings.TrimSpace(hw) != "" && !strings.EqualFold(hw, "software")
 	}
 	s.render(w, r, "settings_engines.html", map[string]any{
 		"Tab":             tab,
@@ -79,6 +79,7 @@ func (s *Server) handleSettingsEngines(w http.ResponseWriter, r *http.Request) {
 		"OverlayError":    overlayErr,
 		"Config":          s.Cfg,
 		"TranscodeHW":     hw,
+		"TranscodeHWOn":   hwOn,
 		"ActiveTranscode": active,
 	})
 }

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
-	"github.com/alyshmahell/servemedia/web"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/web"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -86,8 +86,11 @@ func TestHandleRestartEngines(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("hx status %d body %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "MatchMedia unavailable") && !strings.Contains(w.Body.String(), "engines-status-text") {
+	if !strings.Contains(w.Body.String(), "engines-status-text") {
 		t.Fatalf("status partial: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "Off") && !strings.Contains(w.Body.String(), "On") {
+		t.Fatalf("power label: %s", w.Body.String())
 	}
 }
 
@@ -108,8 +111,12 @@ func TestHandleEnginesStatus(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "MatchMedia ready") || !strings.Contains(w.Body.String(), "0.1.0") {
-		t.Fatalf("body %s", w.Body.String())
+	body := w.Body.String()
+	if !strings.Contains(body, "engine-power on") || !strings.Contains(body, `id="engines-status-text">On`) {
+		t.Fatalf("body %s", body)
+	}
+	if strings.Contains(body, "MatchMedia ready") {
+		t.Fatalf("old ready copy: %s", body)
 	}
 }
 
@@ -135,7 +142,7 @@ func TestHandleSettingsEnginesTabs(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, body)
 	}
-	for _, want := range []string{"tab-matchmedia", "tab-ffmpeg", "secret-omdb", "overlay-yaml", "browse_roots", "H.264 CRF 23"} {
+	for _, want := range []string{"tab-matchmedia", "tab-ffmpeg", "secret-omdb", "overlay-yaml", "browse_roots", "H.264 CRF", "Max height"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q in %s", want, body)
 		}

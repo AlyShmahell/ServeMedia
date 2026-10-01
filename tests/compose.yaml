@@ -1,4 +1,4 @@
-# ServeMedia test stack — Podman only (see docs/dev/workflow.md and ./tests/run)
+# ServeMedia test stack — Podman only (see docs/architecture.md and ./tests/run)
 services:
   unit:
     build:

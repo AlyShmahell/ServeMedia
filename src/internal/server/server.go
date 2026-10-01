@@ -18,15 +18,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/backup"
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/fetch"
-	"github.com/alyshmahell/servemedia/internal/matchmedia"
-	"github.com/alyshmahell/servemedia/internal/media"
-	"github.com/alyshmahell/servemedia/internal/metadata"
-	"github.com/alyshmahell/servemedia/internal/watchdog"
-	"github.com/alyshmahell/servemedia/internal/webhooks"
+	"github.com/alyshmahell/servemedia/src/internal/backup"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/fetch"
+	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/media"
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
+	"github.com/alyshmahell/servemedia/src/internal/watchdog"
+	"github.com/alyshmahell/servemedia/src/internal/webhooks"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -200,6 +200,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/play/movie/{id}", s.handlePlayMovie)
 		r.Get("/play/episode/{id}", s.handlePlayEpisode)
 		r.Get("/about", s.handleAbout)
+		r.Get("/support", s.handleSupport)
 		r.Get("/settings", s.handleSettings)
 		r.Get("/settings/libraries", s.handleSettingsLibrariesRedirect)
 		r.Get("/hx/libraries/{id}/items", s.handleHXItems)
@@ -215,6 +216,15 @@ func (s *Server) Router() http.Handler {
 		r.Post("/hx/media/{id}/scan", s.handleScanMedia)
 		r.Get("/hx/media/{id}/match", s.handleMatchGet)
 		r.Post("/hx/media/{id}/match", s.handleMatchPost)
+		r.Post("/hx/media/{id}/meta", s.handleMediaMeta)
+		r.Post("/hx/media/{id}/poster", s.handleMediaPoster)
+		r.Delete("/hx/media/{id}/poster", s.handleMediaPosterDelete)
+		r.Post("/hx/shows/{id}/seasons/{n}/meta", s.handleSeasonMeta)
+		r.Post("/hx/shows/{id}/seasons/{n}/poster", s.handleSeasonPoster)
+		r.Delete("/hx/shows/{id}/seasons/{n}/poster", s.handleSeasonPosterDelete)
+		r.Post("/hx/episodes/{id}/meta", s.handleEpisodeMeta)
+		r.Post("/hx/episodes/{id}/poster", s.handleEpisodePoster)
+		r.Delete("/hx/episodes/{id}/poster", s.handleEpisodePosterDelete)
 		r.Post("/hx/libraries/{id}", s.handleRenameLibrary)
 		r.Delete("/hx/libraries/{id}", s.handleDeleteLibrary)
 		r.Get("/hx/media/browse", s.handleMediaBrowse)
@@ -1359,9 +1369,12 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 		license = "Unavailable"
 	}
 	s.render(w, r, "about.html", map[string]any{
-		"Version": s.Cfg.Version,
 		"License": license,
 	})
+}
+
+func (s *Server) handleSupport(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "support.html", nil)
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {

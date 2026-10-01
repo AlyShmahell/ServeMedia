@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/web"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/web"
 )
 
 func TestMustParseTemplates(t *testing.T) {
@@ -82,8 +82,23 @@ func TestShowTemplateTitlesGrid(t *testing.T) {
 	if strings.Contains(html, "secret plot") {
 		t.Fatal("nested plot should be omitted")
 	}
-	if strings.Contains(html, "No synopsis") {
-		t.Fatal("no synopsis placeholder")
+	if !strings.Contains(html, `data-edit-url="/hx/media/1/meta"`) {
+		t.Fatal("show title/plot edit")
+	}
+	if !strings.Contains(html, `data-upload-url="/hx/media/1/poster"`) {
+		t.Fatal("show poster upload")
+	}
+	if !strings.Contains(html, `id="poster-edit-dialog"`) {
+		t.Fatal("poster modal")
+	}
+	if !strings.Contains(html, `id="poster-edit-save"`) {
+		t.Fatal("poster save")
+	}
+	if !strings.Contains(html, `/hx/shows/1/seasons/1/meta`) {
+		t.Fatal("season card edit")
+	}
+	if strings.Contains(html, `/hx/media/9/meta`) {
+		t.Fatal("child movie cards stay click-through")
 	}
 }
 
@@ -183,6 +198,34 @@ func TestMatchDialogBusyMarkup(t *testing.T) {
 	}
 	if !strings.Contains(html, "Don't add") {
 		t.Fatal("don't add")
+	}
+	if !strings.Contains(html, "Applying match…") {
+		t.Fatal("applying copy")
+	}
+}
+
+func TestMatchDialogEmptyScanButton(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	data := map[string]any{
+		"Item": db.MediaItem{ID: 7, Title: "Orphan Show", Path: "/media/Orphan"},
+	}
+	if err := tpl.ExecuteTemplate(&buf, "partials/match_dialog.html", data); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, "openEntryScanModal") {
+		t.Fatal("empty match must offer title scan")
+	}
+	if strings.Contains(html, "Rescan") {
+		t.Fatal("Rescan copy should be gone")
+	}
+	if !strings.Contains(html, `type="button"`) {
+		t.Fatal("scan control must not submit the dialog form")
 	}
 }
 
@@ -391,5 +434,82 @@ func TestItemsLivePollsOnlyWhenFlagged(t *testing.T) {
 	}
 	if !strings.Contains(liveHTML, "2 titles") {
 		t.Fatalf("count copy: %s", liveHTML)
+	}
+}
+
+func TestMovieTemplateEditControls(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	data := map[string]any{
+		"Item":               db.MediaItem{ID: 4, Kind: "movie", Title: "Film Title"},
+		"MetaReady":          true,
+		"MetaDisabledReason": "",
+	}
+	if err := tpl.ExecuteTemplate(&buf, "movie.html", data); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `data-edit-url="/hx/media/4/meta"`) {
+		t.Fatal("movie meta edit")
+	}
+	if !strings.Contains(html, `data-upload-url="/hx/media/4/poster"`) {
+		t.Fatal("movie poster upload")
+	}
+	if !strings.Contains(html, `data-role="edit"`) {
+		t.Fatal("edit icon")
+	}
+	if !strings.Contains(html, `id="poster-edit-dialog"`) {
+		t.Fatal("poster modal")
+	}
+	if !strings.Contains(html, `id="poster-edit-save"`) {
+		t.Fatal("poster save")
+	}
+}
+
+func TestSeasonTemplateEditControls(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	data := map[string]any{
+		"Item": db.MediaItem{ID: 2, Kind: "show", Title: "Sample Show"},
+		"Season": db.Season{
+			SeasonNumber: 1,
+			Title:        sql.NullString{String: "Season 1", Valid: true},
+			Plot:         sql.NullString{String: "Season plot", Valid: true},
+		},
+		"Episodes": []episodeCard{
+			{Episode: db.Episode{ID: 8, EpisodeNumber: 1, Title: sql.NullString{String: "Pilot", Valid: true}}},
+		},
+	}
+	if err := tpl.ExecuteTemplate(&buf, "season.html", data); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `data-edit-url="/hx/shows/2/seasons/1/meta"`) {
+		t.Fatal("season header edit")
+	}
+	if !strings.Contains(html, `data-upload-url="/hx/shows/2/seasons/1/poster"`) {
+		t.Fatal("season header poster")
+	}
+	if !strings.Contains(html, `data-edit-url="/hx/episodes/8/meta"`) {
+		t.Fatal("episode edit")
+	}
+	if !strings.Contains(html, `data-upload-url="/hx/episodes/8/poster"`) {
+		t.Fatal("episode still upload")
+	}
+	if !strings.Contains(html, `id="poster-edit-dialog"`) {
+		t.Fatal("poster modal")
+	}
+	if !strings.Contains(html, `class="muted">E1`) && !strings.Contains(html, `>E1<`) {
+		if !strings.Contains(html, "E1") {
+			t.Fatal("episode number prefix")
+		}
 	}
 }

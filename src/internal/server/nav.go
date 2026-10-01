@@ -3,7 +3,7 @@ package server
 import (
 	"fmt"
 
-	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/db"
 )
 
 func applyNav(name string, data map[string]any) {
@@ -49,6 +49,8 @@ func navFor(name string, data map[string]any) (title, back string) {
 		return title, back
 	case "about.html":
 		return "About", "/"
+	case "support.html":
+		return "Support", "/"
 	case "settings.html":
 		return "Settings", "/"
 	case "settings_engines.html":

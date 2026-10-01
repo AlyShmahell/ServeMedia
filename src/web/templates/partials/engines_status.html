@@ -1,7 +1,9 @@
 {{define "partials/engines_status.html"}}
-{{if .Ready}}
-<p class="muted" id="engines-status-text">MatchMedia ready{{if .MetaVersion}} ({{.MetaVersion}}){{else if .Version}} ({{.Version}}){{end}}</p>
-{{else}}
-<p class="muted" id="engines-status-text">{{if .Reason}}{{.Reason}}{{else}}MatchMedia unavailable{{end}}</p>
-{{end}}
+<span class="engine-power {{if .Ready}}on{{else}}off{{end}}">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M12 2v10"></path>
+    <path d="M18.4 6.6a9 9 0 1 1-12.8 0"></path>
+  </svg>
+  <span id="engines-status-text">{{if .Ready}}On{{else}}Off{{end}}</span>
+</span>
 {{end}}

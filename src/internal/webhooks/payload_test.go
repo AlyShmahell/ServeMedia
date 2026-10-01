@@ -3,8 +3,8 @@ package webhooks_test
 import (
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/db"
-	"github.com/alyshmahell/servemedia/internal/webhooks"
+	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/webhooks"
 )
 
 func TestBasePayload(t *testing.T) {

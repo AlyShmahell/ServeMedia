@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/db"
 )
 
 func BasePayload(serverID, serverURL, notificationType, serverVersion string) map[string]any {

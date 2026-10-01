@@ -35,19 +35,19 @@ modules:
     build-commands:
       - |
         . /usr/lib/sdk/golang/enable.sh
-        ( cd matchmedia && go build -mod=vendor -ldflags="-s -w" -o matchmedia ./app )
-      - install -Dm755 matchmedia/matchmedia /app/tools/matchmedia/matchmedia
-      - cp -a matchmedia/share/config /app/tools/matchmedia/config
-      - install -Dm644 matchmedia/gui/index.html /app/tools/matchmedia/public/index.html
-      - install -Dm644 matchmedia/gui/style.css /app/tools/matchmedia/public/style.css
-      - install -Dm644 matchmedia/gui/app.js /app/tools/matchmedia/public/app.js
+        ( cd src && go build -mod=vendor -ldflags="-s -w" -o matchmedia ./cmd )
+      - install -Dm755 src/matchmedia /app/tools/matchmedia/matchmedia
+      - cp -a src/share/config /app/tools/matchmedia/config
+      - install -Dm644 src/webui/index.html /app/tools/matchmedia/public/index.html
+      - install -Dm644 src/webui/style.css /app/tools/matchmedia/public/style.css
+      - install -Dm644 src/webui/app.js /app/tools/matchmedia/public/app.js
       - install -Dm644 LICENSE /app/tools/matchmedia/LICENSE
       - install -Dm644 LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/MatchMedia.LICENSE
     sources:
       - type: git
         url: https://github.com/AlyShmahell/MatchMedia.git
-        tag: v0.0.9
-        commit: c822e4a4e98c781105b294397742970e4e0d60ae
+        tag: v0.1.0
+        commit: edc2cf76f6309cdcb65f553674f7ed5fdb024ebc
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$
@@ -65,16 +65,16 @@ modules:
     build-commands:
       - |
         . /usr/lib/sdk/golang/enable.sh
-        ( cd servemedia && go build -mod=vendor -ldflags="-s -w" -o servemedia . )
-      - install -Dm755 servemedia/servemedia /app/servemedia
-      - cp -a servemedia/share/config /app/config
-      - install -d /app/public /app/lib/ffmpeg /app/vendor/video.js
-      - install -m644 servemedia/web/static/app.css servemedia/web/static/app.js servemedia/web/static/controls.js servemedia/web/static/logo.svg servemedia/web/static/placeholder.svg /app/public/
+        ( cd src && go build -mod=vendor -ldflags="-s -w" -o servemedia ./cmd )
+      - install -Dm755 src/servemedia /app/servemedia
+      - cp -a src/share/config /app/config
+      - install -d /app/public /app/lib/ffmpeg /app/vendor/video.js /app/vendor/codemirror
+      - install -m644 src/web/static/app.css src/web/static/app.js src/web/static/controls.js src/web/static/logo.svg src/web/static/placeholder.svg /app/public/
       - install -Dm644 LICENSE /app/LICENSE
       - install -Dm644 LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/LICENSE
-      - install -Dm644 servemedia/share/applications/servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
+      - install -Dm644 src/share/applications/servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - sed -i 's|^Icon=.*|Icon=eu.alyshmahell.ServeMedia|' /app/share/applications/eu.alyshmahell.ServeMedia.desktop
-      - install -Dm644 servemedia/web/static/logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
+      - install -Dm644 src/web/static/logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
       - install -Dm644 flatpak/eu.alyshmahell.ServeMedia.metainfo.xml /app/share/metainfo/eu.alyshmahell.ServeMedia.metainfo.xml
       - install -Dm755 flatpak/servemedia-wrapper /app/bin/servemedia
       - install -Dm644 htmx.min.js /app/vendor/htmx.min.js
@@ -87,6 +87,11 @@ modules:
       - install -Dm644 hls.min.js /app/vendor/hls.min.js
       - install -Dm644 hls.min.js.LICENSE /app/vendor/hls.min.js.LICENSE
       - printf '%s\n' 'https://raw.githubusercontent.com/video-dev/hls.js/v1.5.20/LICENSE' >/app/vendor/hls.min.js.NOTICE
+      - install -Dm644 codemirror.min.js /app/vendor/codemirror/codemirror.min.js
+      - install -Dm644 codemirror.min.css /app/vendor/codemirror/codemirror.min.css
+      - install -Dm644 yaml.min.js /app/vendor/codemirror/yaml.min.js
+      - install -Dm644 codemirror.LICENSE /app/vendor/codemirror/LICENSE
+      - printf '%s\n' 'https://raw.githubusercontent.com/codemirror/codemirror5/5.65.18/LICENSE' >/app/vendor/codemirror/LICENSE.NOTICE
       - chmod a+x /app/servemedia /app/bin/servemedia /app/tools/matchmedia/matchmedia
     sources:
       - type: git
@@ -125,3 +130,19 @@ modules:
         url: https://raw.githubusercontent.com/video-dev/hls.js/v1.5.20/LICENSE
         sha256: ca8773cf798c7ed997d4dd7c8e23c348699f8d5b7462636694cc14de6cda12db
         dest-filename: hls.min.js.LICENSE
+      - type: file
+        url: https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.min.js
+        sha256: 9eb3d93e642327e5f350342a60e6810aa1543644ba003e41bad2f372ead3b372
+        dest-filename: codemirror.min.js
+      - type: file
+        url: https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.min.css
+        sha256: d8fddcfca0ccaeea67ddd557d22340530a1daae8a09843e8f4c25d7def06efa8
+        dest-filename: codemirror.min.css
+      - type: file
+        url: https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/yaml/yaml.js
+        sha256: 7de73109e5bfb6951d53764f5210f00f7859b57525811fab6b6f843980a7726e
+        dest-filename: yaml.min.js
+      - type: file
+        url: https://raw.githubusercontent.com/codemirror/codemirror5/5.65.18/LICENSE
+        sha256: 168a4becc968f5001e2ee2e0291b6e4daabafc1894a11ade1e11d56e96096e07
+        dest-filename: codemirror.LICENSE

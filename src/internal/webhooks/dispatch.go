@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
 func (s *Service) Dispatch(ctx context.Context, wh *config.WebhooksConfig, serverID, notificationType string, extra map[string]any) {

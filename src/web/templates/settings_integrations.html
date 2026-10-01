@@ -4,12 +4,15 @@
 <title>Integrations — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css">{{template "partials/head_scripts.html" .}}</head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
-  <div class="page-main-card">
-    <form method="post" action="/settings/integrations" id="integrations-form">
-    <div class="settings-tab-panel active" id="tab-webhooks">
-        <section class="page-sub-card">
-          <h2>Webhooks</h2>
-          <div class="page-sub-card-body-scroll">
+  <div class="page-main-card settings-page">
+    <div class="settings-tabs" role="tablist">
+      <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-tab="webhooks">Webhooks</button>
+    </div>
+    <div class="settings-tab-panel active" id="tab-webhooks" role="tabpanel">
+      <form method="post" action="/settings/integrations" id="integrations-form" class="settings-tab-card">
+        <div class="settings-tab-scroll">
+          <section class="page-sub-card">
+            <h2>Webhooks</h2>
             <p class="muted">Send outbound notifications in standard webhook JSON. <code>ServerName</code> is always <strong>ServeMedia</strong>.</p>
 
             <label><input type="checkbox" name="webhook_enabled" {{if .UserWebhooks.Enabled}}checked{{end}}> Enable webhooks</label>
@@ -109,16 +112,23 @@
   "ItemId": "42",
   "Username": "{{.User.Username}}"
             }</pre>
-          </div>
-        </section>
-        <input type="hidden" name="dest_count" id="dest-count" value="{{if .UserWebhooks.Destinations}}{{len .UserWebhooks.Destinations}}{{else}}1{{end}}">
-        <p class="row tab-footer">
-          <button type="submit">Save</button>
+          </section>
+          <input type="hidden" name="dest_count" id="dest-count" value="{{if .UserWebhooks.Destinations}}{{len .UserWebhooks.Destinations}}{{else}}1{{end}}">
+        </div>
+        <div class="settings-tab-actions">
+          <button type="submit" class="btn-with-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            Save
+          </button>
           <button type="button" class="secondary" id="test-webhooks">Test webhooks</button>
-        </p>
-        <p class="muted" id="webhook-test-result" aria-live="polite"></p>
+          <p class="muted" id="webhook-test-result" aria-live="polite"></p>
+        </div>
+      </form>
     </div>
-    </form>
   </div>
 </main></div>
 

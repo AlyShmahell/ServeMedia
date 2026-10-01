@@ -39,6 +39,7 @@ type MediaItem struct {
 	MatchMediaJobID     sql.NullString
 	MatchStatus         sql.NullString
 	MatchError          sql.NullString
+	MatchCandidates     sql.NullString
 	Mtime               int64
 	DateAdded           string
 	ParentID            sql.NullInt64
@@ -651,10 +652,10 @@ func (d *DB) GetMediaItem(ctx context.Context, id int64) (*MediaItem, error) {
 	it := &MediaItem{}
 	err := d.SQL.QueryRowContext(ctx, `
 		SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, `+showPosterSQL("")+`, backdrop_path, nfo_path,
-			meta_provider, meta_id, matchmedia_session_id, matchmedia_job_id, match_status, match_error, mtime, date_added, parent_id
+			meta_provider, meta_id, matchmedia_session_id, matchmedia_job_id, match_status, match_error, match_candidates, mtime, date_added, parent_id
 		FROM media_items WHERE id = ?`, id).
 		Scan(&it.ID, &it.LibraryID, &it.Kind, &it.Title, &it.SortTitle, &it.Year, &it.Path, &it.RuntimeSeconds, &it.Plot, &it.PosterPath, &it.BackdropPath, &it.NFOPath,
-			&it.MetaProvider, &it.MetaID, &it.MatchMediaSessionID, &it.MatchMediaJobID, &it.MatchStatus, &it.MatchError, &it.Mtime, &it.DateAdded, &it.ParentID)
+			&it.MetaProvider, &it.MetaID, &it.MatchMediaSessionID, &it.MatchMediaJobID, &it.MatchStatus, &it.MatchError, &it.MatchCandidates, &it.Mtime, &it.DateAdded, &it.ParentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -668,12 +669,20 @@ func (d *DB) SetMatchMediaMatch(ctx context.Context, id int64, session, jobID, s
 	return err
 }
 
+func (d *DB) SetMatchCandidates(ctx context.Context, id int64, raw string) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET match_candidates=NULLIF(?, '') WHERE id=?`, raw, id)
+	return err
+}
+
 func (d *DB) ClearMatchMediaMatch(ctx context.Context, id int64) error {
 	return d.SetMatchMediaMatch(ctx, id, "", "", "", "")
 }
 
 func (d *DB) SkipMatchMedia(ctx context.Context, id int64) error {
-	return d.SetMatchMediaMatch(ctx, id, "", "", MatchStatusSkipped, "")
+	if err := d.SetMatchMediaMatch(ctx, id, "", "", MatchStatusSkipped, ""); err != nil {
+		return err
+	}
+	return d.SetMatchCandidates(ctx, id, "")
 }
 
 func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string, error) {
@@ -1030,6 +1039,16 @@ func (d *DB) AdjacentEpisodes(ctx context.Context, episodeID int64) (prev, next 
 func (d *DB) GetSeasonByShowNum(ctx context.Context, showID int64, num int) (*Season, error) {
 	s := &Season{}
 	err := d.SQL.QueryRowContext(ctx, `SELECT id, show_id, season_number, title, poster_path, plot FROM seasons WHERE show_id=? AND season_number=?`, showID, num).
+		Scan(&s.ID, &s.ShowID, &s.SeasonNumber, &s.Title, &s.PosterPath, &s.Plot)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return s, err
+}
+
+func (d *DB) GetSeason(ctx context.Context, id int64) (*Season, error) {
+	s := &Season{}
+	err := d.SQL.QueryRowContext(ctx, `SELECT id, show_id, season_number, title, poster_path, plot FROM seasons WHERE id=?`, id).
 		Scan(&s.ID, &s.ShowID, &s.SeasonNumber, &s.Title, &s.PosterPath, &s.Plot)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -1442,6 +1461,108 @@ func (d *DB) UpdateMediaItemTitle(ctx context.Context, id int64, title string) e
 	}
 	_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET title=?, sort_title=? WHERE id=?`, title, title, id)
 	return err
+}
+
+func (d *DB) SetMediaItemTitlePlot(ctx context.Context, id int64, title, plot *string) error {
+	if title != nil {
+		t := strings.TrimSpace(*title)
+		if t == "" {
+			return fmt.Errorf("title required")
+		}
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET title=?, sort_title=? WHERE id=?`, t, t, id); err != nil {
+			return err
+		}
+	}
+	if plot != nil {
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET plot=? WHERE id=?`, *plot, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) SetMediaItemPosterNFO(ctx context.Context, id int64, poster, nfo *string) error {
+	if poster != nil {
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET poster_path=? WHERE id=?`, *poster, id); err != nil {
+			return err
+		}
+	}
+	if nfo != nil {
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET nfo_path=? WHERE id=?`, *nfo, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) SetSeasonTitlePlot(ctx context.Context, id int64, title, plot *string) error {
+	if title != nil {
+		t := strings.TrimSpace(*title)
+		if t == "" {
+			return fmt.Errorf("title required")
+		}
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE seasons SET title=? WHERE id=?`, t, id); err != nil {
+			return err
+		}
+	}
+	if plot != nil {
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE seasons SET plot=? WHERE id=?`, *plot, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) SetSeasonPoster(ctx context.Context, id int64, poster string) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE seasons SET poster_path=? WHERE id=?`, poster, id)
+	return err
+}
+
+func (d *DB) ClearMediaItemPoster(ctx context.Context, id int64) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET poster_path=NULL WHERE id=?`, id)
+	return err
+}
+
+func (d *DB) ClearSeasonPoster(ctx context.Context, id int64) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE seasons SET poster_path=NULL WHERE id=?`, id)
+	return err
+}
+
+func (d *DB) ClearEpisodeStill(ctx context.Context, id int64) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE episodes SET still_path=NULL WHERE id=?`, id)
+	return err
+}
+
+func (d *DB) SetEpisodeTitlePlot(ctx context.Context, id int64, title, plot *string) error {
+	if title != nil {
+		t := strings.TrimSpace(*title)
+		if t == "" {
+			return fmt.Errorf("title required")
+		}
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE episodes SET title=? WHERE id=?`, t, id); err != nil {
+			return err
+		}
+	}
+	if plot != nil {
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE episodes SET plot=? WHERE id=?`, *plot, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) SetEpisodeStillNFO(ctx context.Context, id int64, still, nfo *string) error {
+	if still != nil {
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE episodes SET still_path=? WHERE id=?`, *still, id); err != nil {
+			return err
+		}
+	}
+	if nfo != nil {
+		if _, err := d.SQL.ExecContext(ctx, `UPDATE episodes SET nfo_path=? WHERE id=?`, *nfo, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (d *DB) UpdateSeasonMeta(ctx context.Context, id int64, title, plot, poster, metaProvider, metaID string) error {

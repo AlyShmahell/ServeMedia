@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
 func requireRenderNode(t *testing.T) string {
@@ -209,6 +209,17 @@ func TestJoinExistingLibVADriverDirsOrder(t *testing.T) {
 	}
 	if got := joinExistingLibVADriverDirs(missing); got != "" {
 		t.Fatalf("missing dirs: got %q", got)
+	}
+}
+
+func TestLibVADriverSearchDirsOmitRuntimeMultiarch(t *testing.T) {
+	if len(libvaDriverSearchDirs) == 0 {
+		t.Fatal("empty libvaDriverSearchDirs")
+	}
+	for _, dir := range libvaDriverSearchDirs {
+		if strings.Contains(dir, "x86_64-linux-gnu") || strings.Contains(dir, "aarch64-linux-gnu") {
+			t.Fatalf("runtime multiarch dri must not be pinned: %s", dir)
+		}
 	}
 }
 

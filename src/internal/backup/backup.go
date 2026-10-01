@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alyshmahell/servemedia/internal/config"
-	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/config"
+	"github.com/alyshmahell/servemedia/src/internal/db"
 	"github.com/klauspost/compress/zstd"
 )
 

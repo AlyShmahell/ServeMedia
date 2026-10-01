@@ -304,6 +304,10 @@ const migrationV16 = `
 ALTER TABLE media_items ADD COLUMN match_error TEXT;
 `
 
+const migrationV17 = `
+ALTER TABLE media_items ADD COLUMN match_candidates TEXT;
+`
+
 const migrationV4 = `
 CREATE TABLE IF NOT EXISTS playback_prefs (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -475,6 +479,15 @@ func (d *DB) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration v16: %w", err)
 		}
 		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (16, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 16
+	}
+	if ver < 17 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV17); err != nil {
+			return fmt.Errorf("migration v17: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (17, ?)`, now()); err != nil {
 			return err
 		}
 	}

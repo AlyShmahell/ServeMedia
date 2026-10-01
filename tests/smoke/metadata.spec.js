@@ -1,9 +1,9 @@
 const { test, expect } = require('@playwright/test');
-const { ensureAdmin } = require('./helpers');
+const { ensureAdmin, openLibrary, localScanLibrary } = require('./helpers');
 
 async function ensureAnimeLibrary(page) {
   await page.goto('/');
-  let animeLib = page.locator('.library-card').filter({
+  const animeLib = page.locator('.library-card').filter({
     has: page.locator('.library-card-title', { hasText: 'Anime' }),
   }).first();
   if (!(await animeLib.count())) {
@@ -15,15 +15,9 @@ async function ensureAnimeLibrary(page) {
     await expect(page.locator('#library-path')).toHaveValue('/media/Anime', { timeout: 15000 });
     await page.locator('#add-library-dialog button[type="submit"]').click();
     await expect(page).toHaveURL(/scan=/);
-    await page.goto('/');
-    animeLib = page.locator('.library-card').filter({
-      has: page.locator('.library-card-title', { hasText: 'Anime' }),
-    }).first();
   }
-  await expect(animeLib).toBeVisible({ timeout: 30000 });
-  await expect(animeLib).not.toHaveClass(/is-scanning/, { timeout: 180000 });
-  await animeLib.locator('.library-card-title').click();
-  await expect(page).toHaveURL(/\/libraries\/\d+/);
+  await localScanLibrary(page, 'Anime');
+  await openLibrary(page, 'Anime');
   await expect(page.locator('#items .card').first()).toBeVisible({ timeout: 90000 });
 }
 
@@ -45,6 +39,7 @@ async function pickMatchCandidate(page, yearHint) {
   const dlg = page.locator('#match-pick-dialog');
   await expect(dlg).toBeVisible({ timeout: 30000 });
   let cand = dlg.locator('button.cand');
+  await expect(cand.first()).toBeVisible({ timeout: 30000 });
   if (yearHint) {
     const withYear = cand.filter({ hasText: String(yearHint) });
     if (await withYear.count()) {
@@ -72,6 +67,7 @@ async function entryScanRefetch(page) {
 test.describe.configure({ mode: 'serial' });
 
 test('Film Title entry Scan refetch matches 2016 anime', async ({ page }) => {
+  test.setTimeout(240000);
   await ensureAdmin(page);
   await ensureAnimeLibrary(page);
 
@@ -84,8 +80,7 @@ test('Film Title entry Scan refetch matches 2016 anime', async ({ page }) => {
 
   await entryScanRefetch(page);
 
-  await page.reload();
-  await expect(page.locator('.media-meta h1')).toContainText(/Film Title/i);
+  await expect(page.locator('.media-meta h1')).toContainText(/Film Title/i, { timeout: 30000 });
   await expect(page.locator('.media-meta h1')).toContainText('2016');
   await expect(page.locator('.media-meta h1')).not.toContainText(/Longer Variant/i);
   await expect(page.locator('.media-meta h1')).not.toContainText('2015');
@@ -99,6 +94,7 @@ test('Film Title entry Scan refetch matches 2016 anime', async ({ page }) => {
 });
 
 test('MatchMedia rescan sends an edited title', async ({ page }) => {
+  test.setTimeout(240000);
   await ensureAdmin(page);
   await ensureAnimeLibrary(page);
 

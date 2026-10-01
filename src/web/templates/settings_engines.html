@@ -9,60 +9,85 @@
 </head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content">
-  <div class="page-main-card">
+  <div class="page-main-card settings-page">
     <div class="settings-tabs" role="tablist">
       <button type="button" class="settings-tab {{if eq .Tab "matchmedia"}}active{{end}}" role="tab" aria-selected="{{if eq .Tab "matchmedia"}}true{{else}}false{{end}}" data-tab="matchmedia">MatchMedia</button>
-      <button type="button" class="settings-tab {{if eq .Tab "ffmpeg"}}active{{end}}" role="tab" aria-selected="{{if eq .Tab "ffmpeg"}}true{{else}}false{{end}}" data-tab="ffmpeg">ffmpeg</button>
+      <button type="button" class="settings-tab {{if eq .Tab "ffmpeg"}}active{{end}}" role="tab" aria-selected="{{if eq .Tab "ffmpeg"}}true{{else}}false{{end}}" data-tab="ffmpeg">FFMPEG</button>
     </div>
     <div class="settings-tab-panel {{if eq .Tab "matchmedia"}}active{{end}}" id="tab-matchmedia" role="tabpanel" {{if ne .Tab "matchmedia"}}hidden{{end}}>
-      <section class="page-sub-card">
-        <h2>Status</h2>
-        <div class="page-sub-card-body-scroll">
-          <div class="row engines-status-row" id="engines-status">{{template "partials/engines_status.html" .}}</div>
-          <form method="post" action="/settings/engines/restart" id="engines-restart-form">
-            <button type="submit" class="secondary" id="engines-restart">Restart</button>
+      <div class="settings-tab-card">
+        <div class="settings-tab-scroll">
+          <div class="engine-power-row">
+            <div id="engines-status">{{template "partials/engines_status.html" .}}</div>
+            <form method="post" action="/settings/engines/restart" id="engines-restart-form">
+              <button type="submit" class="btn-icon secondary" id="engines-restart" aria-label="Restart" title="Restart">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="23 4 23 10 17 10"></polyline>
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                </svg>
+              </button>
+            </form>
+          </div>
+          <form method="post" action="/settings/engines" id="engines-matchmedia-form">
+            <section class="page-sub-card">
+              <h2>Provider keys</h2>
+              {{range .SecretKeys}}
+              <label>{{if eq . "omdb"}}OMDb{{else if eq . "tmdb"}}TMDB{{else}}{{.}}{{end}} API key {{if index $.Secrets .}}<span class="muted">(set)</span>{{else}}<span class="muted">(not set)</span>{{end}}</label>
+              <input type="password" name="secret_{{.}}" id="secret-{{.}}" placeholder="Leave blank to keep current" autocomplete="off">
+              {{else}}
+              <p class="muted">No MatchMedia secret keys available.</p>
+              {{end}}
+            </section>
+            <section class="page-sub-card">
+              <h2>Config</h2>
+              {{if .OverlayError}}<p class="muted">{{.OverlayError}}</p>{{end}}
+              <textarea name="overlay_yaml" id="overlay-yaml" rows="24" spellcheck="false">{{.OverlayYAML}}</textarea>
+            </section>
           </form>
         </div>
-      </section>
-      <form method="post" action="/settings/engines" id="engines-matchmedia-form">
-        <section class="page-sub-card">
-          <h2>Provider keys</h2>
-          <div class="page-sub-card-body-scroll">
-            <p class="muted">Provider keys are stored by MatchMedia, not in overlay YAML. Leave a field blank to keep the current value.</p>
-            {{range .SecretKeys}}
-            <label>{{if eq . "omdb"}}OMDb{{else if eq . "tmdb"}}TMDB{{else}}{{.}}{{end}} API key {{if index $.Secrets .}}<span class="muted">(set)</span>{{else}}<span class="muted">(not set)</span>{{end}}</label>
-            <input type="password" name="secret_{{.}}" id="secret-{{.}}" placeholder="Leave blank to keep current" autocomplete="off">
-            {{else}}
-            <p class="muted">No MatchMedia secret keys available.</p>
-            {{end}}
-          </div>
-        </section>
-        <section class="page-sub-card">
-          <h2>Config</h2>
-          <div class="page-sub-card-body-scroll">
-            <p class="muted">MatchMedia overlay.yaml. Restore default wipes it back to the shipped seed.</p>
-            {{if .OverlayError}}<p class="muted">{{.OverlayError}}</p>{{end}}
-            <textarea name="overlay_yaml" id="overlay-yaml" rows="24" spellcheck="false">{{.OverlayYAML}}</textarea>
-          </div>
-        </section>
-        <p class="row tab-footer">
-          <button type="submit" id="engines-save">Save</button>
-          <button type="submit" class="secondary" id="engines-restore" formaction="/settings/engines/restore" formmethod="post" onclick="return confirm('Restore MatchMedia default overlay? Custom overlay keys will be removed. Secrets are kept.')">Restore default</button>
-        </p>
-      </form>
+        <div class="settings-tab-actions">
+          <button type="submit" form="engines-matchmedia-form" id="engines-save" class="btn-with-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+              <polyline points="17 21 17 13 7 13 7 21"></polyline>
+              <polyline points="7 3 7 8 15 8"></polyline>
+            </svg>
+            Save
+          </button>
+          <button type="submit" form="engines-matchmedia-form" class="secondary btn-with-icon" id="engines-restore" formaction="/settings/engines/restore" formmethod="post" onclick="return confirm('Restore MatchMedia default overlay? Custom overlay keys will be removed. Secrets are kept.')">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="1 4 1 10 7 10"></polyline>
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+            </svg>
+            Restore default
+          </button>
+        </div>
+      </div>
     </div>
     <div class="settings-tab-panel {{if eq .Tab "ffmpeg"}}active{{end}}" id="tab-ffmpeg" role="tabpanel" {{if ne .Tab "ffmpeg"}}hidden{{end}}>
-      <section class="page-sub-card">
-        <h2>ffmpeg</h2>
-        <div class="page-sub-card-body-scroll">
-          <p class="muted">Transcode: H.264 CRF {{.Config.Transcode.CRF}}, max height {{.Config.Transcode.MaxHeight}}p</p>
-          <p class="muted">Hardware acceleration: {{.TranscodeHW}}</p>
-          {{if .ActiveTranscode}}
-          <p class="muted">Active transcode pipeline: {{.ActiveTranscode}}</p>
-          {{end}}
-          <p class="muted">VAAPI uses GPU decode when supported; 10-bit sources convert on CPU after GPU decode. Hybrid CPU decode runs only as fallback.</p>
+      <div class="settings-tab-card">
+        <div class="settings-tab-scroll">
+          <div class="engine-power-row">
+            <span class="engine-power {{if .TranscodeHWOn}}on{{else}}off{{end}}">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 2v10"></path>
+                <path d="M18.4 6.6a9 9 0 1 1-12.8 0"></path>
+              </svg>
+              <span>{{if .TranscodeHWOn}}On{{else}}Off{{end}}</span>
+            </span>
+          </div>
+          <table class="table">
+            <tbody>
+              <tr><th>Hardware acceleration</th><td>{{if .TranscodeHW}}{{.TranscodeHW}}{{else}}software{{end}}</td></tr>
+              {{if .ActiveTranscode}}
+              <tr><th>Pipeline</th><td>{{.ActiveTranscode}}</td></tr>
+              {{end}}
+              <tr><th>H.264 CRF</th><td>{{.Config.Transcode.CRF}}</td></tr>
+              <tr><th>Max height</th><td>{{.Config.Transcode.MaxHeight}}p</td></tr>
+            </tbody>
+          </table>
         </div>
-      </section>
+      </div>
     </div>
   </div>
 </main></div>
@@ -113,7 +138,7 @@
     statusEl.innerHTML = html;
   }
   function statusReady(html) {
-    return html.indexOf("MatchMedia ready") !== -1;
+    return html.indexOf("engine-power on") !== -1;
   }
   function pollStatus(left) {
     fetch("/hx/engines/matchmedia/status", { credentials: "same-origin" })
@@ -138,7 +163,7 @@
         headers: { "HX-Request": "true" }
       }).then(function (r) {
         if (!r.ok) {
-          swapStatus('<p class="muted" id="engines-status-text">MatchMedia unavailable</p>');
+          swapStatus('<span class="engine-power off"><span id="engines-status-text">Off</span></span>');
           pollStatus(60);
           return;
         }
@@ -147,7 +172,7 @@
           if (!statusReady(html)) pollStatus(60);
         });
       }).catch(function () {
-        swapStatus('<p class="muted" id="engines-status-text">MatchMedia unavailable</p>');
+        swapStatus('<span class="engine-power off"><span id="engines-status-text">Off</span></span>');
         pollStatus(60);
       });
     });

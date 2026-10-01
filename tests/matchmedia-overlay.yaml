@@ -1,3 +1,5 @@
+browse_roots:
+  - /media
 providers:
   omdb:
     base: "http://omdb-stub:8080"

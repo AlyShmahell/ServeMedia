@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/alyshmahell/servemedia/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/db"
 )
 
 func TestApplyNav(t *testing.T) {
@@ -48,5 +48,11 @@ func TestApplyNav(t *testing.T) {
 	applyNav("about.html", preset)
 	if preset["NavTitle"] != "Keep" || preset["NavBack"] != "/custom" {
 		t.Fatalf("preset %#v", preset)
+	}
+
+	support := map[string]any{}
+	applyNav("support.html", support)
+	if support["NavTitle"] != "Support" || support["NavBack"] != "/" {
+		t.Fatalf("support %#v", support)
 	}
 }

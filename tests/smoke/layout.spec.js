@@ -282,16 +282,30 @@ test('inner pages focus Back', async ({ page }) => {
   await expect.poll(async () => page.evaluate(() => document.body.classList.contains('spatial-nav'))).toBe(true);
 });
 
-test('About shows version and license only', async ({ page }) => {
+test('About is license-only and version lives under the logo', async ({ page }) => {
   await ensureAdmin(page);
   await page.goto('/about');
   await expect(page.locator('.topbar-title')).toHaveText('About');
-  await expect(page.locator('.about-tile h2', { hasText: 'Version' })).toBeVisible();
+  await expect(page.locator('.about-tile h2', { hasText: 'Version' })).toHaveCount(0);
   await expect(page.locator('.about-tile h2', { hasText: 'License' })).toBeVisible();
-  await expect(page.locator('.about-tile')).toHaveCount(2);
+  await expect(page.locator('.about-tile')).toHaveCount(1);
   await expect(page.getByRole('heading', { name: 'Author' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Copyright' })).toHaveCount(0);
-  await expect(page.locator('.about-tile p').first()).toContainText(/\d+\.\d+\.\d+/);
+  await expect(page.locator('.topbar-logo-version')).toContainText(/\d+\.\d+\.\d+/);
+});
+
+test('Support card and heart', async ({ page }) => {
+  await ensureAdmin(page);
+  await page.goto('/');
+  await expect(page.locator('.topbar-heart')).toBeVisible();
+  await page.locator('.topbar-heart').click();
+  await expect(page).toHaveURL(/\/support/);
+  await expect(page.locator('.topbar-title')).toHaveText('Support');
+  await expect(page.locator('.support-card h2')).toHaveText('Support ServeMedia');
+  await expect(page.locator('.support-qr')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Sponsor Me' })).toHaveAttribute('href', /github.com\/sponsors\/AlyShmahell/);
+  await expect(page.getByRole('link', { name: 'Star ServeMedia' })).toHaveAttribute('href', /github.com\/AlyShmahell\/ServeMedia/);
+  await expect(page.getByRole('link', { name: 'Contributors' })).toHaveAttribute('href', /contributors/);
 });
 
 test('library cards fit libraries section height', async ({ page }) => {
@@ -338,6 +352,12 @@ test('TV show season and episode cards', async ({ page }) => {
   await show.click();
   await expect(page).toHaveURL(/\/shows\/\d+$/);
   await expect(page.locator('.topbar-back[href^="/libraries/"]')).toBeVisible();
+  await expect(page.locator('h1 .field-icon[data-role="edit"]')).toBeVisible();
+  await page.locator('.media-hero-poster .field-icon[data-role="upload"]').click();
+  await expect(page.locator('#poster-edit-dialog')).toBeVisible();
+  await expect(page.locator('#poster-edit-save')).toBeDisabled();
+  await page.locator('#poster-edit-exit').click();
+  await expect(page.locator('#poster-edit-dialog')).toBeHidden();
   await expect(page.locator('.season-card .poster-progress').first()).toBeVisible();
 
   const seasonCard = page.locator('.season-card').first();

@@ -1,4 +1,4 @@
-module github.com/alyshmahell/servemedia
+module github.com/alyshmahell/servemedia/src
 
 go 1.26
 
