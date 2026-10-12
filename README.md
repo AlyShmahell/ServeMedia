@@ -34,8 +34,8 @@ It can be installed in one of two ways:
     flatpak override --user --filesystem=/path/to/library eu.alyshmahell.ServeMedia
     ```
 
-- **AppImage** 
-download it if you prefer from this repo's latest [Release](https://github.com/AlyShmahell/ServeMedia/releases/latest)
+- **AppImage**  
+  - download it if you prefer from this repo's latest [Release](https://github.com/AlyShmahell/ServeMedia/releases/latest)
 
 
 ### As a Server Application
