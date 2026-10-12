@@ -24,7 +24,7 @@
 ### As a Desktop Application
 
 It can be installed in one of two ways: 
-- **Flatpak**
+- **Flatpak**  
   <a href='https://flathub.org/apps/eu.alyshmahell.ServeMedia'>
       <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
   </a>
