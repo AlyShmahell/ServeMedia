@@ -23,23 +23,21 @@
 
 ### As a Desktop Application
 
-| AppImage (Download) | Flatpak (Download) | AppImage (Install with AppManager) | Flatpak (Install with Gnome Software) |
-| --- | --- | --- | --- |
-| [![Download AppImage](https://img.shields.io/badge/AppImage-download-informational?style=for-the-badge&logo=appimage&logoColor=white)](https://github.com/AlyShmahell/ServeMedia/releases/latest/download/servemedia-linux-amd64.AppImage) | [![Download Flatpak](https://img.shields.io/badge/Flatpak-download-informational?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/AlyShmahell/ServeMedia/releases/latest/download/servemedia-linux-amd64.flatpak) | [![Install AppImage with AppManager](https://img.shields.io/badge/AppImage-install-informational?style=for-the-badge&logo=appimage&logoColor=white)](https://alyshmahell.eu/ServeMedia/install/appimage.html) | [![Install Flatpak with GNOME Software](https://img.shields.io/badge/Flatpak-install-informational?style=for-the-badge&logo=flatpak&logoColor=white)](https://alyshmahell.eu/ServeMedia/install/flatpak.html) |
+It can be installed in one of two ways: 
+- **Flatpak**
+<a href='https://flathub.org/apps/eu.alyshmahell.ServeMedia'>
+    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
+</a>
 
-#### Flatpak
+  - Sandbox can already read `/media`, `/mnt`, `/run/media`, `~/Videos`, and `~/Music`. 
+  - Extra media library directories:
+    ```bash
+    flatpak override --user --filesystem=/path/to/library eu.alyshmahell.ServeMedia
+    ```
 
-Needs `org.freedesktop.Platform.ffmpeg-full` (26.08).
+- **AppImage** 
+download it if you prefer from this repo's latest [Release](https://github.com/AlyShmahell/ServeMedia/releases/latest)
 
-```bash
-flatpak run eu.alyshmahell.ServeMedia
-```
-
-- Sandbox can already read `/media`, `/mnt`, `/run/media`, `~/Videos`, and `~/Music`. 
-- Extra media library directories:
-  ```bash
-  flatpak override --user --filesystem=/path/to/library eu.alyshmahell.ServeMedia
-  ```
 
 ### As a Server Application
 
