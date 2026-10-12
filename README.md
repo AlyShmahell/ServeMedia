@@ -25,10 +25,9 @@
 
 It can be installed in one of two ways: 
 - **Flatpak**
-<a href='https://flathub.org/apps/eu.alyshmahell.ServeMedia'>
-    <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
-</a>
-
+  <a href='https://flathub.org/apps/eu.alyshmahell.ServeMedia'>
+      <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
+  </a>
   - Sandbox can already read `/media`, `/mnt`, `/run/media`, `~/Videos`, and `~/Music`. 
   - Extra media library directories:
     ```bash
