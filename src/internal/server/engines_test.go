@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -142,9 +141,14 @@ func TestHandleSettingsEnginesTabs(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, body)
 	}
-	for _, want := range []string{"tab-matchmedia", "tab-ffmpeg", "secret-omdb", "overlay-yaml", "browse_roots", "H.264 CRF", "Max height"} {
+	for _, want := range []string{"tab-matchmedia", "tab-ffmpeg", "secret-omdb", "overlay-yaml", "browse_roots", "H.264 CRF", "Max height", "Provider keys"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q in %s", want, body)
+		}
+	}
+	for _, gone := range []string{"engines-restart", "Restart MatchMedia", "id=\"engines-status\""} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("still present %q", gone)
 		}
 	}
 }
@@ -229,11 +233,11 @@ func TestHandleRestoreEngines(t *testing.T) {
 		_, _ = w.Write([]byte(`{"healthy":true}`))
 	})
 	mux.HandleFunc("/v1/config", func(w http.ResponseWriter, r *http.Request) {
-		b, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatal(err)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"extra":1,"browse_roots":["/mnt"],"providers":{"omdb":{"api_key":"k"}}}`))
+			return
 		}
-		if err := json.Unmarshal(b, &posted); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 			t.Fatal(err)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -248,15 +252,19 @@ func TestHandleRestoreEngines(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "config", "overlay.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("overlay still present: %v", err)
-	}
-	httpCfg, _ := posted["http"].(map[string]any)
-	if httpCfg["addr"] != "127.0.0.1:7680" {
-		t.Fatalf("posted seed %#v", posted)
+	if _, ok := posted["http"]; ok {
+		t.Fatalf("restore posted sidecar config %#v", posted)
 	}
 	if _, ok := posted["extra"]; ok {
 		t.Fatalf("extra survived %#v", posted)
+	}
+	if _, ok := posted["browse_roots"]; ok {
+		t.Fatalf("browse_roots survived %#v", posted)
+	}
+	providers, _ := posted["providers"].(map[string]any)
+	omdb, _ := providers["omdb"].(map[string]any)
+	if omdb["api_key"] != "k" {
+		t.Fatalf("api key not kept %#v", posted)
 	}
 }
 

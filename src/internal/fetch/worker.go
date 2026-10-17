@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alyshmahell/servemedia/src/internal/db"
@@ -20,7 +21,7 @@ type Worker struct {
 	DB        *db.DB
 	Store     string
 	MediaRoot string
-	Meta      *matchmedia.Client
+	Meta      matchmedia.Service
 	Webhooks  WebhookNotifier
 }
 
@@ -50,10 +51,10 @@ func (w *Worker) MatchLibrary(ctx context.Context, lib *db.Library, opts Opts) e
 	if lib == nil {
 		return fmt.Errorf("missing library")
 	}
-	if err := w.MatchPath(ctx, lib, lib.Path, nil, opts); err != nil {
+	if err := w.matchAndFetch(ctx, lib, lib.Path, nil, opts); err != nil {
 		return err
 	}
-	return w.PruneMissing(ctx, lib)
+	return w.stillsWithPrune(ctx, lib, opts)
 }
 
 func (w *Worker) libraryOwnerID(ctx context.Context, libraryID int64) int64 {
@@ -98,11 +99,13 @@ func (w *Worker) matchIngest(ctx context.Context, lib *db.Library, item *db.Medi
 	if year := ingestYear(item, title); year != "" {
 		row.Year = year
 	}
-	scanned, err := w.Meta.Ingest([]matchmedia.IngestRow{row})
+	jobs, session, err := w.Meta.RunIngest(ctx, []matchmedia.IngestRow{row}, func(done, total int, name string) {
+		w.reportRunProgress(ctx, opts.ScanJobID, done, total, name)
+	})
 	if err != nil {
 		return err
 	}
-	if _, err := w.streamJobs(ctx, lib, scanned.Session, item, opts); err != nil {
+	if err := w.applyJobs(ctx, lib, jobs, item, opts, session); err != nil {
 		return err
 	}
 	return w.extractMissingStills(ctx, lib, item, opts)
@@ -119,6 +122,13 @@ func ingestYear(item *db.MediaItem, title string) string {
 }
 
 func (w *Worker) MatchPath(ctx context.Context, lib *db.Library, scanPath string, only *db.MediaItem, opts Opts) error {
+	if err := w.matchAndFetch(ctx, lib, scanPath, only, opts); err != nil {
+		return err
+	}
+	return w.extractMissingStills(ctx, lib, only, opts)
+}
+
+func (w *Worker) matchAndFetch(ctx context.Context, lib *db.Library, scanPath string, only *db.MediaItem, opts Opts) error {
 	if w.Meta == nil {
 		return fmt.Errorf("metadata service unavailable")
 	}
@@ -126,200 +136,485 @@ func (w *Worker) MatchPath(ctx context.Context, lib *db.Library, scanPath string
 	if err != nil || !st.Ready {
 		return fmt.Errorf("metadata service unavailable")
 	}
-	w.progress(ctx, opts.ScanJobID, 5, "Matching titles…")
-	scanned, err := w.Meta.Scan(scanPath, opts.ScanMode, nil)
+	w.progress(ctx, opts.ScanJobID, 0, "scan 0/0")
+	if pipe, ok := w.Meta.(scanMatcher); ok {
+		return w.matchPipeline(ctx, lib, scanPath, only, opts, pipe)
+	}
+	jobs, session, err := w.Meta.Run(ctx, scanPath, opts.ScanMode, func(done, total int, name string) {
+		w.reportRunProgress(ctx, opts.ScanJobID, done, total, name)
+	})
 	if err != nil {
 		return err
 	}
-	jobs, err := w.streamJobs(ctx, lib, scanned.Session, only, opts)
+	return w.applyJobs(ctx, lib, jobs, only, opts, session)
+}
+
+type scanMatcher interface {
+	Scan(ctx context.Context, path, mode string, report func(done, total int, name string)) ([]matchmedia.Job, error)
+	Match(ctx context.Context, jobs []matchmedia.Job, report func(done, total int, name string), onJob func(matchmedia.Job)) ([]matchmedia.Job, error)
+}
+
+func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath string, only *db.MediaItem, opts Opts, pipe scanMatcher) error {
+	opts = rescanSaves(opts)
+	jobs, err := pipe.Scan(ctx, scanPath, opts.ScanMode, func(done, total int, name string) {
+		w.reportRunProgress(ctx, opts.ScanJobID, done, total, name)
+	})
 	if err != nil {
 		return err
 	}
-	if only == nil {
-		if err := w.retryUnmatchedShows(ctx, lib, jobs, opts); err != nil {
+	for i := range jobs {
+		if jobs[i].ID == "" {
+			jobs[i].ID = matchmedia.StableID(jobs[i].Path)
+		}
+		if err := w.recordTreeStructure(ctx, lib, jobs[i], opts); err != nil {
 			return err
 		}
 	}
-	return w.extractMissingStills(ctx, lib, only, opts)
-}
-
-func (w *Worker) streamJobs(ctx context.Context, lib *db.Library, session string, only *db.MediaItem, opts Opts) ([]matchmedia.Job, error) {
-	applied := map[string]string{}
-	deadline := time.Now().Add(75 * time.Minute)
-	var last matchmedia.ScanProgress
-	var lastJobs []matchmedia.Job
-	for {
-		if ctx.Err() != nil {
-			return lastJobs, ctx.Err()
+	live := &liveProgress{jobID: opts.ScanJobID}
+	q := newJobQueue()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- w.fetchQueued(ctx, lib, only, opts, "", live, q)
+	}()
+	var qmu sync.Mutex
+	queued := map[string]string{}
+	enqueue := func(j matchmedia.Job, requireFiles bool) {
+		if j.Status != "matched" || j.Match == nil {
+			return
 		}
-		if time.Now().After(deadline) {
-			return lastJobs, fmt.Errorf("matchmedia timed out")
+		if j.ID == "" {
+			j.ID = matchmedia.StableID(j.Path)
 		}
-		p, err := w.Meta.ScanStatus(session)
-		if err != nil {
-			p = last
-		} else {
-			last = p
+		if requireFiles && len(j.Files) == 0 {
+			return
 		}
-		jobs, err := w.Meta.Jobs(session)
-		if err != nil {
-			return lastJobs, err
+		sig := jobFilesKey(j)
+		qmu.Lock()
+		if prev, ok := queued[j.ID]; ok && prev == sig {
+			qmu.Unlock()
+			return
 		}
-		lastJobs = jobs
-		pending := 0
-		for _, j := range jobs {
-			if j.Status == "pending" || j.Status == "" {
-				pending++
-			}
-		}
-		w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
-		for _, j := range jobs {
-			if j.Status == "pending" || j.Status == "" {
-				continue
-			}
-			fp := jobApplyFingerprint(j)
-			if prev, ok := applied[j.ID]; ok && prev == fp {
-				continue
-			}
-			status := strings.ToLower(strings.TrimSpace(j.Status))
-			if p.Running && (status == "unmatched" || status == "error") && j.Match == nil && len(j.Candidates) == 0 {
-				continue
-			}
-			if err := w.applyFinishedJob(ctx, lib, j, only, opts, session); err != nil {
-				return lastJobs, err
-			}
-			applied[j.ID] = fp
-			w.reportStreamProgress(ctx, opts.ScanJobID, p, len(applied), len(jobs))
-		}
-		if pending == 0 && !p.Running {
-			return lastJobs, nil
-		}
-		time.Sleep(400 * time.Millisecond)
+		queued[j.ID] = sig
+		qmu.Unlock()
+		q.push(j)
 	}
-}
-
-func (w *Worker) retryUnmatchedShows(ctx context.Context, lib *db.Library, jobs []matchmedia.Job, opts Opts) error {
-	var targets []matchmedia.Job
 	for _, j := range jobs {
-		if !retryableUnmatchedShow(j) {
-			continue
-		}
-		path := strings.TrimSpace(j.Path)
-		if path == "" {
-			continue
-		}
-		it, err := w.DB.GetMediaItemByPath(ctx, lib.ID, path)
+		enqueue(j, true)
+	}
+	final := jobs
+	if jobsNeedMatch(jobs) {
+		final, err = pipe.Match(ctx, jobs, func(done, total int, name string) {
+			live.setMatch(name, done, total)
+			w.flushLive(ctx, live)
+		}, func(j matchmedia.Job) {
+			enqueue(j, true)
+		})
 		if err != nil {
+			q.close()
+			<-errCh
 			return err
 		}
-		if it == nil || it.Kind != "show" || it.MatchSkipped() {
-			continue
-		}
-		st := strings.ToLower(strings.TrimSpace(it.MatchStatus.String))
-		if st == "matched" || (st == "manual" && it.MatchCandidates.Valid && strings.TrimSpace(it.MatchCandidates.String) != "") {
-			continue
-		}
-		targets = append(targets, j)
 	}
-	if len(targets) == 0 {
-		return nil
-	}
-	w.progress(ctx, opts.ScanJobID, 88, "Retrying unmatched shows…")
-	for _, j := range targets {
-		path := strings.TrimSpace(j.Path)
-		scanned, err := w.Meta.Scan(path, opts.ScanMode, nil)
-		if err != nil {
-			log.Printf("retry unmatched show %s: %v", path, err)
+	for _, j := range final {
+		if j.Status != "matched" || j.Match == nil {
 			continue
 		}
-		it, err := w.DB.GetMediaItemByPath(ctx, lib.ID, path)
-		if err != nil {
+		if j.ID == "" {
+			j.ID = matchmedia.StableID(j.Path)
+		}
+		enqueue(j, false)
+	}
+	qmu.Lock()
+	fetchN := len(queued)
+	qmu.Unlock()
+	live.setFetchTotal(fetchN)
+	w.flushLive(ctx, live)
+	q.close()
+	if err := <-errCh; err != nil {
+		return err
+	}
+	for _, j := range final {
+		if j.Status == "matched" && j.Match != nil {
+			continue
+		}
+		if j.Status == "pending" || j.Status == "" {
+			continue
+		}
+		if err := w.recordTree(ctx, lib, j, opts); err != nil {
 			return err
 		}
-		if _, err := w.streamJobs(ctx, lib, scanned.Session, it, opts); err != nil {
-			log.Printf("retry unmatched show %s: %v", path, err)
+		if _, err := w.applyFinishedJob(ctx, lib, j, only, opts, ""); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func retryableUnmatchedShow(j matchmedia.Job) bool {
-	if extrasShapedJob(j) {
-		return false
+func jobsNeedMatch(jobs []matchmedia.Job) bool {
+	for _, j := range jobs {
+		if j.Status == "pending" || j.Status == "error" {
+			return true
+		}
 	}
-	if kindFromJob(j, expandJobFiles(j)) != "show" {
-		return false
-	}
-	if j.Match != nil || JobHasPickerCandidates(j) {
-		return false
-	}
-	st := strings.ToLower(strings.TrimSpace(j.Status))
-	return st == "unmatched" || st == "error"
+	return false
 }
 
-func (w *Worker) reportStreamProgress(ctx context.Context, jobID int64, p matchmedia.ScanProgress, applied, total int) {
-	if p.Running {
-		pct, msg := groupingProgress(p, applied)
-		w.progress(ctx, jobID, pct, msg)
+type jobQueue struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	items  []matchmedia.Job
+	closed bool
+}
+
+func newJobQueue() *jobQueue {
+	q := &jobQueue{}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+func (q *jobQueue) push(j matchmedia.Job) {
+	q.mu.Lock()
+	q.items = append(q.items, j)
+	q.mu.Unlock()
+	q.cond.Signal()
+}
+
+func (q *jobQueue) close() {
+	q.mu.Lock()
+	q.closed = true
+	q.mu.Unlock()
+	q.cond.Signal()
+}
+
+func (q *jobQueue) pop() (matchmedia.Job, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for len(q.items) == 0 && !q.closed {
+		q.cond.Wait()
+	}
+	if len(q.items) == 0 {
+		return matchmedia.Job{}, false
+	}
+	j := q.items[0]
+	q.items = q.items[1:]
+	return j, true
+}
+
+type liveProgress struct {
+	mu          sync.Mutex
+	jobID       int64
+	matchLine   string
+	fetchLine   string
+	matchDone   int
+	matchTotal  int
+	matching    bool
+	fetchDone   int
+	fetchTotal  int
+	fetchNFO    int
+	fetchEp     int
+	fetchPoster int
+	fetchTitle  string
+}
+
+func (p *liveProgress) setMatch(line string, done, total int) {
+	p.mu.Lock()
+	p.matchLine = line
+	p.matchDone = done
+	p.matchTotal = total
+	p.matching = true
+	p.mu.Unlock()
+}
+
+func (p *liveProgress) setFetchTotal(n int) {
+	p.mu.Lock()
+	p.fetchTotal = n
+	p.matching = false
+	if p.fetchDone > 0 {
+		p.fetchLine = fetchLine(p.fetchDone, p.fetchTotal, p.fetchNFO, p.fetchEp, p.fetchPoster, p.fetchTitle)
+	}
+	p.mu.Unlock()
+}
+
+func (p *liveProgress) noteFetch(done, nfo, episode, poster int, title string) {
+	p.mu.Lock()
+	p.fetchDone = done
+	p.fetchNFO = nfo
+	p.fetchEp = episode
+	p.fetchPoster = poster
+	p.fetchTitle = title
+	p.fetchLine = fetchLine(done, p.fetchTotal, nfo, episode, poster, title)
+	p.mu.Unlock()
+}
+
+func (p *liveProgress) snapshot() (string, int) {
+	var lines []string
+	if p.matchLine != "" {
+		lines = append(lines, p.matchLine)
+	}
+	if p.fetchLine != "" {
+		lines = append(lines, p.fetchLine)
+	}
+	msg := strings.Join(lines, "\n")
+	pct := 10
+	if p.matching && p.matchTotal > 0 {
+		pct = 10 + p.matchDone*70/p.matchTotal
+		if pct > 80 {
+			pct = 80
+		}
+	} else if p.fetchTotal > 0 {
+		pct = 80 + p.fetchDone*19/p.fetchTotal
+		if pct > 99 {
+			pct = 99
+		}
+	} else if p.fetchDone > 0 {
+		pct = 80
+	}
+	return msg, pct
+}
+
+func fetchLine(done, total, _, episode, poster int, title string) string {
+	head := fmt.Sprintf("fetch %d", done)
+	if total > 0 {
+		head = fmt.Sprintf("fetch %d/%d", done, total)
+	}
+	return fmt.Sprintf("%s nfo:%d poster:%d %s", head, episode, poster, title)
+}
+
+func (w *Worker) flushLive(ctx context.Context, live *liveProgress) {
+	if live == nil || live.jobID == 0 {
 		return
 	}
-	pct := 40
-	if total > 0 {
-		pct = 40 + 59*applied/total
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	msg, pct := live.snapshot()
+	if msg == "" {
+		return
 	}
-	w.progress(ctx, jobID, pct, fmt.Sprintf("Applied %d/%d", applied, total))
+	w.progress(ctx, live.jobID, pct, msg)
 }
 
-func groupingProgress(p matchmedia.ScanProgress, applied int) (int, string) {
-	done, total := p.Done, p.Files
-	if total <= 0 {
-		done, total = p.Chunk, p.Chunks
+func jobFilesKey(j matchmedia.Job) string {
+	var b strings.Builder
+	for _, f := range j.Files {
+		b.WriteString(f.Path)
+		b.WriteByte(0)
+		b.WriteString(f.Season)
+		b.WriteByte(0)
+		b.WriteString(f.Episode)
+		b.WriteByte('\n')
 	}
-	if total <= 0 {
-		return 5, "Matching titles…"
-	}
-	pct := 5 + 34*done/total
-	if pct > 39 {
-		pct = 39
-	}
-	msg := fmt.Sprintf("Grouping %d/%d", done, total)
-	if applied > 0 {
-		msg = fmt.Sprintf("Grouping %d/%d · %d titles", done, total, applied)
-	}
-	return pct, msg
+	return b.String()
 }
 
-func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchmedia.Job, only *db.MediaItem, opts Opts, session string) error {
+func (w *Worker) fetchQueued(ctx context.Context, lib *db.Library, only *db.MediaItem, opts Opts, session string, live *liveProgress, q *jobQueue) error {
+	nfo, episode, poster, done := 0, 0, 0, 0
+	seen := map[string]saveHit{}
+	for {
+		j, ok := q.pop()
+		if !ok {
+			return nil
+		}
+		if err := w.recordTree(ctx, lib, j, opts); err != nil {
+			return err
+		}
+		hit, err := w.applyFinishedJob(ctx, lib, j, only, opts, session)
+		if err != nil {
+			return err
+		}
+		id := j.ID
+		if id == "" {
+			id = matchmedia.StableID(j.Path)
+		}
+		if prev, ok := seen[id]; ok {
+			nfo += hit.nfo - prev.nfo
+			episode += hit.episode - prev.episode
+			poster += hit.poster - prev.poster
+			if nfo < 0 {
+				nfo = 0
+			}
+			if episode < 0 {
+				episode = 0
+			}
+			if poster < 0 {
+				poster = 0
+			}
+		} else {
+			nfo += hit.nfo
+			episode += hit.episode
+			poster += hit.poster
+			done++
+		}
+		seen[id] = hit
+		title := strings.TrimSpace(j.Title)
+		if j.Match != nil && strings.TrimSpace(j.Match.Title) != "" {
+			title = strings.TrimSpace(j.Match.Title)
+		}
+		live.noteFetch(done, nfo, episode, poster, title)
+		w.flushLive(ctx, live)
+	}
+}
+
+func (w *Worker) applyJobs(ctx context.Context, lib *db.Library, jobs []matchmedia.Job, only *db.MediaItem, opts Opts, session string) error {
+	opts = rescanSaves(opts)
+	var prepared []matchmedia.Job
+	for _, j := range jobs {
+		if j.ID == "" {
+			j.ID = matchmedia.StableID(j.Path)
+		}
+		if j.Status == "pending" || j.Status == "" {
+			continue
+		}
+		if err := w.recordTree(ctx, lib, j, opts); err != nil {
+			return err
+		}
+		prepared = append(prepared, j)
+	}
+	var matched []matchmedia.Job
+	for _, j := range prepared {
+		if j.Status == "matched" && j.Match != nil {
+			matched = append(matched, j)
+			continue
+		}
+		if _, err := w.applyFinishedJob(ctx, lib, j, only, opts, session); err != nil {
+			return err
+		}
+	}
+	total := len(matched)
+	episode, poster := 0, 0
+	for i, j := range matched {
+		hit, err := w.applyFinishedJob(ctx, lib, j, only, opts, session)
+		if err != nil {
+			return err
+		}
+		episode += hit.episode
+		poster += hit.poster
+		if opts.ScanJobID != 0 && total > 0 {
+			title := strings.TrimSpace(j.Title)
+			if j.Match != nil && strings.TrimSpace(j.Match.Title) != "" {
+				title = strings.TrimSpace(j.Match.Title)
+			}
+			w.reportRunProgress(ctx, opts.ScanJobID, i+1, total, fmt.Sprintf("fetch %d/%d nfo:%d poster:%d %s", i+1, total, episode, poster, title))
+		}
+	}
+	return nil
+}
+
+func rescanSaves(opts Opts) Opts {
+	switch strings.TrimSpace(opts.ScanMode) {
+	case "rescan", "matchmedia":
+		opts.Overwrite = true
+	}
+	return opts
+}
+
+func (w *Worker) reportRunProgress(ctx context.Context, jobID int64, done, total int, name string) {
+	if jobID == 0 {
+		return
+	}
+	pct := 10
+	if total > 0 && done > 0 {
+		pct = 10 + done*70/total
+		if pct > 90 {
+			pct = 90
+		}
+	}
+	msg := strings.TrimSpace(name)
+	if msg == "" {
+		msg = "Matching titles…"
+	}
+	switch {
+	case strings.HasPrefix(msg, "scan ") && total > 0:
+		pct = done * 10 / total
+	case strings.HasPrefix(msg, "match ") && total > 0:
+		pct = 10 + done*70/total
+		if pct > 80 {
+			pct = 80
+		}
+	case (strings.HasPrefix(msg, "fetch ") || strings.HasPrefix(msg, "save ")) && total > 0:
+		pct = 80 + done*19/total
+		if pct > 99 {
+			pct = 99
+		}
+	}
+	w.progress(ctx, jobID, pct, msg)
+}
+
+type saveHit struct {
+	nfo, episode, poster int
+}
+
+func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchmedia.Job, only *db.MediaItem, opts Opts, session string) (saveHit, error) {
 	if only != nil && !jobTouchesItem(j, only) {
-		return nil
+		return saveHit{}, nil
 	}
 	it, err := w.upsertFromJob(ctx, lib.ID, j, opts.Overwrite, only == nil, opts.ScanMode)
 	if err != nil {
-		return err
+		return saveHit{}, err
 	}
 	if it == nil && only != nil {
 		it = only
 	}
 	if it == nil {
 		log.Printf("matchmedia job %s path %s: no library item", j.ID, j.Path)
-		return nil
+		return saveHit{}, nil
 	}
+	w.linkItemNode(ctx, lib, it, j)
 	if only != nil && it.ID != only.ID && !jobTouchesItem(j, only) {
-		return nil
+		return saveHit{}, nil
 	}
 	if only == nil && it.MatchSkipped() {
-		return nil
+		return saveHit{}, nil
 	}
 	if changesSkipApply(opts, it, j) {
-		return nil
+		return saveHit{}, nil
 	}
 	if extrasShapedJob(j) {
-		return nil
+		return saveHit{}, nil
 	}
 	if err := w.applyJob(ctx, it, j, opts, session); err != nil {
 		log.Printf("apply %s: %v", j.ID, err)
 	}
-	return nil
+	w.stampNodePoster(ctx, lib, it, j)
+	w.stampSavedTree(ctx, lib, it)
+	hit := saveHit{}
+	if j.Status == "matched" && j.Match != nil {
+		hit.nfo = 1
+		hit.episode = episodeRecords(j)
+		if it.PosterPath.Valid && strings.TrimSpace(it.PosterPath.String) != "" {
+			hit.poster = 1
+		}
+	}
+	return hit, nil
+}
+
+func episodeRecords(j matchmedia.Job) int {
+	if j.Kind != "show" && j.Kind != "tv" {
+		return 0
+	}
+	n := 0
+	for _, s := range j.Catalog {
+		for _, e := range s.Episodes {
+			paths := 0
+			if strings.TrimSpace(e.Path) != "" {
+				paths++
+			}
+			for _, p := range e.Paths {
+				p = strings.TrimSpace(p)
+				if p != "" && p != e.Path {
+					paths++
+				}
+			}
+			n += paths
+		}
+	}
+	if n == 0 {
+		for _, f := range j.Files {
+			if strings.TrimSpace(f.Season) != "" && strings.TrimSpace(f.Episode) != "" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, id string, persist bool) error {
@@ -330,10 +625,31 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	if item.MatchMediaSessionID.Valid {
 		session = strings.TrimSpace(item.MatchMediaSessionID.String)
 	}
-	if session == "" {
-		return fmt.Errorf("no MatchMedia job for this title — rescan to match again")
+	var (
+		j   matchmedia.Job
+		err error
+	)
+	if sel, ok := w.Meta.(interface {
+		SelectStored(context.Context, matchmedia.Job, string, string) (matchmedia.Job, error)
+	}); ok {
+		hint := DecodePickerSnapshot(item.MatchCandidates.String)
+		hint.ID = item.MatchMediaJobID.String
+		if hint.Path == "" {
+			hint.Path = item.Path
+		}
+		if hint.Title == "" {
+			hint.Title = item.Title
+		}
+		if hint.Kind == "" {
+			hint.Kind = item.Kind
+		}
+		j, err = sel.SelectStored(ctx, hint, provider, id)
+	} else {
+		if session == "" {
+			return fmt.Errorf("no MatchMedia job for this title — rescan to match again")
+		}
+		j, err = w.Meta.Select(session, item.MatchMediaJobID.String, provider, id)
 	}
-	j, err := w.Meta.Select(session, item.MatchMediaJobID.String, provider, id)
 	if err != nil {
 		return err
 	}
@@ -344,7 +660,13 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	if it == nil {
 		it = item
 	}
-	return w.applyJob(ctx, it, j, Opts{Persist: persist, Overwrite: true}, session)
+	if err := w.applyJob(ctx, it, j, Opts{Persist: persist, Overwrite: true}, session); err != nil {
+		return err
+	}
+	if fresh, err := w.DB.GetMediaItem(ctx, it.ID); err == nil && fresh != nil {
+		it = fresh
+	}
+	return w.stampSelectNode(ctx, it, j)
 }
 
 func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedia.Job, overwrite, keepSkipped bool, scanMode string) (*db.MediaItem, error) {
@@ -417,18 +739,8 @@ func (w *Worker) upsertFromJob(ctx context.Context, libraryID int64, j matchmedi
 	}
 	known := changesKnownMatched(scanMode, overwrite, existing, j.Status)
 	if kind == "show" {
-		needIngest := true
-		if known {
-			same, err := episodePathsMatch(ctx, w.DB, it.ID, files)
-			if err != nil {
-				return nil, err
-			}
-			needIngest = !same
-		}
-		if needIngest {
-			if err := ingestShowFiles(ctx, w, it.ID, files); err != nil {
-				return nil, err
-			}
+		if err := ingestShowFiles(ctx, w, it.ID, files); err != nil {
+			return nil, err
 		}
 	}
 	if !known {
@@ -451,34 +763,6 @@ func changesKnownMatched(scanMode string, overwrite bool, existing *db.MediaItem
 
 func changesSkipApply(opts Opts, it *db.MediaItem, j matchmedia.Job) bool {
 	return changesKnownMatched(opts.ScanMode, opts.Overwrite, it, j.Status)
-}
-
-func episodePathsMatch(ctx context.Context, d *db.DB, showID int64, files []matchmedia.JobFile) (bool, error) {
-	eps, err := d.ListEpisodesByShow(ctx, showID)
-	if err != nil {
-		return false, err
-	}
-	have := make(map[string]struct{}, len(eps))
-	for _, e := range eps {
-		have[filepath.Clean(e.Path)] = struct{}{}
-	}
-	want := make(map[string]struct{})
-	for _, f := range files {
-		p := strings.TrimSpace(f.Path)
-		if p == "" || !isVideoPath(p) {
-			continue
-		}
-		want[filepath.Clean(p)] = struct{}{}
-	}
-	if len(have) != len(want) {
-		return false, nil
-	}
-	for p := range want {
-		if _, ok := have[p]; !ok {
-			return false, nil
-		}
-	}
-	return true, nil
 }
 
 func jobTitle(j matchmedia.Job, itemPath string) string {
@@ -709,27 +993,54 @@ func (w *Worker) attachExtrasToShow(ctx context.Context, libraryID int64, host *
 			_ = w.DB.DeleteMediaItem(ctx, extra.ID)
 		}
 	}
-	var paths []string
-	for _, f := range files {
-		if strings.TrimSpace(f.Path) != "" {
-			paths = append(paths, f.Path)
-		}
-	}
-	if err := w.IngestVideosAsSeason0(ctx, host.ID, paths); err != nil {
+	if err := w.dropUnnumberedShowEpisodes(ctx, host.ID, files, nil); err != nil {
 		return nil, err
 	}
 	return w.DB.GetMediaItem(ctx, host.ID)
 }
 
 func ingestShowFiles(ctx context.Context, w *Worker, showID int64, files []matchmedia.JobFile) error {
-	numbered, loose := splitJobFileNumbers(files)
-	if len(numbered) == 0 {
+	numbered, _ := splitJobFileNumbers(files)
+	if len(numbered) > 0 {
+		if err := w.IngestNumberedEpisodes(ctx, showID, numbered); err != nil {
+			return err
+		}
+	}
+	return w.dropUnnumberedShowEpisodes(ctx, showID, files, numbered)
+}
+
+func (w *Worker) dropUnnumberedShowEpisodes(ctx context.Context, showID int64, files []matchmedia.JobFile, numbered []NumberedEpisode) error {
+	if w == nil || w.DB == nil || showID <= 0 {
 		return nil
 	}
-	if err := w.IngestNumberedEpisodes(ctx, showID, numbered); err != nil {
+	if err := w.DB.DeleteSeasonZeroEpisodes(ctx, showID); err != nil {
 		return err
 	}
-	return w.IngestVideosAsSeason0(ctx, showID, loose)
+	keep := map[string]bool{}
+	for _, n := range numbered {
+		if p := filepath.Clean(strings.TrimSpace(n.Path)); p != "" {
+			keep[p] = true
+		}
+	}
+	job := map[string]bool{}
+	for _, f := range files {
+		if p := filepath.Clean(strings.TrimSpace(f.Path)); p != "" {
+			job[p] = true
+		}
+	}
+	eps, err := w.DB.ListEpisodesByShow(ctx, showID)
+	if err != nil {
+		return err
+	}
+	for _, ep := range eps {
+		p := filepath.Clean(ep.Path)
+		if job[p] && !keep[p] {
+			if err := w.DB.DeleteEpisode(ctx, ep.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func splitJobFileNumbers(files []matchmedia.JobFile) (numbered []NumberedEpisode, loose []string) {
@@ -738,26 +1049,22 @@ func splitJobFileNumbers(files []matchmedia.JobFile) (numbered []NumberedEpisode
 		if path == "" {
 			continue
 		}
-		seasonStr := strings.TrimSpace(f.Season)
-		epStr := strings.TrimSpace(f.Episode)
-		if seasonStr == "" && epStr == "" {
-			loose = append(loose, path)
+		if season, episode, ok := jobFileNumbers(f); ok {
+			numbered = append(numbered, NumberedEpisode{Path: path, Season: season, Episode: episode})
 			continue
 		}
-		epNum, ok := parseJobInt(epStr)
-		if !ok {
-			loose = append(loose, path)
-			continue
-		}
-		season := 1
-		if seasonStr != "" {
-			if n, ok := parseJobInt(seasonStr); ok {
-				season = n
-			}
-		}
-		numbered = append(numbered, NumberedEpisode{Path: path, Season: season, Episode: epNum})
+		loose = append(loose, path)
 	}
 	return numbered, loose
+}
+
+func jobFileNumbers(f matchmedia.JobFile) (season, episode int, ok bool) {
+	s, sok := parseJobInt(strings.TrimSpace(f.Season))
+	e, eok := parseJobInt(strings.TrimSpace(f.Episode))
+	if !sok || !eok || s <= 0 || e <= 0 {
+		return 0, 0, false
+	}
+	return s, e, true
 }
 
 func parseJobInt(s string) (int, bool) {
@@ -902,11 +1209,14 @@ func (w *Worker) applyMatched(ctx context.Context, it *db.MediaItem, j matchmedi
 	if cand == nil {
 		return fmt.Errorf("unmatched")
 	}
-	cat, err := w.Meta.Catalog(session, cand.Provider, cand.ID)
-	if err != nil {
-		cat = matchmedia.Catalog{
-			Provider: cand.Provider, ID: cand.ID, Title: cand.Title, Year: cand.Year,
-			Synopsis: cand.Synopsis, Poster: cand.Poster,
+	cat := matchmedia.Catalog{
+		Provider: cand.Provider, ID: cand.ID, Title: cand.Title, Year: cand.Year,
+		Synopsis: cand.Synopsis, Poster: cand.Poster, Seasons: j.Catalog,
+	}
+	needFetch := len(j.Catalog) == 0 && strings.TrimSpace(cand.Synopsis) == "" && strings.TrimSpace(cand.Poster) == ""
+	if needFetch && w.Meta != nil {
+		if fetched, err := w.Meta.Catalog(session, cand.Provider, cand.ID); err == nil {
+			cat = fetched
 		}
 	}
 	if it.Kind == "show" {

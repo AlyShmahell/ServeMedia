@@ -1,6 +1,6 @@
 {{define "partials/library_card.html"}}
-<article class="library-card{{if .Poll}} is-scanning{{end}}" id="library-{{.Library.ID}}"
-  style="--scan-pct: {{.ProgressPct}}%"
+<article class="library-card{{if .Poll}} is-scanning{{end}}{{if and (not .Poll) .Total}} has-watch{{end}}" id="library-{{.Library.ID}}"
+  style="--scan-pct: {{.ProgressPct}}%; --watch-pct: {{.WatchPct}}%"
   {{if and .Poll .Job}}
   hx-get="/hx/scan/{{.Job.ID}}/status"
   hx-trigger="every 1s"
@@ -38,7 +38,8 @@
       </svg>
     </button>
   </div>
-  {{if or .Poll .Message}}
+  {{range .Lines}}{{template "partials/scan_progress.html" .}}{{end}}
+  {{if and (or .Poll .Message) (not .Lines)}}
   <p class="library-scan-msg muted">
     {{if .Job}}{{if eq .Job.Status "done"}}Scan complete{{else if eq .Job.Status "error"}}Scan failed{{else if .Poll}}{{if .Enriching}}Matching{{else}}Scanning{{end}}{{end}}{{else if .Poll}}Scanning{{end}}
     {{if .ProgressPct}} — {{.ProgressPct}}%{{end}}{{if .Message}} · {{.Message}}{{end}}

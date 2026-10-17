@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/alyshmahell/servemedia/src/internal/db"
@@ -437,4 +438,40 @@ func (w *Worker) RemoveEpisodePoster(ctx context.Context, show *db.MediaItem, se
 	removeExisting(posterNameVariants(sdir, base+"-thumb")...)
 	removeExisting(posterNameVariants(filepath.Dir(ep.Path), base+"-thumb")...)
 	return w.DB.ClearEpisodeStill(ctx, ep.ID)
+}
+
+func (w *Worker) SaveNodeStill(ctx context.Context, nodeID int64, data []byte) (string, error) {
+	if w == nil || w.DB == nil || nodeID == 0 {
+		return "", fmt.Errorf("missing node")
+	}
+	if int64(len(data)) > maxPosterBytes {
+		return "", fmt.Errorf("image too large")
+	}
+	ext, err := sniffImageExt(data)
+	if err != nil {
+		return "", err
+	}
+	rel := filepath.Join("metadata", "nodes", strconv.FormatInt(nodeID, 10), "still"+ext)
+	storePath := filepath.Join(w.Store, rel)
+	if err := os.MkdirAll(filepath.Dir(storePath), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(storePath, data, 0o644); err != nil {
+		return "", err
+	}
+	if err := w.DB.SetNodeStill(ctx, nodeID, rel); err != nil {
+		return "", err
+	}
+	return rel, nil
+}
+
+func (w *Worker) RemoveNodeStill(ctx context.Context, node *db.LibraryNode) error {
+	if w == nil || w.DB == nil || node == nil {
+		return fmt.Errorf("missing node")
+	}
+	if node.StillPath.Valid && strings.TrimSpace(node.StillPath.String) != "" {
+		removeExisting(filepath.Join(w.Store, node.StillPath.String))
+	}
+	removeExisting(posterNameVariants(filepath.Join(w.Store, "metadata", "nodes", strconv.FormatInt(node.ID, 10)), "still")...)
+	return w.DB.SetNodeStill(ctx, node.ID, "")
 }

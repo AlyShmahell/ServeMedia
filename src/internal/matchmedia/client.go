@@ -64,6 +64,7 @@ type Job struct {
 	Source     string      `json:"source"`
 	Title      string      `json:"title"`
 	Year       string      `json:"year,omitempty"`
+	Parent     string      `json:"parent,omitempty"`
 	Path       string      `json:"path,omitempty"`
 	Kind       string      `json:"kind,omitempty"`
 	Role       string      `json:"role,omitempty"`
@@ -83,8 +84,57 @@ type Candidate struct {
 	Title    string  `json:"title"`
 	Year     string  `json:"year,omitempty"`
 	Score    float64 `json:"score,omitempty"`
+	Jaccard  float64 `json:"jaccard,omitempty"`
 	Synopsis string  `json:"synopsis,omitempty"`
 	Poster   string  `json:"poster,omitempty"`
+}
+
+// UnmarshalJSON accepts both the stored picker names (provider, id) and
+// MatchMedia's exported field names (Provider, ID).
+func (c *Candidate) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Provider  string  `json:"provider"`
+		Provider2 string  `json:"Provider"`
+		ID        string  `json:"id"`
+		ID2       string  `json:"ID"`
+		Title     string  `json:"title"`
+		Title2    string  `json:"Title"`
+		Year      string  `json:"year"`
+		Year2     string  `json:"Year"`
+		Score     float64 `json:"score"`
+		Score2    float64 `json:"Score"`
+		Jaccard   float64 `json:"jaccard"`
+		Jaccard2  float64 `json:"Jaccard"`
+		Synopsis  string  `json:"synopsis"`
+		Synopsis2 string  `json:"Synopsis"`
+		Poster    string  `json:"poster"`
+		Poster2   string  `json:"Poster"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	c.Provider = firstNonEmpty(raw.Provider, raw.Provider2)
+	c.ID = firstNonEmpty(raw.ID, raw.ID2)
+	c.Title = firstNonEmpty(raw.Title, raw.Title2)
+	c.Year = firstNonEmpty(raw.Year, raw.Year2)
+	c.Score = raw.Score
+	if c.Score == 0 {
+		c.Score = raw.Score2
+	}
+	c.Jaccard = raw.Jaccard
+	if c.Jaccard == 0 {
+		c.Jaccard = raw.Jaccard2
+	}
+	c.Synopsis = firstNonEmpty(raw.Synopsis, raw.Synopsis2)
+	c.Poster = firstNonEmpty(raw.Poster, raw.Poster2)
+	return nil
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }
 
 type Catalog struct {
@@ -455,6 +505,73 @@ func atoi(s string) int {
 	}
 	n, _ := strconv.Atoi(s)
 	return n
+}
+
+func (c *Client) Run(ctx context.Context, path, mode string, report func(done, total int, name string)) ([]Job, string, error) {
+	scanned, err := c.Scan(path, mode, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	jobs, err := c.waitJobs(ctx, scanned.Session, report)
+	if err != nil {
+		return nil, scanned.Session, err
+	}
+	return jobs, scanned.Session, nil
+}
+
+func (c *Client) RunIngest(ctx context.Context, rows []IngestRow, report func(done, total int, name string)) ([]Job, string, error) {
+	scanned, err := c.Ingest(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	jobs, err := c.waitJobs(ctx, scanned.Session, report)
+	if err != nil {
+		return nil, scanned.Session, err
+	}
+	return jobs, scanned.Session, nil
+}
+
+func (c *Client) Reload() error {
+	if c == nil || strings.TrimSpace(c.Base) == "" {
+		return nil
+	}
+	return waitHealth(c.httpc(), c.Base, 5*time.Second)
+}
+
+func (c *Client) waitJobs(ctx context.Context, session string, report func(done, total int, name string)) ([]Job, error) {
+	deadline := time.Now().Add(75 * time.Minute)
+	var last ScanProgress
+	var lastJobs []Job
+	for {
+		if ctx.Err() != nil {
+			return lastJobs, ctx.Err()
+		}
+		if time.Now().After(deadline) {
+			return lastJobs, fmt.Errorf("matchmedia timed out")
+		}
+		p, err := c.ScanStatus(session)
+		if err == nil {
+			last = p
+		}
+		jobs, err := c.Jobs(session)
+		if err != nil {
+			return lastJobs, err
+		}
+		lastJobs = jobs
+		pending := 0
+		for _, j := range jobs {
+			if j.Status == "pending" || j.Status == "" {
+				pending++
+			}
+		}
+		if report != nil {
+			report(last.Done, last.Files, "")
+		}
+		if pending == 0 && !last.Running {
+			return lastJobs, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func waitHealth(hc *http.Client, base string, timeout time.Duration) error {

@@ -11,15 +11,17 @@
     </header>
     <label for="scan-mode">What do you want to do?</label>
     <select name="mode" id="scan-mode">
-      <option value="local" {{if not .MetaReady}}disabled{{end}}>Scan local NFO/posters</option>
-      <option value="matchmedia" {{if not .MetaReady}}disabled{{end}}>Scan with MatchMedia (Rescan)</option>
-      <option value="matchmedia-changes" {{if .MetaReady}}selected{{end}} {{if not .MetaReady}}disabled{{end}}>Scan with MatchMedia (Changes)</option>
+      <option value="nfo" {{if not .MetaReady}}disabled{{end}}>Scan local NFO/posters</option>
+      <option value="rescan" {{if not .MetaReady}}disabled{{end}}>Rescan</option>
+      <option value="changes" {{if .MetaReady}}selected{{end}} {{if not .MetaReady}}disabled{{end}}>Changes</option>
+      <option value="missing" {{if not .MetaReady}}disabled{{end}}>Missing</option>
     </select>
     {{if not .MetaReady}}
     <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
     {{else if .MetaHint}}
     <p class="muted scan-modal-hint">{{.MetaHint}}</p>
     {{end}}
+    <input type="hidden" name="path" id="scan-node-path" value="">
     <label class="scan-persist" id="scan-overwrite-wrap">
       <input type="checkbox" name="overwrite" value="1">
       Overwrite existing metadata
@@ -43,8 +45,8 @@
   var overwriteWrap = document.getElementById('scan-overwrite-wrap');
   function closeDlg() { dlg.close(); }
   function syncModeFields() {
-    var changes = mode && mode.value === 'matchmedia-changes';
-    if (overwriteWrap) overwriteWrap.hidden = !!changes;
+    var quiet = mode && (mode.value === 'changes' || mode.value === 'nfo');
+    if (overwriteWrap) overwriteWrap.hidden = !!quiet;
   }
   var closeBtn = document.getElementById('scan-modal-close');
   var cancelBtn = document.getElementById('scan-modal-cancel');
@@ -54,10 +56,13 @@
   dlg.addEventListener('click', function (e) {
     if (e.target === dlg) closeDlg();
   });
-  window.openScanModal = function (libraryId) {
+  window.openScanModal = function (libraryId, rel) {
     if (!form) return;
     form.setAttribute('hx-post', '/hx/libraries/' + libraryId + '/scan');
-    form.setAttribute('hx-target', '#library-' + libraryId);
+    var onLibrary = document.getElementById('library-scan-host');
+    form.setAttribute('hx-target', onLibrary ? '#library-scan-host' : ('#library-' + libraryId));
+    var path = document.getElementById('scan-node-path');
+    if (path) path.value = rel || '';
     syncModeFields();
     if (window.htmx) htmx.process(form);
     dlg.showModal();

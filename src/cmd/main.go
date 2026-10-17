@@ -22,8 +22,8 @@ import (
 	"github.com/alyshmahell/servemedia/src/internal/config"
 	"github.com/alyshmahell/servemedia/src/internal/db"
 	"github.com/alyshmahell/servemedia/src/internal/fetch"
-	"github.com/alyshmahell/servemedia/src/internal/media"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/media"
 	"github.com/alyshmahell/servemedia/src/internal/server"
 	"github.com/alyshmahell/servemedia/src/internal/watchdog"
 	"github.com/alyshmahell/servemedia/src/web"
@@ -47,9 +47,6 @@ func main() {
 	}
 	media.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
 	if *doPrepare {
-		if _, err := os.Stat(cfg.MatchMediaBin()); err != nil {
-			log.Fatal(err)
-		}
 		if err := thirdParty(cfg); err != nil {
 			log.Fatal(err)
 		}
@@ -73,13 +70,12 @@ func main() {
 		_ = ln.Close()
 	}
 
-	var procMu sync.Mutex
-	var proc *matchmedia.Proc
-	p, err := matchmedia.Start(cfg.MatchMedia.Addr)
-	if err != nil {
+	var meta matchmedia.Service
+	if opened, err := matchmedia.Open(); err != nil {
 		log.Printf("matchmedia: %v (metadata may be unavailable)", err)
+	} else {
+		meta = opened
 	}
-	proc = p
 
 	var database *db.DB
 	openDB := func() error {
@@ -97,7 +93,6 @@ func main() {
 
 	tr := media.NewManager(cfg)
 	bak := &backup.Service{Cfg: &cfg, DB: database, StorePath: cfg.Store.Path, DataRoot: filepath.Dir(cfg.Store.Path)}
-	meta := &matchmedia.Client{Base: "http://" + cfg.MatchMedia.Addr}
 
 	var srv *server.Server
 	reopen := func() error {
@@ -132,18 +127,17 @@ func main() {
 		log.Fatal(err)
 	}
 	srv.SetRestartMeta(func() error {
-		procMu.Lock()
-		defer procMu.Unlock()
-		if proc != nil {
-			_ = proc.Stop()
-			proc = nil
+		if meta == nil {
+			opened, err := matchmedia.Open()
+			if err != nil {
+				return err
+			}
+			meta = opened
+			srv.Meta = meta
+			srv.RefreshFetchConfig()
+			return nil
 		}
-		p, err := matchmedia.Start(cfg.MatchMedia.Addr)
-		if err != nil {
-			return err
-		}
-		proc = p
-		return nil
+		return meta.Reload()
 	})
 	var shutdownOnce sync.Once
 	shutdownCh := make(chan struct{})
@@ -159,6 +153,10 @@ func main() {
 	if cfg.Scan.OnStartup {
 		go func() {
 			time.Sleep(2 * time.Second)
+			if meta == nil {
+				log.Printf("scan.on_startup: MatchMedia not ready, skip")
+				return
+			}
 			st, err := meta.Status()
 			if err != nil || !st.Ready {
 				log.Printf("scan.on_startup: MatchMedia not ready, skip")
@@ -189,11 +187,6 @@ func main() {
 	ln, err := net.Listen("tcp", cfg.HTTP.Addr)
 	if err != nil {
 		if isAddrInUse(err) {
-			procMu.Lock()
-			if proc != nil {
-				_ = proc.Stop()
-			}
-			procMu.Unlock()
 			openBrowser(uiURL)
 			return
 		}
@@ -217,11 +210,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(ctx)
-	procMu.Lock()
-	if proc != nil {
-		_ = proc.Stop()
-	}
-	procMu.Unlock()
 	if err := database.FailRunningScanJobs(context.Background(), "Interrupted (server shutting down)"); err != nil {
 		log.Printf("fail running scan jobs: %v", err)
 	}

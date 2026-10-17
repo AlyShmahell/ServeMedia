@@ -491,7 +491,7 @@
     }
   }
 
-  const field = kind === 'movie' ? 'movie_id' : 'episode_id';
+  const field = kind === 'movie' ? 'movie_id' : (kind === 'file' ? 'node_id' : 'episode_id');
   let lastPost = 0;
   function postProgress(force) {
     const dur = duration();
@@ -635,14 +635,14 @@
     }
   }
   async function goEpisode(epId, push) {
-    if (kind !== 'episode' || !(epId > 0) || epId === id || switching) return;
+    if ((kind !== 'episode' && kind !== 'file') || !(epId > 0) || epId === id || switching) return;
     switching = true;
     postProgress(true);
     status.textContent = 'Loading episode…';
     const prevId = id;
     const prevURL = sessionURL;
     id = epId;
-    sessionURL = '/play/episode/' + id + '/session';
+    sessionURL = '/play/' + kind + '/' + id + '/session';
     knownDuration = 0;
     timelineOffset = 0;
     av110Retried = false;
@@ -650,7 +650,7 @@
     try {
       const nextCfg = await fetchSession(null, undefined, 0);
       if (push !== false) {
-        history.pushState({ episodeId: id }, '', '/play/episode/' + id);
+        history.pushState({ episodeId: id }, '', '/play/' + kind + '/' + id);
       }
       populateTrackUI(nextCfg);
       await applyPlayback(nextCfg, 0);

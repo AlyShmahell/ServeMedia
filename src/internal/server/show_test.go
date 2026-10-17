@@ -2,22 +2,41 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"io/fs"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/alyshmahell/servemedia/src/internal/config"
 	"github.com/alyshmahell/servemedia/src/internal/db"
-	"github.com/alyshmahell/servemedia/src/web"
-	"github.com/go-chi/chi/v5"
 )
 
-func TestHandleShowOmitsEmptySeasons(t *testing.T) {
+func TestCatalogBrowseRoutesGone(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Cfg: &config.Config{}, DB: d, Templates: template.Must(template.New("x").Parse(""))}
+	rtr := s.Router()
+	for _, path := range []string{"/shows/1", "/movies/1", "/shows/1/seasons/1"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		rtr.ServeHTTP(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s status %d body %s", path, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestNodeHrefAndShowFolderBack(t *testing.T) {
 	ctx := context.Background()
 	store := t.TempDir()
 	d, err := db.Open(filepath.Join(store, "t.db"))
@@ -34,12 +53,16 @@ func TestHandleShowOmitsEmptySeasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	showID, err := d.UpsertMediaItem(ctx, db.MediaItem{
-		LibraryID: lib.ID, Kind: "show", Title: "Parent Show", Path: "/media/Parent", Mtime: 1,
+		LibraryID: lib.ID, Kind: "show", Title: "Dark Matter", Path: "/media/Dark Matter", Mtime: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.UpsertSeason(ctx, showID, 0, "Ghost Season", "", ""); err != nil {
+	showNode, err := d.UpsertNodeChain(ctx, lib.ID, "Dark Matter", "dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMediaItemNode(ctx, showID, showNode); err != nil {
 		t.Fatal(err)
 	}
 	s1, err := d.UpsertSeason(ctx, showID, 1, "Season 1", "", "season plot")
@@ -47,59 +70,85 @@ func TestHandleShowOmitsEmptySeasons(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := d.UpsertEpisode(ctx, db.Episode{
-		SeasonID: s1, ShowID: showID, EpisodeNumber: 1, Path: "/media/Parent/S1E1.mkv", Mtime: 1,
+		SeasonID: s1, ShowID: showID, EpisodeNumber: 1, Path: "/media/Dark Matter/Season 1/E01.mkv", Mtime: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	childID, err := d.UpsertMediaItem(ctx, db.MediaItem{
-		LibraryID: lib.ID, Kind: "movie", Title: "Nested Film", Path: "/media/Parent/Nested.mkv",
-		Plot: sql.NullString{String: "secret plot", Valid: true}, Mtime: 1,
+	seasonNode, err := d.UpsertNodeChain(ctx, lib.ID, "Dark Matter/Season 1", "dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileNode, err := d.UpsertNodeChain(ctx, lib.ID, "Dark Matter/Season 1/E01.mkv", "file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetNodeFile(ctx, fileNode, showNode, "1", "1", "Pilot", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_ = seasonNode
+	filmID, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Film", Path: "/media/Film.mkv", Mtime: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetMediaItemParent(ctx, childID, showID); err != nil {
-		t.Fatal(err)
-	}
-
-	tplFS, err := fs.Sub(web.FS, "templates")
+	filmNode, err := d.UpsertNodeChain(ctx, lib.ID, "Film.mkv", "file")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &config.Config{}
-	cfg.Store.Path = store
-	s := &Server{Cfg: cfg, DB: d, Templates: MustParseTemplates(tplFS)}
+	if err := d.SetMediaItemNode(ctx, filmID, filmNode); err != nil {
+		t.Fatal(err)
+	}
+	packID, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Packed", Path: "/media/Pack/Packed.mkv", Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packNode, err := d.UpsertNodeChain(ctx, lib.ID, "Pack/Packed.mkv", "file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMediaItemNode(ctx, packID, packNode); err != nil {
+		t.Fatal(err)
+	}
 
-	rtr := chi.NewRouter()
-	rtr.Get("/shows/{id}", s.handleShow)
-	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/shows/%d", showID), nil)
-	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
-	w := httptest.NewRecorder()
-	rtr.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	s := &Server{Cfg: &config.Config{}, DB: d}
+	if href := s.nodeHref(ctx, lib, db.LibraryNode{ID: showNode, NodeKind: "dir", RelPath: "Dark Matter", LibraryID: lib.ID}); href != fmt.Sprintf("/libraries/%d/tree?path=%s", lib.ID, urlQueryEscape("Dark Matter")) {
+		t.Fatalf("show href %s", href)
 	}
-	body := w.Body.String()
-	if !strings.Contains(body, ">Titles<") {
-		t.Fatal("expected Titles heading")
+	if href := s.nodeHref(ctx, lib, db.LibraryNode{ID: seasonNode, NodeKind: "dir", RelPath: "Dark Matter/Season 1", LibraryID: lib.ID}); href != fmt.Sprintf("/libraries/%d/tree?path=%s", lib.ID, urlQueryEscape("Dark Matter/Season 1")) {
+		t.Fatalf("season href %s", href)
 	}
-	if strings.Contains(body, "Related") {
-		t.Fatal("related section should be gone")
+	if href := s.nodeHref(ctx, lib, db.LibraryNode{ID: filmNode, NodeKind: "file", RelPath: "Film.mkv", LibraryID: lib.ID}); href != fmt.Sprintf("/play/file/%d", filmNode) {
+		t.Fatalf("movie href %s", href)
 	}
-	if strings.Contains(body, "Ghost Season") {
-		t.Fatal("empty season should be omitted")
+
+	show, err := d.GetMediaItem(ctx, showID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(body, "Season 1") {
-		t.Fatal("season with episodes")
+	if got := s.showFolderBack(ctx, show); got != fmt.Sprintf("/libraries/%d/tree?path=%s", lib.ID, urlQueryEscape("Dark Matter")) {
+		t.Fatalf("show folder %s", got)
 	}
-	if !strings.Contains(body, "Nested Film") {
-		t.Fatal("child in titles grid")
+	film, err := d.GetMediaItem(ctx, filmID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(body, "secret plot") {
-		t.Fatal("nested plot should be omitted")
+	if got := s.showFolderBack(ctx, film); got != fmt.Sprintf("/libraries/%d", lib.ID) {
+		t.Fatalf("film folder %s", got)
 	}
-	if !strings.Contains(body, `data-edit-url="/hx/media/` ) {
-		t.Fatal("show edit control")
+	pack, err := d.GetMediaItem(ctx, packID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.showFolderBack(ctx, pack); got != fmt.Sprintf("/libraries/%d/tree?path=Pack", lib.ID) {
+		t.Fatalf("pack folder %s", got)
+	}
+
+	cards := s.mediaItemCards(ctx, u.ID, []db.MediaItem{*show, *film, *pack})
+	if len(cards) != 3 || cards[0].Href != s.showFolderBack(ctx, show) || cards[1].Href != s.showFolderBack(ctx, film) || cards[2].Href != s.showFolderBack(ctx, pack) {
+		t.Fatalf("cards %#v", cards)
 	}
 }
 

@@ -58,6 +58,51 @@ func TestListLibraryPostersStable(t *testing.T) {
 	}
 }
 
+func TestListLibraryPostersSkipsStills(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	ctx := context.Background()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", "/m")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Real", Path: "/m/real.mkv",
+		PosterPath: sql.NullString{String: "posters/real.jpg", Valid: true}, Mtime: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Old still", Path: "/m/old.mkv",
+		PosterPath: sql.NullString{String: "stills/a.jpg", Valid: true}, Mtime: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i, still := range []string{"stills/a.jpg", "stills/b.jpg", "stills/c.jpg"} {
+		id, err := d.UpsertNodeChain(ctx, lib.ID, fmt.Sprintf("clip-%d.mkv", i), "file")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := d.SetNodeStill(ctx, id, still); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := d.ListLibraryPosters(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "posters/real.jpg" {
+		t.Fatalf("posters %#v", got)
+	}
+}
+
 func TestShowPosterFallsBackToSeason(t *testing.T) {
 	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
 	if err != nil {

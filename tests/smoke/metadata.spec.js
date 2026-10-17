@@ -71,12 +71,12 @@ test('Film Title entry Scan refetch matches 2016 anime', async ({ page }) => {
   await ensureAdmin(page);
   await ensureAnimeLibrary(page);
 
-  const card = page.locator('#items a.card').filter({
-    has: page.locator('.t', { hasText: /Film Title/i }),
+  const card = page.locator('#items a.card, #items a.file-card').filter({
+    hasText: /Film Title/i,
   }).first();
   await expect(card).toBeVisible({ timeout: 30000 });
   await card.click();
-  await expect(page).toHaveURL(/\/movies\/\d+/);
+  await expect(page).toHaveURL(/\/libraries\/\d+/);
 
   await entryScanRefetch(page);
 

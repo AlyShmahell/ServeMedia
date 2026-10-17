@@ -39,17 +39,13 @@ func (s *Server) handleMatchGet(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.Meta != nil && it.MatchMediaJobID.Valid && it.MatchMediaJobID.String != "" && session != "" {
 		j, err := s.Meta.Job(session, it.MatchMediaJobID.String)
-		if err != nil {
-			jobErr = "no MatchMedia job for this title — rescan to match again"
-		} else {
+		if err == nil {
 			job = j
 		}
-	} else {
-		jobErr = "no MatchMedia job for this title — rescan to match again"
 	}
 	job = mergePickerSnapshot(job, it)
-	if len(pickerCandidates(job)) > 0 {
-		jobErr = ""
+	if len(pickerCandidates(job)) == 0 {
+		jobErr = "no MatchMedia job for this title — rescan to match again"
 	}
 	if s.Meta != nil {
 		if job.Match != nil {

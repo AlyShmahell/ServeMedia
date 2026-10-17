@@ -17,7 +17,9 @@
     <span style="width:{{.Job.ProgressPct}}%"></span>
   </div>
   <p class="job-pct">{{.Job.ProgressPct}}%</p>
-  {{if .Job.Message.Valid}}
+  {{if .Lines}}
+  {{range .Lines}}{{template "partials/scan_progress.html" .}}{{end}}
+  {{else if .Job.Message.Valid}}
   <pre class="job-log">{{.Job.Message.String}}</pre>
   {{end}}
   {{if or (eq .Job.Status "done") (eq .Job.Status "error")}}

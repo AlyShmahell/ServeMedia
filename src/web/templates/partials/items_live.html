@@ -7,6 +7,7 @@
   hx-include=".library-toolbar"
   hx-swap="outerHTML"
   {{if .Poll}}hx-trigger="every 2s"{{end}}>
+  {{with .FolderHero}}{{template "partials/folder_hero.html" .}}{{end}}
   <div class="grid" id="items">{{template "partials/items.html" .}}</div>
 </div>
 {{end}}

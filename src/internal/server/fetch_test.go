@@ -66,6 +66,16 @@ func TestHandleMatchPostSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	nodeID, err := d.UpsertNodeChain(ctx, lib.ID, "Film.mkv", "file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMediaItemNode(ctx, id, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetNodeMatchStatus(ctx, nodeID, "manual", ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := d.SetMatchMediaMatch(ctx, id, "sess", "job", "manual", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +103,10 @@ func TestHandleMatchPostSkip(t *testing.T) {
 	}
 	if got.MatchMediaJobID.Valid {
 		t.Fatalf("job still set %#v", got.MatchMediaJobID)
+	}
+	n, err := d.GetLibraryNode(ctx, nodeID)
+	if err != nil || n == nil || n.MatchStatus.String != db.MatchStatusSkipped {
+		t.Fatalf("node skip %#v %v", n, err)
 	}
 }
 

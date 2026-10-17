@@ -308,6 +308,74 @@ const migrationV17 = `
 ALTER TABLE media_items ADD COLUMN match_candidates TEXT;
 `
 
+const migrationV18 = `
+CREATE TABLE IF NOT EXISTS library_nodes (
+  id INTEGER PRIMARY KEY,
+  library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+  parent_id INTEGER REFERENCES library_nodes(id) ON DELETE CASCADE,
+  rel_path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  node_kind TEXT NOT NULL CHECK (node_kind IN ('dir','file')),
+  mtime INTEGER NOT NULL DEFAULT 0,
+  date_added TEXT NOT NULL,
+  mm_source TEXT,
+  mm_role TEXT,
+  mm_kind TEXT,
+  mm_title TEXT,
+  mm_year TEXT,
+  mm_parent_title TEXT,
+  match_status TEXT,
+  match_error TEXT,
+  ranker TEXT,
+  meta_provider TEXT,
+  meta_id TEXT,
+  match_score REAL,
+  match_jaccard REAL,
+  catalog_for TEXT,
+  plot TEXT,
+  rating REAL,
+  poster_path TEXT,
+  backdrop_path TEXT,
+  nfo_path TEXT,
+  match_candidates TEXT,
+  group_node_id INTEGER REFERENCES library_nodes(id) ON DELETE SET NULL,
+  season_num TEXT,
+  episode_num TEXT,
+  file_title TEXT,
+  file_plot TEXT,
+  still_path TEXT,
+  UNIQUE(library_id, rel_path)
+);
+ALTER TABLE media_items ADD COLUMN node_id INTEGER REFERENCES library_nodes(id) ON DELETE SET NULL;
+ALTER TABLE watch_progress ADD COLUMN node_id INTEGER REFERENCES library_nodes(id) ON DELETE SET NULL;
+`
+
+const migrationV19 = `
+CREATE TABLE watch_progress_v19 (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  media_item_id INTEGER REFERENCES media_items(id) ON DELETE CASCADE,
+  episode_id INTEGER REFERENCES episodes(id) ON DELETE CASCADE,
+  node_id INTEGER REFERENCES library_nodes(id) ON DELETE CASCADE,
+  position_seconds REAL NOT NULL DEFAULT 0,
+  duration_seconds REAL,
+  completed INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  CHECK (
+    (media_item_id IS NOT NULL AND episode_id IS NULL AND node_id IS NULL) OR
+    (media_item_id IS NULL AND episode_id IS NOT NULL AND node_id IS NULL) OR
+    (media_item_id IS NULL AND episode_id IS NULL AND node_id IS NOT NULL)
+  )
+);
+INSERT INTO watch_progress_v19(id, user_id, media_item_id, episode_id, node_id, position_seconds, duration_seconds, completed, updated_at)
+SELECT id, user_id, media_item_id, episode_id, node_id, position_seconds, duration_seconds, completed, updated_at FROM watch_progress;
+DROP TABLE watch_progress;
+ALTER TABLE watch_progress_v19 RENAME TO watch_progress;
+CREATE UNIQUE INDEX IF NOT EXISTS watch_progress_movie ON watch_progress(user_id, media_item_id) WHERE media_item_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS watch_progress_ep ON watch_progress(user_id, episode_id) WHERE episode_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS watch_progress_node ON watch_progress(user_id, node_id) WHERE node_id IS NOT NULL;
+`
+
 const migrationV4 = `
 CREATE TABLE IF NOT EXISTS playback_prefs (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -488,6 +556,27 @@ func (d *DB) Migrate(ctx context.Context) error {
 			return fmt.Errorf("migration v17: %w", err)
 		}
 		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (17, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 17
+	}
+	if ver < 18 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV18); err != nil {
+			return fmt.Errorf("migration v18: %w", err)
+		}
+		if err := d.BackfillLibraryNodes(ctx); err != nil {
+			return fmt.Errorf("migration v18 backfill: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (18, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 18
+	}
+	if ver < 19 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV19); err != nil {
+			return fmt.Errorf("migration v19: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (19, ?)`, now()); err != nil {
 			return err
 		}
 	}

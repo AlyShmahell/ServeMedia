@@ -66,30 +66,15 @@ func TestIngestNumberedEpisodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	eps, err := d.ListEpisodesByShow(ctx, showID)
-	if err != nil || len(eps) != 2 {
+	if err != nil || len(eps) != 1 {
 		t.Fatalf("eps %#v %v", eps, err)
 	}
-	byPath := map[string]db.Episode{}
-	for _, ep := range eps {
-		byPath[ep.Path] = ep
-	}
-	if byPath[ep1].EpisodeNumber != 7 {
-		t.Fatalf("ep1 %#v", byPath[ep1])
-	}
-	seasons, err := d.ListSeasons(ctx, showID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seasonByID := map[int64]int{}
-	for _, s := range seasons {
-		seasonByID[s.ID] = s.SeasonNumber
-	}
-	if seasonByID[byPath[ova].SeasonID] != 0 || byPath[ova].EpisodeNumber != 1 {
-		t.Fatalf("ova %#v seasons %#v", byPath[ova], seasonByID)
+	if eps[0].Path != ep1 || eps[0].EpisodeNumber != 7 {
+		t.Fatalf("ep1 %#v", eps[0])
 	}
 }
 
-func TestIngestVideosAsSeason0(t *testing.T) {
+func TestIngestShowFilesNumberedOnly(t *testing.T) {
 	dir := t.TempDir()
 	d, err := db.Open(filepath.Join(dir, "t.db"))
 	if err != nil {
@@ -106,28 +91,47 @@ func TestIngestVideosAsSeason0(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	show := filepath.Join(media, "Extras Show")
-	a := filepath.Join(show, "trailer.mkv")
-	b := filepath.Join(show, "featurette.mkv")
-	touch(t, a)
-	touch(t, b)
+	show := filepath.Join(media, "Overlord")
+	s4 := filepath.Join(show, "Season 4", "Overlord - S04E01.mkv")
+	s1 := filepath.Join(show, "Season 1", "Overlord - 01 - Title.mkv")
+	ova := filepath.Join(show, "Specials", "NCOP.mkv")
+	movie := filepath.Join(show, "Overlord The Sacred Kingdom.mkv")
+	touch(t, s4)
+	touch(t, s1)
+	touch(t, ova)
+	touch(t, movie)
 	w := &Worker{DB: d, Store: t.TempDir(), MediaRoot: media}
 	showID, err := d.UpsertMediaItem(ctx, db.MediaItem{
-		LibraryID: lib.ID, Kind: "show", Title: "Extras Show", Path: show, Mtime: 1,
+		LibraryID: lib.ID, Kind: "show", Title: "Overlord", Path: show, Mtime: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.IngestVideosAsSeason0(ctx, showID, []string{a, b}); err != nil {
+	if err := w.ingestEpisodeAt(ctx, showID, s1, 0, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := ingestShowFiles(ctx, w, showID, []matchmedia.JobFile{
+		{Path: s4, Season: "4", Episode: "1"},
+		{Path: s1},
+		{Path: ova},
+		{Path: movie},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	eps, err := d.ListEpisodesByShow(ctx, showID)
-	if err != nil || len(eps) != 2 {
+	if err != nil || len(eps) != 1 {
 		t.Fatalf("eps %#v %v", eps, err)
 	}
-	for _, ep := range eps {
-		if ep.EpisodeNumber < 1 || ep.EpisodeNumber > 2 {
-			t.Fatalf("episode number %#v", ep)
+	if eps[0].Path != s4 || eps[0].EpisodeNumber != 1 {
+		t.Fatalf("s4 %#v", eps[0])
+	}
+	seasons, err := d.ListSeasons(ctx, showID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, se := range seasons {
+		if se.ID == eps[0].SeasonID && se.SeasonNumber != 4 {
+			t.Fatalf("season %#v", se)
 		}
 	}
 }
@@ -568,4 +572,3 @@ func TestApplyEpisodeKeepsNFOTitlePilotWhenCatalogEmpty(t *testing.T) {
 		t.Fatalf("plot %#v", eps[0].Plot)
 	}
 }
-

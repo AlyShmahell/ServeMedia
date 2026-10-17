@@ -26,40 +26,19 @@ type NumberedEpisode struct {
 }
 
 // IngestNumberedEpisodes upserts videos using caller-supplied season/episode
-// numbers (MatchMedia files[]). Season 0 is kinds/extras on the parent show.
+// numbers (MatchMedia files[]). Only positive season and episode numbers count.
 func (w *Worker) IngestNumberedEpisodes(ctx context.Context, showID int64, eps []NumberedEpisode) error {
 	for _, ep := range eps {
 		path := strings.TrimSpace(ep.Path)
 		if path == "" || !metadata.IsVideo(filepath.Base(path)) {
 			continue
 		}
+		if ep.Season <= 0 || ep.Episode <= 0 {
+			continue
+		}
 		if err := w.ingestEpisodeAt(ctx, showID, path, ep.Season, ep.Episode); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// IngestVideosAsSeason0 appends videos as the next season-0 episodes.
-func (w *Worker) IngestVideosAsSeason0(ctx context.Context, showID int64, paths []string) error {
-	next := 1
-	if n, err := w.DB.MaxEpisodeNumber(ctx, showID, 0); err == nil {
-		next = n + 1
-	}
-	seen := map[string]bool{}
-	for _, path := range paths {
-		if path == "" || seen[path] || !metadata.IsVideo(filepath.Base(path)) {
-			continue
-		}
-		if ok, _ := w.DB.EpisodeExistsAtPath(ctx, showID, path); ok {
-			seen[path] = true
-			continue
-		}
-		if err := w.ingestEpisodeAt(ctx, showID, path, 0, next); err != nil {
-			return err
-		}
-		seen[path] = true
-		next++
 	}
 	return nil
 }

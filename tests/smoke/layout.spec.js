@@ -350,38 +350,26 @@ test('TV show season and episode cards', async ({ page }) => {
     show = page.getByRole('link', { name: /Sample Show/i }).first();
   }
   await show.click();
-  await expect(page).toHaveURL(/\/shows\/\d+$/);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
   await expect(page.locator('.topbar-back[href^="/libraries/"]')).toBeVisible();
-  await expect(page.locator('h1 .field-icon[data-role="edit"]')).toBeVisible();
+  await expect(page.locator('.show-hero-card, .folder-hero').first()).toBeVisible();
+  await expect(page.locator('.show-hero-card h1 .field-icon[data-role="edit"], .folder-hero h1 .field-icon[data-role="edit"]').first()).toBeVisible();
   await page.locator('.media-hero-poster .field-icon[data-role="upload"]').click();
   await expect(page.locator('#poster-edit-dialog')).toBeVisible();
   await expect(page.locator('#poster-edit-save')).toBeDisabled();
   await page.locator('#poster-edit-exit').click();
   await expect(page.locator('#poster-edit-dialog')).toBeHidden();
-  await expect(page.locator('.season-card .poster-progress').first()).toBeVisible();
 
-  const seasonCard = page.locator('.season-card').first();
+  const seasonCard = page.locator('#items a.file-card').filter({ hasText: /Season/i }).first();
   await expect(seasonCard).toBeVisible({ timeout: 30000 });
-  await expect(seasonCard).toContainText(/1 episode/);
-  await expect(seasonCard).toContainText('Season one synopsis for smoke layout tests.');
-  await expect(seasonCard.locator('.card-action')).toHaveCount(0);
-
   await seasonCard.click();
-  await expect(page).toHaveURL(/\/seasons\/\d+/);
-  await expect(page.locator('.season-main-card')).toBeVisible();
-  await expect(page.locator('.season-sticky-head')).toBeVisible();
-  await expect(page.locator('.card-action')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
 
-  const episodeCard = page.locator('.episode-card').first();
+  const episodeCard = page.locator('#items a.file-card[href^="/play/file/"]').first();
   await expect(episodeCard).toBeVisible();
   await expect(episodeCard).toContainText('Pilot');
-  await expect(episodeCard).toContainText('Episode plot for the sample pilot.');
   await expect(episodeCard.locator('.poster-progress')).toBeVisible();
-  await expect(episodeCard.locator('.card-action')).toHaveCount(0);
-  const play = episodeCard.locator('a.episode-still').first();
-  await expect(play).toHaveAttribute('href', /\/play\/episode\/\d+/);
-  await expect(episodeCard.locator('.play-overlay')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Play' })).toHaveCount(0);
+  await expect(episodeCard).toHaveAttribute('href', /\/play\/file\/\d+/);
 });
 
 test('library main card scrolls items', async ({ page }) => {

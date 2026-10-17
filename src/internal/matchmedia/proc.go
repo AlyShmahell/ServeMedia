@@ -2,124 +2,13 @@ package matchmedia
 
 import (
 	"fmt"
-	"log"
-	"net"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
-	"time"
 
 	"github.com/alyshmahell/servemedia/src/internal/config"
 	"gopkg.in/yaml.v3"
 )
-
-type Proc struct {
-	cmd *exec.Cmd
-}
-
-func Start(addr string) (*Proc, error) {
-	cfg := config.Config{}
-	bin := cfg.MatchMediaBin()
-	if _, err := os.Stat(bin); err != nil {
-		return nil, fmt.Errorf("matchmedia binary: %w", err)
-	}
-	bundled := cfg.MatchMediaShare()
-	seed := filepath.Join(bundled, "config", "default.yaml")
-	if _, err := os.Stat(seed); err != nil {
-		return nil, fmt.Errorf("matchmedia seed: %w", err)
-	}
-	dataDir, err := config.MatchMediaXDGDataDir()
-	if err != nil {
-		return nil, err
-	}
-	if err := seedXDG(bundled, dataDir); err != nil {
-		return nil, err
-	}
-	xdgSeed := filepath.Join(dataDir, "config", "default.yaml")
-	if _, err := os.Stat(xdgSeed); err == nil {
-		seed = xdgSeed
-	}
-	if err := writeOverlay(dataDir, seed); err != nil {
-		return nil, err
-	}
-	base := "http://" + addr
-	if healthy(base) {
-		stopExisting(bin)
-		deadline := time.Now().Add(8 * time.Second)
-		for time.Now().Before(deadline) {
-			if !healthy(base) && !addrInUse(addr) {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
-	cmd := exec.Command(bin, "-config", seed)
-	cmd.Dir = filepath.Dir(bin)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = childSysProcAttr()
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	p := &Proc{cmd: cmd}
-	go func() {
-		err := cmd.Wait()
-		if err != nil {
-			log.Printf("matchmedia exited: %v", err)
-		}
-	}()
-	deadline := time.Now().Add(120 * time.Second)
-	for time.Now().Before(deadline) {
-		if healthy(base) {
-			return p, nil
-		}
-		time.Sleep(300 * time.Millisecond)
-	}
-	_ = p.Stop()
-	return nil, fmt.Errorf("matchmedia did not become healthy on %s", addr)
-}
-
-func (p *Proc) Stop() error {
-	if p == nil || p.cmd == nil || p.cmd.Process == nil {
-		return nil
-	}
-	pid := p.cmd.Process.Pid
-	pgid, err := syscall.Getpgid(pid)
-	termGroup := err == nil
-
-	signalGroup := func(sig syscall.Signal) {
-		if termGroup {
-			_ = syscall.Kill(-pgid, sig)
-			return
-		}
-		_ = p.cmd.Process.Signal(sig)
-	}
-
-	signalGroup(syscall.SIGTERM)
-	if waitProcessGone(pid, 3*time.Second) {
-		return nil
-	}
-	signalGroup(syscall.SIGKILL)
-	if waitProcessGone(pid, time.Second) {
-		return nil
-	}
-	return fmt.Errorf("matchmedia pid %d still alive after SIGKILL", pid)
-}
-
-func waitProcessGone(pid int, d time.Duration) bool {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err != nil {
-			return true
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	return syscall.Kill(pid, 0) != nil
-}
 
 func within(root, path string) bool {
 	root = filepath.Clean(root)
@@ -174,13 +63,79 @@ func resolveSeedPath() (string, error) {
 	return seed, nil
 }
 
-// SeedMap is MatchMedia default.yaml as a generic map (for Restore default).
+// SeedMap is an empty overlay patch. Provider API keys are kept separately.
 func SeedMap() (map[string]any, error) {
-	path, err := resolveSeedPath()
-	if err != nil {
-		return nil, err
+	return map[string]any{}, nil
+}
+
+// APIKeyPatch keeps TMDb and OMDb keys from an overlay document.
+func APIKeyPatch(m map[string]any) map[string]any {
+	out := map[string]any{}
+	providers, _ := m["providers"].(map[string]any)
+	kept := map[string]any{}
+	for _, name := range []string{"tmdb", "omdb"} {
+		spec, _ := providers[name].(map[string]any)
+		if spec == nil {
+			continue
+		}
+		key, _ := spec["api_key"].(string)
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		kept[name] = map[string]any{"api_key": key}
 	}
-	return loadYAMLMap(path)
+	if len(kept) > 0 {
+		out["providers"] = kept
+	}
+	return out
+}
+
+func sidecarDocument(m map[string]any) bool {
+	if m == nil {
+		return false
+	}
+	if _, ok := m["browse_roots"]; ok {
+		return true
+	}
+	if _, ok := m["scan"]; ok {
+		return true
+	}
+	if _, ok := m["session"]; ok {
+		return true
+	}
+	if fmt.Sprint(m["version"]) == "0.1.0" {
+		return true
+	}
+	if httpMap, ok := m["http"].(map[string]any); ok {
+		if _, ok := httpMap["addr"]; ok {
+			return true
+		}
+	}
+	if group, ok := m["group"].(map[string]any); ok {
+		if _, ok := group["extras"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func scrubSidecarFile(path string) error {
+	m, err := loadYAMLMap(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if !sidecarDocument(m) {
+		return nil
+	}
+	body, err := yaml.Marshal(APIKeyPatch(m))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
 }
 
 // RemoveOverlay deletes MatchMedia overlay.yaml if present.
@@ -328,57 +283,4 @@ func setGroupKinds(cfg map[string]any, kinds any) {
 		return
 	}
 	g["kinds"] = kinds
-}
-
-func stopExisting(bin string) {
-	want, err := filepath.EvalSymlinks(bin)
-	if err != nil {
-		want = bin
-	}
-	ents, err := os.ReadDir("/proc")
-	if err != nil {
-		return
-	}
-	for _, e := range ents {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		exe, err := os.Readlink(filepath.Join("/proc", e.Name(), "exe"))
-		if err != nil {
-			continue
-		}
-		exe = strings.TrimSuffix(exe, " (deleted)")
-		resolved, err := filepath.EvalSymlinks(exe)
-		if err != nil {
-			resolved = exe
-		}
-		if resolved != want && exe != want && exe != bin {
-			continue
-		}
-		_ = syscall.Kill(pid, syscall.SIGTERM)
-	}
-}
-
-func healthy(base string) bool {
-	req, err := http.NewRequest(http.MethodGet, base+"/health", nil)
-	if err != nil {
-		return false
-	}
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode < 500
-}
-
-func addrInUse(addr string) bool {
-	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	_ = conn.Close()
-	return true
 }

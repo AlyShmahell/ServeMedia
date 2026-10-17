@@ -4,12 +4,14 @@
 <title>{{.Library.Name}} — ServeMedia</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css">{{template "partials/head_scripts.html" .}}</head>
 <body><div class="shell">{{template "nav" .}}
 <main class="content library-page">
+  <div id="library-scan-host"></div>
   <p id="library-count" class="library-page-type muted">{{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
   <form class="row library-toolbar" data-page-state="library-toolbar" hx-get="/hx/libraries/{{.Library.ID}}/items" hx-target="#items-live" hx-swap="outerHTML" hx-trigger="input changed delay:200ms, change, submit" hx-include="this">
     <div class="library-search">
       <input type="search" name="q" value="{{.Q}}" placeholder="Search" autocomplete="off">
       <button type="button" class="library-search-clear" aria-label="Clear search"{{if not .Q}} hidden{{end}}>×</button>
     </div>
+    <input type="hidden" name="path" value="{{.Path}}">
     <select name="sort">
       <option value="name" {{if eq .Sort "name"}}selected{{end}}>Name</option>
       <option value="date_added" {{if eq .Sort "date_added"}}selected{{end}}>Date added</option>
@@ -21,7 +23,9 @@
   </div>
 </main></div>
 {{template "partials/fetch_modal.html" .}}
+{{template "partials/scan_modal.html" .}}
 {{template "partials/entry_scan_modal.html" .}}
+{{template "partials/poster_dialog.html" .}}
 <div id="match-modal-host"></div>
 </body></html>
 {{end}}

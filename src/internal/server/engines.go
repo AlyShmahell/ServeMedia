@@ -126,17 +126,12 @@ func (s *Server) handleSaveEngines(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRestoreEngines(w http.ResponseWriter, r *http.Request) {
-	if err := matchmedia.RemoveOverlay(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	seed, err := matchmedia.SeedMap()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	patch := map[string]any{}
 	if s.Meta != nil {
-		if err := s.Meta.SetConfig(seed); err != nil {
+		if cur, err := s.Meta.Config(); err == nil {
+			patch = matchmedia.APIKeyPatch(cur)
+		}
+		if err := s.Meta.SetConfig(patch); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}

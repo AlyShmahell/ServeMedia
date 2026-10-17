@@ -33,6 +33,16 @@ func (s *Server) handleStreamMovie(w http.ResponseWriter, r *http.Request) {
 	serveFileRange(w, r, it.Path)
 }
 
+func (s *Server) handleStreamFile(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	path, _, ok := s.fileNodePath(r, id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	serveFileRange(w, r, path)
+}
+
 func (s *Server) handleStreamEpisode(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	ep := s.ownedEpisode(r, id)

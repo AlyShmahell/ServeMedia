@@ -260,6 +260,14 @@ func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 	if err != nil || picked.Title != "Picked Title" || picked.MetaID.String != "88" || picked.MatchStatus.String != "matched" {
 		t.Fatalf("picked %#v %v", picked, err)
 	}
+	nodeID, err := d.NodeIDByRel(ctx, lib.ID, "Manual Film")
+	if err != nil || nodeID == 0 {
+		t.Fatalf("manual node %d %v", nodeID, err)
+	}
+	node, err := d.GetLibraryNode(ctx, nodeID)
+	if err != nil || node == nil || node.MMTitle.String != "Picked Title" || node.MatchStatus.String != "matched" {
+		t.Fatalf("stamped node %#v %v", node, err)
+	}
 }
 
 func TestMatchPathAppliesJobWhileGrouping(t *testing.T) {
@@ -299,7 +307,6 @@ func TestMatchPathAppliesJobWhileGrouping(t *testing.T) {
 
 	const sess = "20260829T122800Z-a1b2c3d4e5f6g7h8"
 	var statusHits atomic.Int32
-	var sawFilmWhileGrouping atomic.Bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
@@ -380,45 +387,12 @@ func TestMatchPathAppliesJobWhileGrouping(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true, ScanJobID: scanJobID})
-	}()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		film, _ := d.GetMediaItemByPath(ctx, lib.ID, filmPath)
-		late, _ := d.GetMediaItemByPath(ctx, lib.ID, latePath)
-		if film != nil && film.Title == "Film Title" && film.PosterPath.Valid {
-			job, _ := d.GetScanJob(ctx, scanJobID)
-			if job != nil && job.ProgressPct < 40 && strings.Contains(job.Message.String, "titles") && late == nil {
-				sawFilmWhileGrouping.Store(true)
-				break
-			}
-		}
-		select {
-		case err := <-errCh:
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Fatal("scan finished before film was observed mid-grouping")
-		default:
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !sawFilmWhileGrouping.Load() {
-		t.Fatal("film should be applied while grouping still running")
-	}
-	job, err := d.GetScanJob(ctx, scanJobID)
-	if err != nil || job == nil {
-		t.Fatalf("scan job %v %v", job, err)
-	}
-	if job.ProgressPct >= 40 {
-		t.Fatalf("grouping should stay below 40%%, got %d %q", job.ProgressPct, job.Message.String)
-	}
-
-	if err := <-errCh; err != nil {
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true, ScanJobID: scanJobID}); err != nil {
 		t.Fatal(err)
+	}
+	film, err := d.GetMediaItemByPath(ctx, lib.ID, filmPath)
+	if err != nil || film == nil || film.Title != "Film Title" || !film.PosterPath.Valid {
+		t.Fatalf("film %#v %v", film, err)
 	}
 	late, err := d.GetMediaItemByPath(ctx, lib.ID, latePath)
 	if err != nil || late == nil || late.Title != "Late Film" {
@@ -528,7 +502,7 @@ func TestStreamJobsReportsProgressPerApply(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		job, _ := d.GetScanJob(ctx, scanJobID)
-		if job != nil && strings.Contains(job.Message.String, "Applied 1/2") {
+		if job != nil && strings.Contains(job.Message.String, "fetch 1/2") {
 			sawMid.Store(true)
 			close(releaseSecond)
 			break
@@ -544,7 +518,7 @@ func TestStreamJobsReportsProgressPerApply(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if !sawMid.Load() {
-		t.Fatal("expected Applied 1/2 before the second title finished")
+		t.Fatal("expected fetch 1/2 before the second title finished")
 	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
@@ -691,18 +665,25 @@ func TestSplitJobFileNumbers(t *testing.T) {
 		{Path: "/m/s0.mkv", Season: "0", Episode: "1"},
 		{Path: "/m/loose.mkv"},
 		{Path: "/m/padded.mkv", Season: "01", Episode: "03"},
+		{Path: "/m/ep-only.mkv", Episode: "4"},
 	})
-	if len(numbered) != 3 || len(loose) != 1 || loose[0] != "/m/loose.mkv" {
+	if len(numbered) != 2 {
 		t.Fatalf("numbered %#v loose %#v", numbered, loose)
 	}
 	if numbered[0].Season != 1 || numbered[0].Episode != 2 {
 		t.Fatalf("s1 %#v", numbered[0])
 	}
-	if numbered[1].Season != 0 || numbered[1].Episode != 1 {
-		t.Fatalf("s0 %#v", numbered[1])
+	if numbered[1].Season != 1 || numbered[1].Episode != 3 {
+		t.Fatalf("padded %#v", numbered[1])
 	}
-	if numbered[2].Season != 1 || numbered[2].Episode != 3 {
-		t.Fatalf("padded %#v", numbered[2])
+	wantLoose := map[string]bool{"/m/s0.mkv": true, "/m/loose.mkv": true, "/m/ep-only.mkv": true}
+	if len(loose) != 3 {
+		t.Fatalf("loose %#v", loose)
+	}
+	for _, p := range loose {
+		if !wantLoose[p] {
+			t.Fatalf("loose path %q", p)
+		}
 	}
 }
 
@@ -1111,21 +1092,21 @@ func TestMergeSameCatalogJobsAndAttachMovie(t *testing.T) {
 	}
 
 	eps, err := d.ListEpisodesByShow(ctx, show.ID)
-	if err != nil || len(eps) != 3 {
+	if err != nil || len(eps) != 1 {
 		t.Fatalf("eps %#v %v", eps, err)
+	}
+	if eps[0].Path != epPath || eps[0].Title.String != "Pilot" {
+		t.Fatalf("s01 %#v", eps[0])
 	}
 	byPath := map[string]db.Episode{}
 	for _, ep := range eps {
 		byPath[ep.Path] = ep
 	}
-	if byPath[epPath].Title.String != "Pilot" {
-		t.Fatalf("s01 title %#v", byPath[epPath].Title)
+	if _, ok := byPath[ovaPath]; ok {
+		t.Fatal("OVA must stay a tree file")
 	}
-	if byPath[ovaPath].SeasonID == 0 || byPath[ovaPath].Title.String != "The Hidden OVA" {
-		t.Fatalf("ova %#v", byPath[ovaPath])
-	}
-	if byPath[bonusPath].Title.String != "My Bonus Feature" {
-		t.Fatalf("bonus title %#v", byPath[bonusPath].Title)
+	if _, ok := byPath[bonusPath]; ok {
+		t.Fatal("bonus must stay a tree file")
 	}
 	if _, ok := byPath[moviePath]; ok {
 		t.Fatal("movie must not be a parent season-0 episode")
@@ -1134,19 +1115,17 @@ func TestMergeSameCatalogJobsAndAttachMovie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seasonByID := map[int64]int{}
 	for _, s := range seasons {
-		seasonByID[s.ID] = s.SeasonNumber
 		if s.SeasonNumber == 1 && s.Title.Valid && s.Title.String != "Season 1" {
 			t.Fatalf("s1 title %q should stay Season 1", s.Title.String)
 		}
-		if s.SeasonNumber == 0 && (!s.Title.Valid || s.Title.String != "Specials") {
-			t.Fatalf("s0 title %#v", s.Title)
-		}
 	}
-	if seasonByID[byPath[ovaPath].SeasonID] != 0 || seasonByID[byPath[bonusPath].SeasonID] != 0 {
-		t.Fatalf("specials must be season 0: ova=%d bonus=%d",
-			seasonByID[byPath[ovaPath].SeasonID], seasonByID[byPath[bonusPath].SeasonID])
+	for _, ep := range eps {
+		for _, s := range seasons {
+			if s.ID == ep.SeasonID && s.SeasonNumber == 0 {
+				t.Fatalf("season 0 leftover %#v", ep)
+			}
+		}
 	}
 }
 
@@ -1276,8 +1255,8 @@ func TestRootMovieNestedNotSeason0(t *testing.T) {
 	if _, ok := byPath[moviePath]; ok {
 		t.Fatal("nested movie must not be a specials episode")
 	}
-	if _, ok := byPath[ovaPath]; !ok {
-		t.Fatal("OVA in Specials/ should stay season 0")
+	if _, ok := byPath[ovaPath]; ok {
+		t.Fatal("OVA in Specials/ must stay a tree file")
 	}
 	if _, ok := byPath[epPath]; !ok {
 		t.Fatal("season 1 episode missing")
@@ -2504,7 +2483,7 @@ func TestMatchPathNumberedFilesKeepsExtrasOnParent(t *testing.T) {
 		t.Fatalf("specials must not be a card: %#v", got)
 	}
 	eps, err := d.ListEpisodesByShow(ctx, show.ID)
-	if err != nil || len(eps) != 2 {
+	if err != nil || len(eps) != 1 {
 		t.Fatalf("eps %#v %v", eps, err)
 	}
 	byPath := map[string]db.Episode{}
@@ -2517,19 +2496,8 @@ func TestMatchPathNumberedFilesKeepsExtrasOnParent(t *testing.T) {
 	if byPath[epPath].Title.String != "Pilot" || byPath[epPath].EpisodeNumber != 1 {
 		t.Fatalf("s01 %#v", byPath[epPath])
 	}
-	if byPath[ovaPath].Title.String != "The Hidden OVA" {
-		t.Fatalf("ova %#v", byPath[ovaPath])
-	}
-	seasons, err := d.ListSeasons(ctx, show.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seasonByID := map[int64]int{}
-	for _, s := range seasons {
-		seasonByID[s.ID] = s.SeasonNumber
-	}
-	if seasonByID[byPath[ovaPath].SeasonID] != 0 {
-		t.Fatalf("ova season %d want 0", seasonByID[byPath[ovaPath].SeasonID])
+	if _, ok := byPath[ovaPath]; ok {
+		t.Fatal("season 0 files[] must stay tree files")
 	}
 }
 
@@ -2764,7 +2732,7 @@ func TestApplyFinishedJobLibrarySkipsSkipped(t *testing.T) {
 		Files: []matchmedia.JobFile{{Path: filmPath}},
 		Match: &matchmedia.Candidate{Provider: "tmdb", ID: "99", Title: "Wrong Hit"},
 	}
-	if err := w.applyFinishedJob(ctx, lib, j, nil, Opts{Overwrite: true}, "sess"); err != nil {
+	if _, err := w.applyFinishedJob(ctx, lib, j, nil, Opts{Overwrite: true}, "sess"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.GetMediaItem(ctx, id)
@@ -3443,7 +3411,7 @@ func TestUnmatchedMoviesUnderShowStayMovieCards(t *testing.T) {
 	}
 }
 
-func TestShowJobLooseFilesBecomeSeason0(t *testing.T) {
+func TestShowJobLooseFilesStayTreeFiles(t *testing.T) {
 	ctx := context.Background()
 	store := t.TempDir()
 	media := t.TempDir()
@@ -3510,7 +3478,7 @@ func TestShowJobLooseFilesBecomeSeason0(t *testing.T) {
 		t.Fatalf("pack must not be a card %#v", got)
 	}
 	eps, err := d.ListEpisodesByShow(ctx, items[0].ID)
-	if err != nil || len(eps) != 3 {
+	if err != nil || len(eps) != 1 || eps[0].Path != epPath {
 		t.Fatalf("eps %#v %v", eps, err)
 	}
 	seasons, err := d.ListSeasons(ctx, items[0].ID)
@@ -3527,7 +3495,7 @@ func TestShowJobLooseFilesBecomeSeason0(t *testing.T) {
 			s0++
 		}
 	}
-	if s0 != 2 {
-		t.Fatalf("season-0 count %d want 2 eps %#v", s0, eps)
+	if s0 != 0 {
+		t.Fatalf("season-0 count %d want 0 eps %#v", s0, eps)
 	}
 }

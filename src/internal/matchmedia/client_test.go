@@ -569,3 +569,44 @@ func TestRemoveOverlayThenSeed(t *testing.T) {
 		t.Fatalf("min_score=%v", match["min_score"])
 	}
 }
+
+func TestScrubSidecarOverlayKeepsAPIKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "overlay.yaml")
+	body := []byte("version: \"0.1.0\"\nbrowse_roots:\n  - /mnt\nhttp:\n  addr: 127.0.0.1:7680\ngroup:\n  extras:\n    - trailers\nproviders:\n  tmdb:\n    api_key: tmdb-key\n    url: https://example.test\n  omdb:\n    api_key: omdb-key\n")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := scrubSidecarFile(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadYAMLMap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["browse_roots"]; ok {
+		t.Fatalf("sidecar keys survived %#v", got)
+	}
+	if _, ok := got["http"]; ok {
+		t.Fatalf("http survived %#v", got)
+	}
+	providers, _ := got["providers"].(map[string]any)
+	tmdb, _ := providers["tmdb"].(map[string]any)
+	omdb, _ := providers["omdb"].(map[string]any)
+	if tmdb["api_key"] != "tmdb-key" || omdb["api_key"] != "omdb-key" {
+		t.Fatalf("keys %#v", got)
+	}
+	if _, ok := tmdb["url"]; ok {
+		t.Fatalf("provider url survived %#v", tmdb)
+	}
+	if err := scrubSidecarFile(path); err != nil {
+		t.Fatal(err)
+	}
+	again, err := loadYAMLMap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again["providers"] == nil {
+		t.Fatalf("second scrub dropped keys %#v", again)
+	}
+}

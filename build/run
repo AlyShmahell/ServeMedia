@@ -4,23 +4,71 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+COMPOSE_FILE="$DIR/compose.yaml"
+
 compose() {
   if command -v podman-compose >/dev/null 2>&1; then
-    podman-compose -f compose.yaml "$@"
+    podman-compose -f "$COMPOSE_FILE" "$@"
   elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
-    podman compose -f compose.yaml "$@"
+    podman compose -f "$COMPOSE_FILE" "$@"
   elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    docker compose -f compose.yaml "$@"
+    docker compose -f "$COMPOSE_FILE" "$@"
   else
     echo "error: need podman-compose, podman compose, or docker compose" >&2
     exit 1
   fi
 }
 
+yaml_quote() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '"%s"' "$s"
+}
+
+path_has_glob() {
+  case "$1" in
+    *'*'*|*'?'*|*'['*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Buildah globs the context path, so a literal * in the repo path matches nothing.
+prepare_compose() {
+  local root dest
+  root="$(cd "$DIR/.." && pwd)"
+  COMPOSE_FILE="$DIR/compose.yaml"
+  if ! path_has_glob "$root"; then
+    return 0
+  fi
+  dest="${XDG_CACHE_HOME:-$HOME/.cache}/servemedia/build-context"
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  tar -C "$root" \
+    --exclude=./build/cache \
+    --exclude=./build/dist \
+    --exclude=./build/package \
+    --exclude=./.git \
+    -cf - . | tar -C "$dest" -xf -
+  COMPOSE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/servemedia/compose.yaml"
+  cat >"$COMPOSE_FILE" <<EOF
+services:
+  dist:
+    build:
+      context: $(yaml_quote "$dest")
+      dockerfile: $(yaml_quote "$dest/build/Containerfile")
+    volumes:
+      - $(yaml_quote "$DIR/dist:/out:z")
+      - $(yaml_quote "$DIR/cache:/cache:z")
+      - $(yaml_quote "$DIR/package:/package:z")
+EOF
+}
+
 rebuild() {
   mkdir -p "$DIR/dist" "$DIR/cache" "$DIR/package"
   : >"$DIR/dist/.gitkeep"
   : >"$DIR/cache/.gitkeep"
+  prepare_compose
   compose up --build --force-recreate --abort-on-container-exit
 }
 
@@ -52,6 +100,7 @@ package() {
   fi
   mkdir -p "$DIR/package"
   : >"$DIR/package/.gitkeep"
+  prepare_compose
   local staging
 
   HOME="$DIR/cache/xdg" \
