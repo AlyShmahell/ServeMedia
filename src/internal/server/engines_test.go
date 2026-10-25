@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alyshmahell/servemedia/src/internal/backup"
 	"github.com/alyshmahell/servemedia/src/internal/config"
 	"github.com/alyshmahell/servemedia/src/internal/db"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
@@ -38,6 +39,8 @@ func enginesTestServer(t *testing.T, meta *matchmedia.Client) (*Server, *db.User
 	cfg := config.Defaults()
 	cfg.Transcode.CRF = 23
 	cfg.Transcode.MaxHeight = 2160
+	cfg.Scan.OnStartup = true
+	cfg.Watchdog.TTLSeconds = 15
 	s := &Server{Cfg: &cfg, DB: d, Templates: MustParseTemplates(tplFS), Meta: meta}
 	return s, u
 }
@@ -51,7 +54,7 @@ func TestHandleSettingsServerRedirect(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Fatalf("status %d", w.Code)
 	}
-	if loc := w.Header().Get("Location"); loc != "/settings/engines?tab=ffmpeg" {
+	if loc := w.Header().Get("Location"); loc != "/" {
 		t.Fatalf("location %q", loc)
 	}
 }
@@ -134,6 +137,7 @@ func TestHandleSettingsEnginesTabs(t *testing.T) {
 	t.Cleanup(stub.Close)
 	s, u := enginesTestServer(t, &matchmedia.Client{Base: stub.URL, HTTP: stub.Client()})
 	req := httptest.NewRequest(http.MethodGet, "/settings/engines", nil)
+	req.Header.Set("HX-Request", "true")
 	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
 	w := httptest.NewRecorder()
 	s.handleSettingsEngines(w, req)
@@ -141,15 +145,34 @@ func TestHandleSettingsEnginesTabs(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, body)
 	}
-	for _, want := range []string{"tab-matchmedia", "tab-ffmpeg", "secret-omdb", "overlay-yaml", "browse_roots", "H.264 CRF", "Max height", "Provider keys"} {
+	for _, want := range []string{"settings-sidenav", "MatchMedia", "FFmpeg", "Webhooks", "tab-matchmedia", "secret-omdb", "overlay-yaml", "browse_roots", "Provider keys"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q in %s", want, body)
 		}
 	}
-	for _, gone := range []string{"engines-restart", "Restart MatchMedia", "id=\"engines-status\""} {
+	for _, gone := range []string{"engines-restart", "Restart MatchMedia", "id=\"engines-status\"", "H.264 CRF", "tab-ffmpeg"} {
 		if strings.Contains(body, gone) {
 			t.Fatalf("still present %q", gone)
 		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/settings/engines?tab=ffmpeg", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "settings-panel")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w = httptest.NewRecorder()
+	s.handleSettingsEngines(w, req)
+	body = w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("ffmpeg status %d body %s", w.Code, body)
+	}
+	for _, want := range []string{"tab-ffmpeg", "H.264 CRF", "Max height", "Hardware acceleration"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in %s", want, body)
+		}
+	}
+	if strings.Contains(body, "overlay-yaml") || strings.Contains(body, "settings-sidenav") || strings.Contains(body, "scan_on_startup") {
+		t.Fatalf("ffmpeg panel mixed: %s", body)
 	}
 }
 
@@ -207,6 +230,7 @@ func TestHandleRestoreEngines(t *testing.T) {
 	tree := t.TempDir()
 	t.Setenv("HOME", filepath.Join(tree, "home"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(tree, "xdg"))
+	t.Setenv("SERVEMEDIA_HOME", "")
 	t.Setenv("SERVEMEDIA_ROOT", filepath.Join(tree, "servemedia"))
 	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
 	mmShare := filepath.Join(tree, "matchmedia", "config")
@@ -217,14 +241,14 @@ func TestHandleRestoreEngines(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mmShare, "default.yaml"), []byte(seedBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	dataDir, err := config.MatchMediaXDGDataDir()
+	dataDir, err := config.MatchMediaDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "config"), 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "config", "overlay.yaml"), []byte("extra: 1\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, "overlay.yaml"), []byte("extra: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var posted map[string]any
@@ -277,8 +301,169 @@ func TestHandleSaveServerRedirect(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Fatalf("status %d", w.Code)
 	}
-	if loc := w.Header().Get("Location"); loc != "/settings/engines?tab=ffmpeg" {
+	if loc := w.Header().Get("Location"); loc != "/" {
 		t.Fatalf("location %q", loc)
+	}
+}
+
+func TestSaveFFmpegSettings(t *testing.T) {
+	s, u := enginesTestServer(t, nil)
+	s.Cfg.OverlayPath = filepath.Join(t.TempDir(), "overlay.yaml")
+	if err := os.WriteFile(s.Cfg.OverlayPath, []byte("media:\n  path: /keep/media\nstore:\n  path: /old/store\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form := url.Values{}
+	form.Set("ffmpeg_settings", "1")
+	form.Set("crf", "20")
+	form.Set("max_height", "1080")
+	form.Set("segment_seconds", "4")
+	form.Set("cleanup_hours", "12")
+	form.Set("hwaccel", "none")
+	req := httptest.NewRequest(http.MethodPost, "/settings/engines", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	s.handleSaveEngines(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if loc := w.Header().Get("Location"); loc != "/" {
+		t.Fatalf("location %q", loc)
+	}
+	if s.Cfg.Transcode.CRF != 20 || s.Cfg.Transcode.MaxHeight != 1080 || s.Cfg.Transcode.HWAccel != "none" {
+		t.Fatalf("transcode %+v", s.Cfg.Transcode)
+	}
+	if !s.Cfg.Scan.OnStartup || s.Cfg.Watchdog.TTLSeconds != 15 {
+		t.Fatalf("scan %v ttl %d", s.Cfg.Scan.OnStartup, s.Cfg.Watchdog.TTLSeconds)
+	}
+	b, err := os.ReadFile(s.Cfg.OverlayPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	if !strings.Contains(text, "/keep/media") || strings.Contains(text, "/old/store") {
+		t.Fatalf("overlay:\n%s", text)
+	}
+}
+
+func TestSaveGeneralSettings(t *testing.T) {
+	s, u := enginesTestServer(t, nil)
+	s.Cfg.OverlayPath = filepath.Join(t.TempDir(), "overlay.yaml")
+	if err := os.WriteFile(s.Cfg.OverlayPath, []byte("media:\n  path: /keep/media\nstore:\n  path: /old/store\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.Cfg.Scan.OnStartup = false
+	s.Cfg.Watchdog.TTLSeconds = 60
+	form := url.Values{}
+	form.Set("scan_on_startup", "on")
+	form.Set("watchdog_ttl", "0")
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "settings-panel")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	s.handleSaveGeneral(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !s.Cfg.Scan.OnStartup || s.Cfg.Watchdog.TTLSeconds != 0 {
+		t.Fatalf("scan %v ttl %d", s.Cfg.Scan.OnStartup, s.Cfg.Watchdog.TTLSeconds)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "scan_on_startup") || !strings.Contains(body, `id="watchdog-ttl"`) || strings.Contains(body, "settings-sidenav") {
+		t.Fatalf("panel %s", body)
+	}
+	if !strings.Contains(body, "checked") {
+		t.Fatalf("scan checkbox: %s", body)
+	}
+	b, err := os.ReadFile(s.Cfg.OverlayPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	if !strings.Contains(text, "/keep/media") || strings.Contains(text, "/old/store") {
+		t.Fatalf("overlay:\n%s", text)
+	}
+}
+
+func TestSettingsAndAboutFragments(t *testing.T) {
+	s, u := enginesTestServer(t, nil)
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	s.handleSettings(w, req)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/" {
+		t.Fatalf("direct settings %d %q", w.Code, w.Header().Get("Location"))
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req.Header.Set("HX-Request", "true")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w = httptest.NewRecorder()
+	s.handleSettings(w, req)
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, body)
+	}
+	for _, want := range []string{"settings-sidenav", "General", "FFmpeg", "MatchMedia", "Webhooks", "Backup", "Accounts", "scan_on_startup", "aria-current=\"page\""} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in %s", want, body)
+		}
+	}
+	if strings.Contains(body, "tab-ffmpeg") || strings.Contains(body, "tab-matchmedia") {
+		t.Fatalf("general shell included another panel: %s", body)
+	}
+
+	s.Cfg.OverlayPath = filepath.Join(t.TempDir(), "overlay.yaml")
+	req = httptest.NewRequest(http.MethodGet, "/settings/integrations", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "settings-panel")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w = httptest.NewRecorder()
+	s.handleSettingsIntegrations(w, req)
+	body = w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, "webhook-api-key") || strings.Contains(body, "settings-sidenav") {
+		t.Fatalf("webhooks %d %s", w.Code, body)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/settings/users", nil)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "settings-panel")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w = httptest.NewRecorder()
+	s.handleSettingsUsers(w, req)
+	body = w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, "add-user-open") || !strings.Contains(body, u.Username) {
+		t.Fatalf("accounts %d %s", w.Code, body)
+	}
+	var backupHTML strings.Builder
+	if err := s.Templates.ExecuteTemplate(&backupHTML, "partials/settings_backup.html", map[string]any{
+		"Config":   s.Cfg,
+		"Archives": []string{"snap.tar"},
+		"Status":   backup.Status{},
+		"User":     u,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(backupHTML.String(), "backup_enabled") || !strings.Contains(backupHTML.String(), "snap.tar") {
+		t.Fatalf("backup %s", backupHTML.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/about", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w = httptest.NewRecorder()
+	s.handleAbout(w, req)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/" {
+		t.Fatalf("direct about %d %q", w.Code, w.Header().Get("Location"))
+	}
+	req = httptest.NewRequest(http.MethodGet, "/about", nil)
+	req.Header.Set("HX-Request", "true")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w = httptest.NewRecorder()
+	s.handleAbout(w, req)
+	body = w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, "License") || !strings.Contains(body, "Attribution") {
+		t.Fatalf("about %d %s", w.Code, body)
 	}
 }
 

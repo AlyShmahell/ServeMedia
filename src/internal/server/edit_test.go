@@ -98,7 +98,7 @@ func TestHandleMediaMetaUnauthorized404(t *testing.T) {
 }
 
 func TestHandleMediaMetaAndPoster(t *testing.T) {
-	ctx, store, media, d, owner, _, lib, s := editTestServer(t)
+	ctx, _, media, d, owner, _, lib, s := editTestServer(t)
 	filmDir := filepath.Join(media, "Film")
 	filmPath := filepath.Join(filmDir, "Film.mkv")
 	if err := os.MkdirAll(filmDir, 0o755); err != nil {
@@ -160,7 +160,7 @@ func TestHandleMediaMetaAndPoster(t *testing.T) {
 		t.Fatalf("src %s", pw.Body.String())
 	}
 	it, _ = d.GetMediaItem(ctx, id)
-	if _, err := os.Stat(filepath.Join(store, it.PosterPath.String)); err != nil {
+	if _, err := os.Stat(it.PosterPath.String); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(filmDir, "poster.png")); err != nil {
@@ -234,7 +234,7 @@ func TestHandleSeasonEpisodeMetaUnauthorized404(t *testing.T) {
 }
 
 func TestHandleNodeStillAndGenerate(t *testing.T) {
-	ctx, store, mediaDir, d, owner, _, lib, s := editTestServer(t)
+	ctx, _, mediaDir, d, owner, _, lib, s := editTestServer(t)
 	path := filepath.Join(mediaDir, "Film.mkv")
 	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -301,11 +301,14 @@ func TestHandleNodeStillAndGenerate(t *testing.T) {
 		t.Fatalf("upload %d %s", pw.Code, pw.Body.String())
 	}
 	n, err := d.GetLibraryNode(ctx, nodeID)
-	if err != nil || n == nil || n.StillPath.String == "" {
+	if err != nil || n == nil || !filepath.IsAbs(n.StillPath.String) {
 		t.Fatalf("still %#v %v", n, err)
 	}
-	if _, err := os.Stat(filepath.Join(store, n.StillPath.String)); err != nil {
+	if _, err := os.Stat(n.StillPath.String); err != nil {
 		t.Fatal(err)
+	}
+	if filepath.Dir(n.StillPath.String) != mediaDir {
+		t.Fatalf("still %s", n.StillPath.String)
 	}
 
 	dreq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/hx/nodes/%d/still", nodeID), nil)

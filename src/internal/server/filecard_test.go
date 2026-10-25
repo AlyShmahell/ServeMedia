@@ -41,8 +41,20 @@ func TestFileTitleOrder(t *testing.T) {
 	node.FileTitle = sql.NullString{String: "Stored", Valid: true}
 	node.FilePlot = sql.NullString{String: "From the library", Valid: true}
 	title, plot, _, _ = fileCardFields(dir, node, true)
-	if title != "Stored" || plot != "From the library" {
-		t.Fatalf("db title=%q plot=%q", title, plot)
+	if title != "Pilot" || plot != "From the library" {
+		t.Fatalf("nfo title wins, db title=%q plot=%q", title, plot)
+	}
+	if err := os.WriteFile(nfo, []byte(`<episodedetails><title> </title><plot>A start</plot></episodedetails>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	title, _, _, _ = fileCardFields(dir, node, true)
+	if title != "Stored" {
+		t.Fatalf("empty nfo title falls back to stored %q", title)
+	}
+	node.FileTitle = sql.NullString{}
+	title, _, _, _ = fileCardFields(dir, node, true)
+	if title != "Show.S01E01" {
+		t.Fatalf("filename fallback %q", title)
 	}
 }
 
@@ -97,21 +109,24 @@ func TestFileRowTemplate(t *testing.T) {
 	for _, want := range []string{
 		"file-card", "Pilot", "A start", "Season", "2020-01-02",
 		"poster-progress-watch", "width:50%", "width:40%", "openEntryScanModal(",
-		`data-media-id="7"`, "data-edit-url=\"/hx/media/7/meta\"", "data-edit-url=\"/hx/episodes/9/meta\"", "Pilot-thumb.jpg",
-		`aria-label="Edit title"`, `data-generate-url="/hx/nodes/9/still/generate"`, `data-role="still"`,
+		`data-media-id="7"`, "Pilot-thumb.jpg",
+		`data-generate-url="/hx/nodes/9/still/generate"`, `data-role="still"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q in %s", want, html)
 		}
 	}
-	if strings.Contains(html, `card-action-label">Edit`) {
-		t.Fatalf("overlay edit: %s", html)
+	if strings.Contains(html, `card-action-label">Edit`) || strings.Contains(html, `data-role="edit"`) || strings.Contains(html, "data-edit-url=") {
+		t.Fatalf("edit control outside hero: %s", html)
 	}
 	if strings.Contains(html, "watched ") || strings.Contains(html, "openScanModal(") {
 		t.Fatalf("library scan or watch chip on item: %s", html)
 	}
 	if strings.Contains(html, "file-card-title\">Pilot.mkv") || strings.Contains(html, ">Show.mkv<") {
 		t.Fatalf("extension visible: %s", html)
+	}
+	if strings.Contains(html, "data-mid=") {
+		t.Fatalf("card title should wrap, not ellipsize: %s", html)
 	}
 	if !strings.Contains(html, `class="card"`) {
 		t.Fatalf("root folder tile: %s", html)
@@ -140,8 +155,73 @@ func TestFileRowTemplate(t *testing.T) {
 	if strings.Contains(nested, `class="card"`) {
 		t.Fatalf("nested dir should be full width: %s", nested)
 	}
-	if !strings.Contains(nested, "file-card") || !strings.Contains(nested, "No synopsis") || !strings.Contains(nested, `data-edit-field="plot"`) {
-		t.Fatalf("nested synopsis: %s", nested)
+	if !strings.Contains(nested, "file-card") || !strings.Contains(nested, "Season 1") || !strings.Contains(nested, "Pilot") {
+		t.Fatalf("nested cards: %s", nested)
+	}
+	if strings.Contains(nested, "data-mid=") {
+		t.Fatalf("nested title should wrap, not ellipsize: %s", nested)
+	}
+	if strings.Contains(nested, `data-edit-field="plot"`) || strings.Contains(nested, `data-role="edit"`) {
+		t.Fatalf("edit control outside hero: %s", nested)
+	}
+}
+
+func TestFolderDisplayTitle(t *testing.T) {
+	dir := t.TempDir()
+	show := filepath.Join(dir, "Show Name")
+	season := filepath.Join(show, "Season 01")
+	if err := os.MkdirAll(season, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(show, "tvshow.nfo"), []byte(`<tvshow><title>Steins;Gate</title></tvshow>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(season, "season.nfo"), []byte(`<season><title>Season One</title></season>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mm := sql.NullString{String: "Stored Show", Valid: true}
+	year := sql.NullString{String: "2011", Valid: true}
+	if got := folderDisplayTitle(show, "Show Name", mm, year, 0); got != "Steins;Gate" {
+		t.Fatalf("tvshow nfo title %q", got)
+	}
+	if got := folderDisplayTitle(season, "Season 01", mm, year, 0); got != "Season One" {
+		t.Fatalf("season nfo title %q", got)
+	}
+	bare := filepath.Join(dir, "Bare")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bare, "tvshow.nfo"), []byte(`<tvshow><title> </title></tvshow>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := folderDisplayTitle(bare, "Bare", mm, year, 0); got != "Stored Show (2011)" {
+		t.Fatalf("empty nfo title %q", got)
+	}
+	if err := os.Remove(filepath.Join(bare, "tvshow.nfo")); err != nil {
+		t.Fatal(err)
+	}
+	if got := folderDisplayTitle(bare, "Bare", sql.NullString{}, sql.NullString{}, 0); got != "Bare" {
+		t.Fatalf("directory name %q", got)
+	}
+	movie := filepath.Join(dir, "Film (1999)")
+	if err := os.MkdirAll(movie, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(movie, "movie.nfo"), []byte(`<movie><title>The Film</title><year>1999</year></movie>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := folderDisplayTitle(movie, "Film (1999)", mm, year, 0); got != "The Film" {
+		t.Fatalf("movie nfo title %q", got)
+	}
+	numbered := filepath.Join(dir, "Season 02")
+	if err := os.MkdirAll(numbered, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(numbered, "season02.nfo"), []byte(`<season><title>Second</title></season>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := folderDisplayTitle(numbered, "Season 02", sql.NullString{}, sql.NullString{}, 0); got != "Second" {
+		t.Fatalf("seasonNN nfo title %q", got)
 	}
 }
 

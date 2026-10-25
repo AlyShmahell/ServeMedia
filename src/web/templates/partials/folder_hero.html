@@ -9,6 +9,11 @@
   </div>
   <div class="media-meta">
     <h1>{{if .EditURL}}<span class="editable" data-edit-url="{{.EditURL}}" data-edit-field="title"><span class="editable-text">{{.Title}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span>{{else}}{{.Title}}{{end}}</h1>
+    {{if .Chips}}
+    <div class="hero-facts">
+      {{range .Chips}}<span class="hero-chip hero-chip-{{.Kind}}" title="{{.Title}}">{{if .Label}}<span class="hero-chip-k">{{.Label}}</span>{{end}}{{.Value}}</span>{{end}}
+    </div>
+    {{end}}
     {{if .EditURL}}
     <p class="plot editable{{if eq .Plot ""}} is-empty{{end}}" data-edit-url="{{.EditURL}}" data-edit-field="plot" data-edit-multiline="1" data-empty-label="No synopsis"><span class="editable-text">{{if .Plot}}{{.Plot}}{{else}}No synopsis{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit synopsis" aria-label="Edit synopsis">{{template "partials/icon_edit.html"}}</button></p>
     {{else if .Plot}}

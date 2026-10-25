@@ -11,7 +11,7 @@ import (
 	"github.com/alyshmahell/servemedia/src/internal/metadata"
 )
 
-// DissociateMediaItem removes NFO/poster files (store and beside-media),
+// DissociateMediaItem removes NFO and poster files at the stored paths,
 // clears UI metadata, reverts the title to the path name, and skips later
 // library MatchMedia scans until the user rematches from the entry modal.
 func (w *Worker) DissociateMediaItem(ctx context.Context, lib *db.Library, item *db.MediaItem, jobID int64) error {

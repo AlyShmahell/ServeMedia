@@ -8,9 +8,7 @@
     {{template "partials/node_scan.html" .}}
     {{if and .Total (not $.Poll)}}<div class="poster-progress poster-progress-watch" aria-hidden="true"><span style="width:{{.WatchPct}}%"></span></div>{{end}}
   </div>
-      <div class="t">
-        {{if .EditURL}}<span class="editable" id="node-title-{{.Node.ID}}" data-edit-url="{{.EditURL}}" data-edit-field="title"><span class="editable-text">{{.Title}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span>{{else}}{{.Title}}{{end}}
-      </div>
+      <div class="t">{{.Title}}</div>
 </a>
 {{end}}
 {{end}}
@@ -25,7 +23,7 @@
     {{if and .Total (not $.Poll)}}<div class="poster-progress poster-progress-watch" aria-hidden="true"><span style="width:{{.WatchPct}}%"></span></div>{{end}}
   </div>
   <div class="file-card-body">
-    <div class="file-card-title">{{if .EditURL}}<span class="editable" id="node-title-{{.Node.ID}}" data-edit-url="{{.EditURL}}" data-edit-field="title"><span class="editable-text">{{.Title}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span>{{else}}{{.Title}}{{end}}</div>
+    <div class="file-card-title">{{.Title}}</div>
     {{template "partials/card_plot.html" .}}
   </div>
 </a>
@@ -40,7 +38,7 @@
     <div class="poster-progress" aria-hidden="true"><span style="width:{{.ProgressPct}}%"></span></div>
   </div>
   <div class="file-card-body">
-    <div class="file-card-title">{{if .EditURL}}<span class="editable" id="node-title-{{.Node.ID}}" data-edit-url="{{.EditURL}}" data-edit-field="title"><span class="editable-text">{{.Title}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span>{{else}}{{.Title}}{{end}}</div>
+    <div class="file-card-title">{{.Title}}</div>
     {{template "partials/card_plot.html" .}}
     {{if .Facts}}
     <dl class="file-facts">

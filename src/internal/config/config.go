@@ -40,33 +40,7 @@ type IntegrationsConfig struct {
 	Webhooks WebhooksConfig `yaml:"webhooks"`
 }
 
-type MatchMediaConfig struct {
-	Addr    string `yaml:"addr"`
-	Version string `yaml:"version"`
-	URL     string `yaml:"url"`
-}
-
-type VendorConfig struct {
-	HTMXURL              string `yaml:"htmx_url"`
-	HTMXLicenseURL       string `yaml:"htmx_license_url"`
-	VideoJSJSURL         string `yaml:"videojs_js_url"`
-	VideoJSCSSURL        string `yaml:"videojs_css_url"`
-	VideoJSLicenseURL    string `yaml:"videojs_license_url"`
-	HLSURL               string `yaml:"hls_url"`
-	HLSLicenseURL        string `yaml:"hls_license_url"`
-	CodeMirrorJSURL      string `yaml:"codemirror_js_url"`
-	CodeMirrorCSSURL     string `yaml:"codemirror_css_url"`
-	CodeMirrorYAMLURL    string `yaml:"codemirror_yaml_url"`
-	CodeMirrorLicenseURL string `yaml:"codemirror_license_url"`
-	FFmpegSrcURL         string `yaml:"ffmpeg_src_url"`
-	X264SrcURL           string `yaml:"x264_src_url"`
-	FFmpegLicenseURL     string `yaml:"ffmpeg_license_url"`
-}
-
 type Config struct {
-	HTTP struct {
-		Addr string `yaml:"addr"`
-	} `yaml:"http"`
 	Store struct {
 		Path string `yaml:"path"`
 	} `yaml:"store"`
@@ -80,7 +54,6 @@ type Config struct {
 		SegmentSeconds int    `yaml:"segment_seconds"`
 		CleanupHours   int    `yaml:"cleanup_hours"`
 		HWAccel        string `yaml:"hwaccel"`
-		VAAPIDevice    string `yaml:"vaapi_device"`
 		FFmpeg         string `yaml:"ffmpeg"`
 	} `yaml:"transcode"`
 	Backup struct {
@@ -96,8 +69,6 @@ type Config struct {
 		TTLSeconds int `yaml:"ttl_seconds"`
 	} `yaml:"watchdog"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
-	MatchMedia   MatchMediaConfig   `yaml:"matchmedia"`
-	Vendor       VendorConfig       `yaml:"vendor"`
 	Version      string             `yaml:"version"`
 
 	ExeDir      string `yaml:"-"`
@@ -172,8 +143,13 @@ func overlayPath() (string, error) {
 	return filepath.Join(dir, "config", "overlay.yaml"), nil
 }
 
-func MatchMediaXDGDataDir() (string, error) {
-	return appDir("matchmedia", "XDG_DATA_HOME", filepath.Join(".local", "share"))
+// MatchMediaDir is the linked MatchMedia data directory under ServeMedia's own data root.
+func MatchMediaDir() (string, error) {
+	root, err := dataRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "matchmedia"), nil
 }
 
 func resolvePath(base, p, fallback string) string {
@@ -195,7 +171,6 @@ func resolvePath(base, p, fallback string) string {
 
 func Defaults() Config {
 	var c Config
-	c.HTTP.Addr = ":7676"
 	c.Store.Path = "store"
 	c.Media.Path = "/mnt,/media,$XDG_VIDEOS_DIR,$XDG_MUSIC_DIR"
 	c.Transcode.Path = "transcode"
@@ -204,13 +179,12 @@ func Defaults() Config {
 	c.Transcode.SegmentSeconds = 6
 	c.Transcode.CleanupHours = 24
 	c.Transcode.HWAccel = "auto"
-	c.Backup.Enabled = true
+	c.Backup.Enabled = false
 	c.Backup.Interval = 24 * time.Hour
 	c.Backup.Retain = 7
 	c.Backup.Dir = "backups"
-	c.Scan.OnStartup = true
+	c.Scan.OnStartup = false
 	c.Watchdog.TTLSeconds = 60
-	c.MatchMedia.Addr = "127.0.0.1:7680"
 	return c
 }
 
@@ -247,6 +221,7 @@ func Load(path string) (Config, error) {
 	}
 	seedVersion := strings.TrimSpace(c.Version)
 	c.ExeDir = root
+	c.pinInternalPaths()
 	if err := c.resolvePaths(); err != nil {
 		return c, err
 	}
@@ -262,6 +237,7 @@ func Load(path string) (Config, error) {
 		c.ExeDir = root
 		c.ConfigPath = path
 		c.OverlayPath = overlay
+		c.pinInternalPaths()
 		if err := c.resolvePaths(); err != nil {
 			return c, err
 		}
@@ -332,10 +308,16 @@ func (c *Config) resolvePaths() error {
 		}
 		c.Media.Path = strings.Join(kept, ",")
 	}
-	if strings.TrimSpace(c.MatchMedia.Addr) == "" {
-		c.MatchMedia.Addr = "127.0.0.1:7680"
-	}
 	return nil
+}
+
+// pinInternalPaths drops store, transcode cache, and backup locations that
+// arrived from YAML. Those paths are code defaults, resolved afterward.
+// SERVEMEDIA_STORE_PATH is applied later and is left alone.
+func (c *Config) pinInternalPaths() {
+	c.Store.Path = "store"
+	c.Transcode.Path = "transcode"
+	c.Backup.Dir = "backups"
 }
 
 func expandMediaEntry(entry string) string {
@@ -395,6 +377,68 @@ func userDirValue(key string) string {
 	return ""
 }
 
+type settingsOverlay struct {
+	Media *struct {
+		Path string `yaml:"path"`
+	} `yaml:"media,omitempty"`
+	Transcode struct {
+		MaxHeight      int    `yaml:"max_height"`
+		CRF            int    `yaml:"crf"`
+		SegmentSeconds int    `yaml:"segment_seconds"`
+		CleanupHours   int    `yaml:"cleanup_hours"`
+		HWAccel        string `yaml:"hwaccel"`
+	} `yaml:"transcode"`
+	Backup struct {
+		Enabled  bool          `yaml:"enabled"`
+		Interval time.Duration `yaml:"interval"`
+		Retain   int           `yaml:"retain"`
+	} `yaml:"backup"`
+	Scan struct {
+		OnStartup bool `yaml:"on_startup"`
+	} `yaml:"scan"`
+	Watchdog struct {
+		TTLSeconds int `yaml:"ttl_seconds"`
+	} `yaml:"watchdog"`
+	Integrations IntegrationsConfig `yaml:"integrations"`
+}
+
+func (c Config) settingsDocument(mediaPath string) settingsOverlay {
+	var doc settingsOverlay
+	if strings.TrimSpace(mediaPath) != "" {
+		doc.Media = &struct {
+			Path string `yaml:"path"`
+		}{Path: mediaPath}
+	}
+	doc.Transcode.MaxHeight = c.Transcode.MaxHeight
+	doc.Transcode.CRF = c.Transcode.CRF
+	doc.Transcode.SegmentSeconds = c.Transcode.SegmentSeconds
+	doc.Transcode.CleanupHours = c.Transcode.CleanupHours
+	doc.Transcode.HWAccel = c.Transcode.HWAccel
+	doc.Backup.Enabled = c.Backup.Enabled
+	doc.Backup.Interval = c.Backup.Interval
+	doc.Backup.Retain = c.Backup.Retain
+	doc.Scan.OnStartup = c.Scan.OnStartup
+	doc.Watchdog.TTLSeconds = c.Watchdog.TTLSeconds
+	doc.Integrations = c.Integrations
+	return doc
+}
+
+func overlayMediaPath(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil || strings.TrimSpace(string(b)) == "" {
+		return ""
+	}
+	var prev struct {
+		Media struct {
+			Path string `yaml:"path"`
+		} `yaml:"media"`
+	}
+	if err := yaml.Unmarshal(b, &prev); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(prev.Media.Path)
+}
+
 func (c Config) Save(path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -406,7 +450,7 @@ func (c Config) Save(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	b, err := yaml.Marshal(c)
+	b, err := yaml.Marshal(c.settingsDocument(overlayMediaPath(path)))
 	if err != nil {
 		return err
 	}
@@ -414,9 +458,6 @@ func (c Config) Save(path string) error {
 }
 
 func applyEnv(c *Config) {
-	if v := os.Getenv("SERVEMEDIA_HTTP_ADDR"); v != "" {
-		c.HTTP.Addr = v
-	}
 	if v := os.Getenv("SERVEMEDIA_STORE_PATH"); v != "" {
 		c.Store.Path = v
 	}
@@ -440,7 +481,7 @@ func (c Config) OverlaySavePath() string {
 }
 
 func (c Config) MatchMediaDataDir() string {
-	dir, err := MatchMediaXDGDataDir()
+	dir, err := MatchMediaDir()
 	if err != nil {
 		return ""
 	}

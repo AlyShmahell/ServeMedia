@@ -1,0 +1,12 @@
+{{define "partials/settings_accounts.html"}}
+<div class="settings-tab-card" id="tab-accounts">
+  <div class="settings-tab-scroll">
+    <div class="users-table-toolbar">
+      <button type="button" class="btn-icon" id="add-user-open" title="Add user" aria-label="Add user">+</button>
+    </div>
+    <table class="table"><thead><tr><th>Username</th><th>Role</th><th></th></tr></thead><tbody id="users-table-body">
+    {{template "partials/users_table_body.html" .}}
+    </tbody></table>
+  </div>
+</div>
+{{end}}

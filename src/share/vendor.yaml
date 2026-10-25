@@ -1,0 +1,52 @@
+# Builder-only. The servemedia process does not read this file.
+assets:
+  - url: "https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"
+    dest: htmx.min.js
+  - url: "https://raw.githubusercontent.com/bigskysoftware/htmx/v2.0.4/LICENSE"
+    dest: htmx.min.js.LICENSE
+    notice: true
+  - url: "https://unpkg.com/video.js@8.21.1/dist/video.min.js"
+    dest: video.js/video.min.js
+  - url: "https://unpkg.com/video.js@8.21.1/dist/video-js.min.css"
+    dest: video.js/video-js.min.css
+  - url: "https://raw.githubusercontent.com/videojs/video.js/v8.21.1/LICENSE"
+    dest: video.js/LICENSE
+    notice: true
+  - url: "https://unpkg.com/hls.js@1.5.20/dist/hls.min.js"
+    dest: hls.min.js
+  - url: "https://raw.githubusercontent.com/video-dev/hls.js/v1.5.20/LICENSE"
+    dest: hls.min.js.LICENSE
+    notice: true
+  - url: "https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.min.js"
+    dest: codemirror/codemirror.min.js
+  - url: "https://cdn.jsdelivr.net/npm/codemirror@5.65.18/lib/codemirror.min.css"
+    dest: codemirror/codemirror.min.css
+  - url: "https://cdn.jsdelivr.net/npm/codemirror@5.65.18/mode/yaml/yaml.js"
+    dest: codemirror/yaml.min.js
+  - url: "https://raw.githubusercontent.com/codemirror/codemirror5/5.65.18/LICENSE"
+    dest: codemirror/LICENSE
+    notice: true
+sources:
+  - name: nv-codec-headers
+    url: "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n13.0.19.0.tar.gz"
+  - name: x264
+    url: "https://github.com/mirror/x264/archive/refs/heads/stable.tar.gz"
+  - name: x265
+    url: "https://github.com/videolan/x265/archive/refs/tags/3.4.tar.gz"
+  - name: opus
+    url: "https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"
+  - name: dav1d
+    url: "https://github.com/videolan/dav1d/archive/refs/tags/1.5.1.tar.gz"
+  - name: svtav1
+    url: "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v2.3.0/SVT-AV1-v2.3.0.tar.gz"
+  - name: libvpx
+    url: "https://github.com/webmproject/libvpx/archive/refs/tags/v1.15.2.tar.gz"
+  - name: lame
+    url: "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz"
+  - name: libvpl
+    url: "https://github.com/intel/libvpl/archive/refs/tags/v2.15.0.tar.gz"
+  - name: ffmpeg
+    url: "https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz"
+  - name: ffmpeg-license
+    url: "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1.1/COPYING.GPLv3"
+    license: true

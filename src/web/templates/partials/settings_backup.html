@@ -1,19 +1,14 @@
-{{define "settings_backup.html"}}
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Backup — Settings</title>{{template "partials/head_icons.html" .}}<link rel="stylesheet" href="/static/app.css">{{template "partials/head_scripts.html" .}}</head>
-<body><div class="shell">{{template "nav" .}}
-<main class="content">
-  <div class="page-main-card">
+{{define "partials/settings_backup.html"}}
+<div class="settings-tab-card" id="tab-backup">
+  <div class="settings-tab-scroll">
     <h2>Schedule</h2>
-    <form method="post" action="/settings/backup">
+    <form method="post" action="/settings/backup" id="settings-backup-form" hx-post="/settings/backup" hx-target="#settings-panel" hx-swap="innerHTML">
       <label><input type="checkbox" name="backup_enabled" {{if .Config.Backup.Enabled}}checked{{end}}> Periodic backups enabled</label>
       <label>Backup interval</label><input name="backup_interval" value="{{.Config.Backup.Interval}}">
       <label>Retain count</label><input name="backup_retain" type="number" value="{{.Config.Backup.Retain}}">
-      <p><button type="submit">Save schedule</button></p>
     </form>
     <div hx-get="/hx/backup/status" hx-trigger="load, every 3s">{{template "partials/backup_status.html" .}}</div>
-    <p><button hx-post="/hx/backup" hx-swap="none">Backup now</button></p>
+    <p><button type="button" hx-post="/hx/backup" hx-swap="none">Backup now</button></p>
     <section class="page-sub-card">
       <h2>Archives</h2>
       <div class="page-sub-card-body-scroll">
@@ -24,5 +19,11 @@
       </div>
     </section>
   </div>
-</main></div></body></html>
+  <div class="settings-tab-actions">
+    <button type="submit" form="settings-backup-form" class="btn-with-icon">
+      {{template "partials/icon_save.html" .}}
+      Save
+    </button>
+  </div>
+</div>
 {{end}}

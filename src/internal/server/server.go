@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alyshmahell/servemedia/src/internal/backup"
@@ -24,6 +25,7 @@ import (
 	"github.com/alyshmahell/servemedia/src/internal/fetch"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 	"github.com/alyshmahell/servemedia/src/internal/media"
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
 	"github.com/alyshmahell/servemedia/src/internal/watchdog"
 	"github.com/alyshmahell/servemedia/src/internal/webhooks"
 	"github.com/go-chi/chi/v5"
@@ -45,6 +47,7 @@ type Server struct {
 	Static      fs.FS
 	reopen      func() error
 	restartMeta func() error
+	repointOnce sync.Map
 }
 
 type ctxKey int
@@ -116,8 +119,7 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 			}
 		},
 		"posterURL": func(p string, metaID ...string) string {
-			p = strings.TrimPrefix(strings.TrimSpace(p), "/")
-			p = strings.TrimPrefix(p, "metadata/")
+			p = strings.TrimSpace(p)
 			if p == "" {
 				return "/static/placeholder.svg"
 			}
@@ -127,6 +129,13 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 					key = m
 				}
 			}
+			if filepath.IsAbs(p) {
+				q := url.Values{}
+				q.Set("path", p)
+				q.Set("m", key)
+				return "/metadata/?" + q.Encode()
+			}
+			p = strings.TrimPrefix(strings.TrimPrefix(p, "/"), "metadata/")
 			return "/metadata/" + p + "?m=" + url.QueryEscape(key)
 		},
 		"queryEscape": url.QueryEscape,
@@ -198,7 +207,6 @@ func (s *Server) Router() http.Handler {
 		r.Get("/play/episode/{id}", s.handlePlayEpisode)
 		r.Get("/play/file/{id}", s.handlePlayFile)
 		r.Get("/about", s.handleAbout)
-		r.Get("/support", s.handleSupport)
 		r.Get("/settings", s.handleSettings)
 		r.Get("/settings/libraries", s.handleSettingsLibrariesRedirect)
 		r.Get("/hx/libraries/{id}/items", s.handleHXItems)
@@ -245,6 +253,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
+			r.Post("/settings", s.handleSaveGeneral)
 			r.Get("/settings/engines", s.handleSettingsEngines)
 			r.Post("/settings/engines", s.handleSaveEngines)
 			r.Post("/settings/engines/restore", s.handleRestoreEngines)
@@ -516,6 +525,9 @@ type libraryCard struct {
 }
 
 func (s *Server) libraryCardData(ctx context.Context, userID int64, lib *db.Library, job *db.ScanJob) libraryCard {
+	if lib != nil {
+		s.ensureLibraryRatings(ctx, lib.ID)
+	}
 	posters, _ := s.DB.ListLibraryPosters(ctx, lib.ID)
 	card := libraryCard{Library: *lib, Posters: posters}
 	if userID > 0 && lib != nil {
@@ -566,9 +578,26 @@ func (s *Server) userHasRunningScan(ctx context.Context, userID int64) bool {
 	return false
 }
 
-func (s *Server) libraryScanPolling(ctx context.Context, libraryID int64) bool {
+// libraryGridPolling refreshes the library grid while a scan is still changing
+// titles. Stills run after that, and swapping the grid then resets the scroll.
+func (s *Server) libraryGridPolling(ctx context.Context, libraryID int64) bool {
 	job, err := s.DB.RunningScanForLibrary(ctx, libraryID)
-	return err == nil && job != nil
+	if err != nil || job == nil {
+		return false
+	}
+	if !job.Message.Valid {
+		return true
+	}
+	lines := parseScanLines(job.Message.String)
+	if len(lines) == 0 {
+		return true
+	}
+	switch lines[len(lines)-1].Phase {
+	case "scan", "match", "fetch":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -640,6 +669,7 @@ type nodeCard struct {
 	Total       int
 	WatchPct    int
 	Facts       []fileFact
+	Chips       []heroChip
 	MediaID     int64
 	MatchStatus string
 	MatchError  string
@@ -694,7 +724,7 @@ func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Librar
 		out := map[string]any{
 			"Library": lib, "Tree": true, "Nodes": dirs, "Files": fileCards, "Path": rel,
 			"ItemCount": len(dirs) + len(fileCards), "Sort": sort, "Q": q,
-			"Poll": s.libraryScanPolling(ctx, lib.ID), "SwapCount": swapCount,
+			"Poll": s.libraryGridPolling(ctx, lib.ID), "SwapCount": swapCount,
 		}
 		if rel != "" {
 			if hero := s.folderHeroCard(ctx, lib, rel); hero != nil {
@@ -708,7 +738,7 @@ func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Librar
 	return map[string]any{
 		"Library": lib, "Items": s.mediaItemCards(ctx, u.ID, items),
 		"ItemCount": len(all), "Sort": sort, "Q": q, "Path": rel,
-		"Poll": s.libraryScanPolling(ctx, lib.ID), "SwapCount": swapCount,
+		"Poll": s.libraryGridPolling(ctx, lib.ID), "SwapCount": swapCount,
 	}
 }
 
@@ -716,14 +746,12 @@ func (s *Server) dirNodeCard(ctx context.Context, lib *db.Library, node db.Libra
 	card := nodeCard{Node: node, LibraryID: lib.ID, Rel: node.RelPath, Kind: "dir"}
 	card.EditURL, card.MediaID, card.MatchStatus, card.MatchError = s.nodeActions(ctx, lib, node)
 	card.Href = s.nodeHref(ctx, lib, node)
-	art := s.nodeArt(ctx, node, card.MediaID)
-	card.Title = node.Name
-	if t := strings.TrimSpace(node.MMTitle.String); node.MMTitle.Valid && t != "" {
-		card.Title = t
-		if y := strings.TrimSpace(node.MMYear.String); node.MMYear.Valid && y != "" && !strings.Contains(card.Title, "("+y+")") {
-			card.Title += " (" + y + ")"
-		}
+	art := s.dirArt(ctx, lib, node, card.MediaID)
+	seasonNum := 0
+	if node.SeasonNum.Valid {
+		seasonNum, _ = strconv.Atoi(strings.TrimSpace(node.SeasonNum.String))
 	}
+	card.Title = folderDisplayTitle(filepath.Join(lib.Path, filepath.FromSlash(node.RelPath)), node.Name, node.MMTitle, node.MMYear, seasonNum)
 	if art != "" {
 		card.Node.PosterPath = sql.NullString{String: art, Valid: true}
 	}
@@ -752,7 +780,9 @@ func (s *Server) folderHeroCard(ctx context.Context, lib *db.Library, rel string
 		if i := strings.LastIndex(rel, "/"); i >= 0 {
 			name = rel[i+1:]
 		}
-		return &nodeCard{Title: name, Rel: rel, Kind: "dir", LibraryID: lib.ID}
+		card := nodeCard{Title: folderDisplayTitle(filepath.Join(lib.Path, filepath.FromSlash(rel)), name, sql.NullString{}, sql.NullString{}, 0), Rel: rel, Kind: "dir", LibraryID: lib.ID}
+		card.Chips = s.heroChips(ctx, lib, rel, 0)
+		return &card
 	}
 	node, err := s.DB.GetLibraryNode(ctx, id)
 	if err != nil || node == nil {
@@ -760,6 +790,7 @@ func (s *Server) folderHeroCard(ctx context.Context, lib *db.Library, rel string
 	}
 	card := s.dirNodeCard(ctx, lib, *node)
 	card.UploadURL = nodePosterUploadURL(card.EditURL)
+	card.Chips = s.heroChips(ctx, lib, node.RelPath, card.MediaID)
 	return &card
 }
 
@@ -812,6 +843,21 @@ func (s *Server) nodeActions(ctx context.Context, lib *db.Library, node db.Libra
 			mediaID = gid
 		}
 	}
+	if mediaID == 0 && node.NodeKind != "file" && lib != nil {
+		if it, own := s.folderMedia(ctx, lib, node); it != nil {
+			mediaID = it.ID
+			if own {
+				id = it.ID
+				kind = it.Kind
+				if status == "" && it.MatchStatus.Valid {
+					status = strings.TrimSpace(it.MatchStatus.String)
+				}
+				if matchErr == "" && it.MatchError.Valid {
+					matchErr = it.MatchError.String
+				}
+			}
+		}
+	}
 	if id > 0 && (kind == "movie" || kind == "show") {
 		return "/hx/media/" + strconv.FormatInt(id, 10) + "/meta", mediaID, status, matchErr
 	}
@@ -830,6 +876,74 @@ func (s *Server) nodeActions(ctx context.Context, lib *db.Library, node db.Libra
 		return fmt.Sprintf("/hx/shows/%d/seasons/%d/meta", showID, num), mediaID, status, matchErr
 	}
 	return "", mediaID, status, matchErr
+}
+
+func (s *Server) folderMedia(ctx context.Context, lib *db.Library, node db.LibraryNode) (*db.MediaItem, bool) {
+	if s == nil || s.DB == nil || lib == nil {
+		return nil, false
+	}
+	abs := filepath.Clean(filepath.Join(lib.Path, filepath.FromSlash(node.RelPath)))
+	if found, err := s.DB.GetMediaItemByPath(ctx, lib.ID, abs); err == nil && found != nil {
+		return found, true
+	}
+	if found, err := s.DB.MovieInFolder(ctx, lib.ID, abs); err == nil && found != nil {
+		return found, true
+	}
+	root := filepath.Clean(lib.Path)
+	parent := abs
+	for {
+		next := filepath.Dir(parent)
+		if next == parent || !pathInside(root, next) {
+			break
+		}
+		parent = next
+		found, err := s.DB.GetMediaItemByPath(ctx, lib.ID, parent)
+		if err == nil && found != nil && (found.Kind == "show" || found.Kind == "tv") {
+			return found, false
+		}
+	}
+	return nil, false
+}
+
+func pathInside(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func (s *Server) dirArt(ctx context.Context, lib *db.Library, node db.LibraryNode, mediaID int64) string {
+	if p := strings.TrimSpace(node.PosterPath.String); p != "" {
+		return p
+	}
+	dir := filepath.Join(lib.Path, filepath.FromSlash(node.RelPath))
+	if p := metadata.FolderPoster(dir); p != "" {
+		return p
+	}
+	if mediaID <= 0 || s == nil || s.DB == nil || lib == nil {
+		return ""
+	}
+	it, err := s.DB.GetMediaItem(ctx, mediaID)
+	if err != nil || it == nil || !it.PosterPath.Valid {
+		return ""
+	}
+	if !sameMediaFolder(lib.Path, node.RelPath, it.Path) {
+		return ""
+	}
+	return strings.TrimSpace(it.PosterPath.String)
+}
+
+func sameMediaFolder(libPath, rel, itemPath string) bool {
+	abs := filepath.Clean(filepath.Join(libPath, filepath.FromSlash(rel)))
+	itemPath = filepath.Clean(strings.TrimSpace(itemPath))
+	if itemPath == "" {
+		return false
+	}
+	if abs == itemPath {
+		return true
+	}
+	return filepath.Dir(itemPath) == abs
 }
 
 func (s *Server) nodeHref(_ context.Context, lib *db.Library, node db.LibraryNode) string {
@@ -893,7 +1007,33 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	s.repointLibrary(lib)
 	s.render(w, r, "library.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), r.URL.Query().Get("path"), false))
+}
+
+func (s *Server) repointLibrary(lib *db.Library) {
+	if s == nil || s.Fetch == nil || s.DB == nil || lib == nil {
+		return
+	}
+	if _, loaded := s.repointOnce.LoadOrStore(lib.ID, true); loaded {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		stale, err := s.Fetch.LibraryUsesStoreMetadata(ctx, lib.ID)
+		if err != nil || !stale {
+			return
+		}
+		if job, err := s.DB.RunningScanForLibrary(ctx, lib.ID); err == nil && job != nil {
+			s.repointOnce.Delete(lib.ID)
+			return
+		}
+		if err := s.Fetch.RepointLibraryMetadata(ctx, lib); err != nil {
+			log.Printf("repoint library %d: %v", lib.ID, err)
+			s.repointOnce.Delete(lib.ID)
+		}
+	}()
 }
 
 func (s *Server) handleHXItems(w http.ResponseWriter, r *http.Request) {
@@ -1454,9 +1594,39 @@ func (s *Server) handleHLSSeg(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetadata(w http.ResponseWriter, r *http.Request) {
-	rel := strings.TrimPrefix(r.URL.Path, "/metadata/")
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	if abs := strings.TrimSpace(r.URL.Query().Get("path")); abs != "" {
+		if !s.sidecarAllowed(r, abs) {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, abs)
+		return
+	}
+	rel := strings.TrimPrefix(r.URL.Path, "/metadata/")
 	http.ServeFile(w, r, filepath.Join(s.Cfg.Store.Path, "metadata", rel))
+}
+
+func (s *Server) sidecarAllowed(r *http.Request, abs string) bool {
+	abs = filepath.Clean(abs)
+	if !filepath.IsAbs(abs) || s == nil || s.DB == nil {
+		return false
+	}
+	u := userFrom(r)
+	if u == nil {
+		return false
+	}
+	libs, err := s.DB.ListLibraries(r.Context(), u.ID)
+	if err != nil {
+		return false
+	}
+	for _, lib := range libs {
+		root := filepath.Clean(lib.Path)
+		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleKPA(w http.ResponseWriter, r *http.Request) {
@@ -1634,7 +1804,74 @@ func (s *Server) handlePlaybackPrefs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, tab string, data map[string]any) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["SettingsTab"] = tab
+	name := "partials/settings_shell.html"
+	if r.Header.Get("HX-Target") == "settings-panel" {
+		name = "partials/settings_panel.html"
+	}
+	s.render(w, r, name, data)
+}
+
+func (s *Server) finishSettings(w http.ResponseWriter, r *http.Request, tab string, data map[string]any) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	r.Header.Set("HX-Target", "settings-panel")
+	s.renderSettings(w, r, tab, data)
+}
+
+func (s *Server) integrationsData(r *http.Request) (map[string]any, int, error) {
+	u := userFrom(r)
+	if u == nil {
+		return nil, http.StatusUnauthorized, fmt.Errorf("unauthorized")
+	}
+	if s.Cfg.EnsureIntegrationDefaults() {
+		_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
+	}
+	userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return map[string]any{
+		"Config":            s.Cfg,
+		"UserWebhooks":      userWH.ToConfig(),
+		"WebhookKeyMasked":  webhooks.MaskKey(userWH.APIKey),
+		"NotificationTypes": webhooks.AllNotificationTypes,
+		"ItemTypes":         webhooks.AllItemTypes,
+	}, http.StatusOK, nil
+}
+
+func (s *Server) accountsData(r *http.Request) (map[string]any, error) {
+	users, err := s.DB.ListUsers(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"Users": users}, nil
+}
+
+func (s *Server) backupData() map[string]any {
+	names, _ := s.Backup.List()
+	return map[string]any{
+		"Archives": names,
+		"Status":   s.Backup.Status(),
+		"Config":   s.Cfg,
+	}
+}
+
 func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	dir := "."
 	if s.Cfg != nil && strings.TrimSpace(s.Cfg.ExeDir) != "" {
 		dir = s.Cfg.ExeDir
@@ -1646,17 +1883,42 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 	if license == "" {
 		license = "Unavailable"
 	}
-	s.render(w, r, "about.html", map[string]any{
+	s.render(w, r, "partials/about_body.html", map[string]any{
 		"License": license,
 	})
 }
 
-func (s *Server) handleSupport(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "support.html", nil)
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil || u.Role != db.RoleAdmin {
+		s.handleSettingsIntegrations(w, r)
+		return
+	}
+	s.renderSettings(w, r, "general", map[string]any{"Config": s.Cfg})
 }
 
-func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "settings.html", nil)
+func (s *Server) handleSaveGeneral(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil || u.Role != db.RoleAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	ttl, err := strconv.Atoi(strings.TrimSpace(r.FormValue("watchdog_ttl")))
+	if err != nil || ttl < 0 {
+		http.Error(w, "watchdog ttl must be zero or a positive number", http.StatusBadRequest)
+		return
+	}
+	s.Cfg.Scan.OnStartup = r.FormValue("scan_on_startup") == "on"
+	s.Cfg.Watchdog.TTLSeconds = ttl
+	if err := s.Cfg.Save(s.Cfg.OverlaySavePath()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if s.Watchdog != nil {
+		s.Watchdog.SetTTL(time.Duration(ttl) * time.Second)
+	}
+	s.finishSettings(w, r, "general", map[string]any{"Config": s.Cfg})
 }
 
 func (s *Server) handleSettingsLibrariesRedirect(w http.ResponseWriter, r *http.Request) {
@@ -1664,11 +1926,11 @@ func (s *Server) handleSettingsLibrariesRedirect(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleSettingsServer(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/settings/engines?tab=ffmpeg", http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) handleSaveServer(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/settings/engines?tab=ffmpeg", http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) handleSaveBackup(w http.ResponseWriter, r *http.Request) {
@@ -1687,22 +1949,20 @@ func (s *Server) handleSaveBackup(w http.ResponseWriter, r *http.Request) {
 	_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
 	s.Backup.Cfg = s.Cfg
 	s.Backup.StartScheduler(context.Background())
-	http.Redirect(w, r, "/settings/backup", http.StatusFound)
+	s.finishSettings(w, r, "backup", s.backupData())
 }
 
 func (s *Server) handleSettingsBackup(w http.ResponseWriter, r *http.Request) {
-	names, _ := s.Backup.List()
-	st := s.Backup.Status()
-	s.render(w, r, "settings_backup.html", map[string]any{
-		"Archives": names,
-		"Status":   st,
-		"Config":   s.Cfg,
-	})
+	s.renderSettings(w, r, "backup", s.backupData())
 }
 
 func (s *Server) handleSettingsUsers(w http.ResponseWriter, r *http.Request) {
-	users, _ := s.DB.ListUsers(r.Context())
-	s.render(w, r, "settings_users.html", map[string]any{"Users": users})
+	data, err := s.accountsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderSettings(w, r, "accounts", data)
 }
 
 func (s *Server) handleCreateLibrary(w http.ResponseWriter, r *http.Request) {
@@ -1942,6 +2202,8 @@ func parseLibraryScanForm(r *http.Request) (mode string, persist, overwrite bool
 		overwrite = false
 	case "changes", "matchmedia-changes":
 		overwrite = false
+	case "rescan", "matchmedia":
+		overwrite = true
 	}
 	return mode, persist, overwrite
 }
@@ -2089,6 +2351,9 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 		persist = false
 		overwrite = false
 	}
+	if mode == "matchmedia" {
+		overwrite = true
+	}
 	if mode == "matchmedia" || mode == "local" {
 		ready, reason, _ := s.metaStatus()
 		if !ready {
@@ -2232,9 +2497,9 @@ func parseScanProgress(msg string) scanProgress {
 	case "scan", "stills":
 		out.Title = strings.TrimSpace(tail)
 	case "match":
-		out.Stats, out.Title = parseScanStats(tail, []string{"matched", "manual", "unmatched", "error"})
+		out.Stats, out.Title = parseScanStats(tail, []string{"matched", "manual", "unmatched", "error", "sidecar", "replay", "folded"})
 	case "fetch", "save":
-		out.Stats, out.Title = parseScanStats(tail, []string{"nfo", "poster"})
+		out.Stats, out.Title = parseScanStats(tail, []string{"nfo", "episode", "poster"})
 	}
 	return out
 }
@@ -2302,7 +2567,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/settings/backup", http.StatusFound)
+	s.finishSettings(w, r, "backup", s.backupData())
 }
 
 func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
@@ -2332,7 +2597,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if u, err := s.DB.GetUserByUsername(r.Context(), username); err == nil && u != nil && s.Webhooks != nil {
 		s.dispatchWebhooks(r.Context(), u.ID, webhooks.NotificationUserCreated, webhooks.UserPayload(u))
 	}
-	http.Redirect(w, r, "/settings/users", http.StatusFound)
+	data, err := s.accountsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.finishSettings(w, r, "accounts", data)
 }
 
 func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request) {
@@ -2357,7 +2627,12 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/settings/users", http.StatusFound)
+	data, err := s.accountsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.finishSettings(w, r, "accounts", data)
 }
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
@@ -2386,27 +2661,12 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSettingsIntegrations(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r)
-	if u == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	changed := s.Cfg.EnsureIntegrationDefaults()
-	if changed {
-		_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
-	}
-	userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID)
+	data, code, err := s.integrationsData(r)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), code)
 		return
 	}
-	s.render(w, r, "settings_integrations.html", map[string]any{
-		"Config":            s.Cfg,
-		"UserWebhooks":      userWH.ToConfig(),
-		"WebhookKeyMasked":  webhooks.MaskKey(userWH.APIKey),
-		"NotificationTypes": webhooks.AllNotificationTypes,
-		"ItemTypes":         webhooks.AllItemTypes,
-	})
+	s.renderSettings(w, r, "webhooks", data)
 }
 
 func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -2425,7 +2685,12 @@ func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+	data, code, err := s.integrationsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), code)
+		return
+	}
+	s.finishSettings(w, r, "webhooks", data)
 }
 
 func parseWebhookDestinationsFromForm(r *http.Request) []config.WebhookDestination {
@@ -2472,7 +2737,12 @@ func (s *Server) handleRegenerateWebhookKey(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+	data, code, err := s.integrationsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), code)
+		return
+	}
+	s.finishSettings(w, r, "webhooks", data)
 }
 
 func (s *Server) handleTestWebhooks(w http.ResponseWriter, r *http.Request) {

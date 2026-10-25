@@ -1,0 +1,26 @@
+{{define "partials/about_body.html"}}
+<div class="settings-modal-layout">
+  <header class="modal-head">
+    <h2>About</h2>
+    <button type="button" class="btn-icon secondary" id="about-modal-close" aria-label="Close">×</button>
+  </header>
+  <div class="settings-page">
+    <nav class="settings-sidenav" aria-label="About">
+      <button type="button" class="settings-nav-link active" data-about-tab="license" aria-current="page">License</button>
+      <button type="button" class="settings-nav-link" data-about-tab="attribution">Attribution</button>
+    </nav>
+    <div class="settings-panel">
+      <section class="about-panel active" data-about-panel="license">
+        <h2>License</h2>
+        <pre class="about-license">{{.License}}</pre>
+      </section>
+      <section class="about-panel" data-about-panel="attribution" hidden>
+        <h2>Attribution</h2>
+        <p>This product uses the TMDb API but is not endorsed or certified by TMDb.</p>
+        <p>This product uses the TVmaze API (CC BY-SA).</p>
+        <p>This product uses the OMDb API.</p>
+      </section>
+    </div>
+  </div>
+</div>
+{{end}}

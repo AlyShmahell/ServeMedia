@@ -9,6 +9,7 @@ ROOT="$(cd "$DIR/.." && pwd)"
 BUILD="$ROOT/build"
 PINS="$DIR/pins"
 DEFAULT_YAML="$ROOT/src/share/config/default.yaml"
+VENDOR_YAML="$ROOT/src/share/vendor.yaml"
 APP_ID="eu.alyshmahell.ServeMedia"
 YML="$DIR/${APP_ID}.yml"
 META="$DIR/${APP_ID}.metainfo.xml"
@@ -79,42 +80,78 @@ print(m.group(1) if m else "")
 ' "$YML" "$1"
 }
 
-parse_default_yaml() {
+parse_version_yaml() {
   python3 -c '
 import sys
 ver = ""
-urls = {}
-keys = (
-    "htmx_url", "htmx_license_url",
-    "videojs_js_url", "videojs_css_url", "videojs_license_url",
-    "hls_url", "hls_license_url",
-    "codemirror_js_url", "codemirror_css_url", "codemirror_yaml_url", "codemirror_license_url",
-)
-in_vendor = False
-for line in open(sys.argv[1]):
+for line in open(sys.argv[1], encoding="utf-8"):
     raw = line.rstrip("\n")
     s = raw.strip()
-    if s.startswith("version:") and not in_vendor and (not raw or not raw[0].isspace()):
+    if s.startswith("version:") and raw[:1] not in (" ", "\t"):
         ver = s.split(":", 1)[1].strip().strip("\"")
-        continue
-    if s.startswith("vendor:"):
-        in_vendor = True
-        continue
-    if raw and not raw[:1].isspace() and not s.startswith("#"):
-        in_vendor = False
-    if ":" not in s:
-        continue
-    k, _, v = s.partition(":")
-    v = v.strip().strip("\"")
-    if in_vendor and k in keys:
-        urls[k] = v
-need = list(keys)
-if not ver or any(k not in urls for k in need):
+        break
+if not ver:
     sys.exit(2)
 print("VER=" + repr(ver))
-for k in need:
-    print(k.upper() + "=" + repr(urls[k]))
 ' "$1"
+}
+
+parse_vendor_yaml() {
+  python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+dest_env = {
+    "htmx.min.js": "HTMX_URL",
+    "htmx.min.js.LICENSE": "HTMX_LICENSE_URL",
+    "video.js/video.min.js": "VIDEOJS_JS_URL",
+    "video.js/video-js.min.css": "VIDEOJS_CSS_URL",
+    "video.js/LICENSE": "VIDEOJS_LICENSE_URL",
+    "hls.min.js": "HLS_URL",
+    "hls.min.js.LICENSE": "HLS_LICENSE_URL",
+    "codemirror/codemirror.min.js": "CODEMIRROR_JS_URL",
+    "codemirror/codemirror.min.css": "CODEMIRROR_CSS_URL",
+    "codemirror/yaml.min.js": "CODEMIRROR_YAML_URL",
+    "codemirror/LICENSE": "CODEMIRROR_LICENSE_URL",
+}
+section = ""
+cur = None
+urls = {}
+
+def flush():
+    global cur
+    if cur and cur.get("dest") and cur.get("url"):
+        urls[cur["dest"]] = cur["url"]
+    cur = None
+
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        raw = line.rstrip("\n")
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw[0] not in " \t":
+            flush()
+            section = raw.split(":", 1)[0].strip()
+            continue
+        if section != "assets":
+            continue
+        s = raw.strip()
+        if s.startswith("- "):
+            flush()
+            cur = {}
+            s = s[2:].strip()
+            if not s:
+                continue
+        if cur is None or ":" not in s:
+            continue
+        k, _, v = s.partition(":")
+        cur[k.strip()] = v.strip().strip('"').strip("'")
+flush()
+missing = [d for d in dest_env if d not in urls]
+if missing:
+    sys.exit(2)
+for dest, env in dest_env.items():
+    print(env + "=" + repr(urls[dest]))
+PY
 }
 
 rewrite_go_sources_path() {
@@ -618,10 +655,11 @@ PY
 }
 
 do_resync_online() {
-  local json cfg
+  local json cfg vend
   json="$(mktemp)"
   cfg="$(mktemp)"
-  trap 'rm -f "'"$json"'" "'"$cfg"'"' RETURN
+  vend="$(mktemp)"
+  trap 'rm -f "'"$json"'" "'"$cfg"'" "'"$vend"'"' RETURN
   if ! gh_json "https://api.github.com/repos/${SM_REPO}/releases/latest" >"$json"; then
     echo "error: could not fetch latest release for ${SM_REPO}" >&2
     exit 1
@@ -647,8 +685,14 @@ print("DATE=" + json.dumps(pub))
   SM_COMMIT="$(tag_commit "https://api.github.com/repos/${SM_REPO}/git/refs/tags/${TAG}")"
   curl -fL -A "$UA" --retry 3 --retry-delay 1 -o "$cfg" \
     "https://raw.githubusercontent.com/${SM_REPO}/${TAG}/src/share/config/default.yaml"
-  eval "$(parse_default_yaml "$cfg")" || {
-    echo "error: default.yaml on ${TAG} missing fields" >&2
+  curl -fL -A "$UA" --retry 3 --retry-delay 1 -o "$vend" \
+    "https://raw.githubusercontent.com/${SM_REPO}/${TAG}/src/share/vendor.yaml"
+  eval "$(parse_version_yaml "$cfg")" || {
+    echo "error: default.yaml on ${TAG} missing version" >&2
+    exit 1
+  }
+  eval "$(parse_vendor_yaml "$vend")" || {
+    echo "error: vendor.yaml on ${TAG} missing assets" >&2
     exit 1
   }
   HTMX_SHA="$(hash_url "$HTMX_URL")"
@@ -684,8 +728,12 @@ print("DATE=" + json.dumps(pub))
 }
 
 do_resync_offline() {
-  eval "$(parse_default_yaml "$DEFAULT_YAML")" || {
-    echo "error: local default.yaml missing fields" >&2
+  eval "$(parse_version_yaml "$DEFAULT_YAML")" || {
+    echo "error: local default.yaml missing version" >&2
+    exit 1
+  }
+  eval "$(parse_vendor_yaml "$VENDOR_YAML")" || {
+    echo "error: local vendor.yaml missing assets" >&2
     exit 1
   }
   DATE="$(date -u +%Y-%m-%d)"

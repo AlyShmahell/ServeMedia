@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
@@ -31,11 +32,14 @@ func (s *Server) handleEnginesStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleSettingsEngines(w http.ResponseWriter, r *http.Request) {
-	tab := strings.TrimSpace(r.URL.Query().Get("tab"))
-	if tab != "ffmpeg" {
-		tab = "matchmedia"
+func settingsEnginesTab(r *http.Request) string {
+	if strings.TrimSpace(r.URL.Query().Get("tab")) == "ffmpeg" {
+		return "ffmpeg"
 	}
+	return "matchmedia"
+}
+
+func (s *Server) enginesSettingsData() map[string]any {
 	ready, ver, reason := s.enginesStatus()
 	secrets := map[string]bool{}
 	var secretKeys []string
@@ -68,8 +72,7 @@ func (s *Server) handleSettingsEngines(w http.ResponseWriter, r *http.Request) {
 		active = s.Transcode.ActiveTranscodeStatus()
 		hwOn = strings.TrimSpace(hw) != "" && !strings.EqualFold(hw, "software")
 	}
-	s.render(w, r, "settings_engines.html", map[string]any{
-		"Tab":             tab,
+	return map[string]any{
 		"Ready":           ready,
 		"MetaVersion":     ver,
 		"Reason":          reason,
@@ -81,11 +84,19 @@ func (s *Server) handleSettingsEngines(w http.ResponseWriter, r *http.Request) {
 		"TranscodeHW":     hw,
 		"TranscodeHWOn":   hwOn,
 		"ActiveTranscode": active,
-	})
+	}
+}
+
+func (s *Server) handleSettingsEngines(w http.ResponseWriter, r *http.Request) {
+	s.renderSettings(w, r, settingsEnginesTab(r), s.enginesSettingsData())
 }
 
 func (s *Server) handleSaveEngines(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if r.FormValue("ffmpeg_settings") == "1" {
+		s.saveFFmpegSettings(w, r)
+		return
+	}
 	if s.Meta != nil {
 		updates := map[string]string{}
 		for k := range r.PostForm {
@@ -122,7 +133,58 @@ func (s *Server) handleSaveEngines(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	http.Redirect(w, r, "/settings/engines", http.StatusFound)
+	s.finishEngines(w, r, "matchmedia")
+}
+
+func (s *Server) saveFFmpegSettings(w http.ResponseWriter, r *http.Request) {
+	crf, err := strconv.Atoi(strings.TrimSpace(r.FormValue("crf")))
+	if err != nil || crf <= 0 {
+		http.Error(w, "crf must be a positive number", http.StatusBadRequest)
+		return
+	}
+	height, err := strconv.Atoi(strings.TrimSpace(r.FormValue("max_height")))
+	if err != nil || height <= 0 {
+		http.Error(w, "max height must be a positive number", http.StatusBadRequest)
+		return
+	}
+	segment, err := strconv.Atoi(strings.TrimSpace(r.FormValue("segment_seconds")))
+	if err != nil || segment <= 0 {
+		http.Error(w, "segment seconds must be a positive number", http.StatusBadRequest)
+		return
+	}
+	cleanup, err := strconv.Atoi(strings.TrimSpace(r.FormValue("cleanup_hours")))
+	if err != nil || cleanup <= 0 {
+		http.Error(w, "cleanup hours must be a positive number", http.StatusBadRequest)
+		return
+	}
+	hw := strings.ToLower(strings.TrimSpace(r.FormValue("hwaccel")))
+	switch hw {
+	case "auto", "vaapi", "none":
+	default:
+		http.Error(w, "hwaccel must be auto, vaapi, or none", http.StatusBadRequest)
+		return
+	}
+	s.Cfg.Transcode.CRF = crf
+	s.Cfg.Transcode.MaxHeight = height
+	s.Cfg.Transcode.SegmentSeconds = segment
+	s.Cfg.Transcode.CleanupHours = cleanup
+	s.Cfg.Transcode.HWAccel = hw
+	if err := s.Cfg.Save(s.Cfg.OverlaySavePath()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if s.Transcode != nil {
+		s.Transcode.UseConfig(*s.Cfg)
+	}
+	s.finishEngines(w, r, "ffmpeg")
+}
+
+func (s *Server) finishEngines(w http.ResponseWriter, r *http.Request, tab string) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	s.finishSettings(w, r, tab, s.enginesSettingsData())
 }
 
 func (s *Server) handleRestoreEngines(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +198,7 @@ func (s *Server) handleRestoreEngines(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	http.Redirect(w, r, "/settings/engines", http.StatusFound)
+	s.finishEngines(w, r, "matchmedia")
 }
 
 func (s *Server) handleRestartEngines(w http.ResponseWriter, r *http.Request) {
@@ -152,5 +214,5 @@ func (s *Server) handleRestartEngines(w http.ResponseWriter, r *http.Request) {
 		s.handleEnginesStatus(w, r)
 		return
 	}
-	http.Redirect(w, r, "/settings/engines", http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }

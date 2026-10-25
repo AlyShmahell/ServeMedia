@@ -25,6 +25,7 @@ COPY src/share/applications /dist/.local/share/applications
 COPY src/web/static/app.css src/web/static/app.js src/web/static/controls.js src/web/static/logo.svg src/web/static/placeholder.svg /dist/.local/share/servemedia/public/
 COPY LICENSE /dist/LICENSE
 COPY LICENSE /dist/.local/share/servemedia/LICENSE
-COPY build/build /build
-RUN chmod +x /build && /build vendor
-CMD ["/build", "stage"]
+COPY build/build /build/build
+COPY src/share/vendor.yaml /build/vendor.yaml
+RUN chmod +x /build/build && /build/build vendor
+CMD ["/build/build", "stage"]

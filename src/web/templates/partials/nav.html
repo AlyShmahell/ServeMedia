@@ -12,25 +12,25 @@
   </div>
   <div class="topbar-right">
     {{if .User}}
-    <a class="topbar-pill topbar-icon topbar-heart" href="/support" aria-label="Support" title="Support">
+    <button type="button" class="topbar-pill topbar-icon topbar-heart" id="support-open" aria-label="Support" title="Support">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
       </svg>
-    </a>
-    <a class="topbar-pill topbar-icon" href="/settings" aria-label="Settings" title="Settings">
+    </button>
+    <button type="button" class="topbar-pill topbar-icon" id="settings-open" aria-label="Settings" title="Settings">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="3"></circle>
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
       </svg>
-    </a>
+    </button>
     {{end}}
-    <a class="topbar-pill topbar-icon" href="/about" aria-label="About" title="About">
+    <button type="button" class="topbar-pill topbar-icon" id="about-open" aria-label="About" title="About">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="10"></circle>
         <line x1="12" y1="16" x2="12" y2="12"></line>
         <line x1="12" y1="8" x2="12.01" y2="8"></line>
       </svg>
-    </a>
+    </button>
     <a class="topbar-logo" href="/" title="Return to Home Page">
       <img src="/static/logo.svg" alt="">
       <span class="topbar-logo-text">
@@ -52,4 +52,299 @@
     {{end}}
   </div>
 </header>
+{{if .User}}
+<dialog id="support-modal" class="modal support-modal">
+  <div class="modal-form support-card">
+    <header class="modal-head">
+      <h2>Support ServeMedia</h2>
+      <button type="button" class="btn-icon secondary" id="support-modal-close" aria-label="Close">×</button>
+    </header>
+    <div class="support-qr-wrap">
+      <a href="https://ko-fi.com/alyshmahell" target="_blank" rel="noopener noreferrer">
+        <img class="support-qr" src="/static/kofi.png" alt="Ko-fi QR code">
+        <span class="support-qr-cup" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8h1a4 4 0 0 1 0 8h-1"></path>
+            <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path>
+            <line x1="6" y1="1" x2="6" y2="4"></line>
+            <line x1="10" y1="1" x2="10" y2="4"></line>
+            <line x1="14" y1="1" x2="14" y2="4"></line>
+          </svg>
+        </span>
+      </a>
+    </div>
+    <a class="support-btn support-btn-primary" href="https://github.com/sponsors/AlyShmahell" target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.2c-3.3.7-4-1.6-4-1.6-.5-1.4-1.3-1.8-1.3-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.7-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3z"></path></svg>
+      Sponsor Me
+      <span aria-hidden="true">♥</span>
+    </a>
+    <a class="support-btn" href="https://github.com/AlyShmahell/ServeMedia" target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 17.3l-6.2 3.7 1.6-7L2 9.2l7.1-.6L12 2l2.9 6.6 7.1.6-5.4 4.8 1.6 7z"></path></svg>
+      Star ServeMedia
+    </a>
+    <a class="support-btn" href="https://github.com/AlyShmahell/ServeMedia/graphs/contributors" target="_blank" rel="noopener noreferrer">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+        <circle cx="9" cy="7" r="4"></circle>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+      </svg>
+      Contributors
+    </a>
+  </div>
+</dialog>
+<dialog id="settings-modal" class="modal settings-modal">
+  <div id="settings-modal-body"></div>
+</dialog>
+{{if eq .User.Role "admin"}}
+<dialog id="add-user-dialog" class="modal">
+  <form method="post" action="/hx/users" class="modal-form" id="add-user-form" hx-post="/hx/users" hx-target="#settings-panel" hx-swap="innerHTML">
+    <header class="modal-head">
+      <h2>Add user</h2>
+      <button type="button" class="btn-icon secondary" id="add-user-close" aria-label="Close">×</button>
+    </header>
+    <label>Username</label>
+    <input name="username" id="add-user-username" required autocomplete="username">
+    <label>Password</label>
+    <input type="password" name="password" id="add-user-password" required autocomplete="new-password">
+    <label>Confirm</label>
+    <input type="password" name="confirm" id="add-user-confirm" required autocomplete="new-password">
+    <p class="auth-match-hint muted" id="add-user-match-hint" aria-live="polite"></p>
+    <p class="muted">New accounts are ordinary users.</p>
+    <footer class="modal-foot">
+      <button type="button" class="secondary" id="add-user-cancel">Cancel</button>
+      <button type="submit" id="add-user-submit" disabled>Create user</button>
+    </footer>
+  </form>
+</dialog>
+<dialog id="reset-user-password-dialog" class="modal">
+  <form method="post" action="/hx/users/0/password" class="modal-form" id="reset-user-password-form" hx-post="/hx/users/0/password" hx-target="#settings-panel" hx-swap="innerHTML">
+    <header class="modal-head">
+      <h2 id="reset-user-password-title">Reset password</h2>
+      <button type="button" class="btn-icon secondary" id="reset-user-password-close" aria-label="Close">×</button>
+    </header>
+    <label>Password</label>
+    <input type="password" name="password" id="reset-user-password" required autocomplete="new-password">
+    <label>Confirm</label>
+    <input type="password" name="confirm" id="reset-user-confirm" required autocomplete="new-password">
+    <p class="auth-match-hint muted" id="reset-user-match-hint" aria-live="polite"></p>
+    <footer class="modal-foot">
+      <button type="button" class="secondary" id="reset-user-password-cancel">Cancel</button>
+      <button type="submit" id="reset-user-submit" disabled>Reset password</button>
+    </footer>
+  </form>
+</dialog>
+{{end}}
+{{end}}
+<dialog id="about-modal" class="modal about-modal">
+  <div id="about-modal-body"></div>
+</dialog>
+<script>
+(function () {
+  function clearModal(dlg) {
+    if (!dlg) return;
+    var body = dlg.querySelector('[id$="-modal-body"]');
+    if (body) body.innerHTML = '';
+  }
+  function wireBackdrop(dlg, close) {
+    if (!dlg) return;
+    dlg.addEventListener('click', function (e) {
+      if (e.target === dlg) close();
+    });
+    dlg.addEventListener('cancel', function () { clearModal(dlg); });
+    dlg.addEventListener('close', function () { clearModal(dlg); });
+  }
+
+  var support = document.getElementById('support-modal');
+  var supportOpen = document.getElementById('support-open');
+  if (support && supportOpen) {
+    function closeSupport() { support.close(); }
+    supportOpen.addEventListener('click', function () { support.showModal(); });
+    var supportClose = document.getElementById('support-modal-close');
+    if (supportClose) supportClose.addEventListener('click', closeSupport);
+    support.addEventListener('click', function (e) {
+      if (e.target === support) closeSupport();
+    });
+  }
+
+  function loadModal(dlg, url, target) {
+    dlg.showModal();
+    if (window.htmx) htmx.ajax('GET', url, {target: target, swap: 'innerHTML'});
+  }
+
+  var settings = document.getElementById('settings-modal');
+  var settingsOpen = document.getElementById('settings-open');
+  var addDlg = document.getElementById('add-user-dialog');
+  var resetDlg = document.getElementById('reset-user-password-dialog');
+  function closeSettings() {
+    if (addDlg && addDlg.open) addDlg.close();
+    if (resetDlg && resetDlg.open) resetDlg.close();
+    clearModal(settings);
+    if (settings && settings.open) settings.close();
+  }
+  if (settings && settingsOpen) {
+    settingsOpen.addEventListener('click', function () {
+      loadModal(settings, '/settings', '#settings-modal-body');
+    });
+    wireBackdrop(settings, closeSettings);
+    settings.addEventListener('close', function () {
+      if (addDlg && addDlg.open) addDlg.close();
+      if (resetDlg && resetDlg.open) resetDlg.close();
+    });
+  }
+
+  var about = document.getElementById('about-modal');
+  var aboutOpen = document.getElementById('about-open');
+  function closeAbout() {
+    clearModal(about);
+    if (about && about.open) about.close();
+  }
+  if (about && aboutOpen) {
+    aboutOpen.addEventListener('click', function () {
+      loadModal(about, '/about', '#about-modal-body');
+    });
+    wireBackdrop(about, closeAbout);
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#settings-modal-close')) { closeSettings(); return; }
+    if (t.closest('#about-modal-close')) { closeAbout(); return; }
+    var navLink = t.closest('.settings-nav-link');
+    if (navLink) {
+      var nav = navLink.closest('nav');
+      if (nav) {
+        nav.querySelectorAll('.settings-nav-link').forEach(function (n) {
+          var on = n === navLink;
+          n.classList.toggle('active', on);
+          if (on) n.setAttribute('aria-current', 'page');
+          else n.removeAttribute('aria-current');
+        });
+      }
+      var aboutTab = navLink.getAttribute('data-about-tab');
+      if (aboutTab) {
+        var aboutRoot = navLink.closest('#about-modal') || document;
+        aboutRoot.querySelectorAll('[data-about-panel]').forEach(function (panel) {
+          var show = panel.getAttribute('data-about-panel') === aboutTab;
+          panel.hidden = !show;
+          panel.classList.toggle('active', show);
+        });
+      }
+    }
+  });
+
+  function initPasswordForm(opts) {
+    var user = opts.userInput;
+    var pass = opts.passInput;
+    var confirm = opts.confirmInput;
+    var hint = opts.hint;
+    var submit = opts.submit;
+    if (!pass || !confirm || !hint || !submit) return function () {};
+    function sync() {
+      var u = user ? (user.value || '').trim() : '';
+      var p = pass.value || '';
+      var c = confirm.value || '';
+      var match = p.length > 0 && c.length > 0 && p === c;
+      confirm.classList.remove('match-ok', 'match-error');
+      if (c.length === 0) {
+        hint.textContent = '';
+        hint.className = 'auth-match-hint muted';
+      } else if (match) {
+        confirm.classList.add('match-ok');
+        hint.textContent = 'Passwords match';
+        hint.className = 'auth-match-hint match-ok-text';
+      } else {
+        confirm.classList.add('match-error');
+        hint.textContent = 'Passwords do not match';
+        hint.className = 'auth-match-hint match-error-text';
+      }
+      var ok = match && p.length > 0;
+      if (user) ok = ok && u.length > 0;
+      submit.disabled = !ok;
+    }
+    if (user) user.addEventListener('input', sync);
+    pass.addEventListener('input', sync);
+    confirm.addEventListener('input', sync);
+    sync();
+    return sync;
+  }
+
+  var addSync = initPasswordForm({
+    userInput: document.getElementById('add-user-username'),
+    passInput: document.getElementById('add-user-password'),
+    confirmInput: document.getElementById('add-user-confirm'),
+    hint: document.getElementById('add-user-match-hint'),
+    submit: document.getElementById('add-user-submit')
+  });
+  var resetForm = document.getElementById('reset-user-password-form');
+  var resetSync = initPasswordForm({
+    passInput: document.getElementById('reset-user-password'),
+    confirmInput: document.getElementById('reset-user-confirm'),
+    hint: document.getElementById('reset-user-match-hint'),
+    submit: document.getElementById('reset-user-submit')
+  });
+
+  function wireDialog(dlg, closeBtns) {
+    if (!dlg) return;
+    closeBtns.forEach(function (btn) {
+      if (btn) btn.addEventListener('click', function () { dlg.close(); });
+    });
+    dlg.addEventListener('click', function (e) {
+      if (e.target === dlg) dlg.close();
+    });
+  }
+  wireDialog(addDlg, [
+    document.getElementById('add-user-close'),
+    document.getElementById('add-user-cancel')
+  ]);
+  wireDialog(resetDlg, [
+    document.getElementById('reset-user-password-close'),
+    document.getElementById('reset-user-password-cancel')
+  ]);
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#add-user-open') && addDlg) {
+      addDlg.showModal();
+      return;
+    }
+    var edit = t.closest('.user-action-edit');
+    if (!edit || !resetDlg || !resetForm) return;
+    var id = edit.getAttribute('data-user-id');
+    var username = edit.getAttribute('data-username') || '';
+    var action = '/hx/users/' + id + '/password';
+    resetForm.setAttribute('action', action);
+    resetForm.setAttribute('hx-post', action);
+    var title = document.getElementById('reset-user-password-title');
+    if (title) title.textContent = 'Reset password — ' + username;
+    var pass = document.getElementById('reset-user-password');
+    var confirm = document.getElementById('reset-user-confirm');
+    if (pass) pass.value = '';
+    if (confirm) confirm.value = '';
+    if (resetSync) resetSync();
+    resetDlg.showModal();
+  });
+
+  document.addEventListener('htmx:afterRequest', function (e) {
+    if (!e.detail || !e.detail.successful) return;
+    var elt = e.detail.elt;
+    if (!elt) return;
+    if (elt.id === 'add-user-form' && addDlg) {
+      addDlg.close();
+      elt.reset();
+      if (addSync) addSync();
+    }
+    if (elt.id === 'reset-user-password-form' && resetDlg) {
+      resetDlg.close();
+      var pass = document.getElementById('reset-user-password');
+      var confirm = document.getElementById('reset-user-confirm');
+      if (pass) pass.value = '';
+      if (confirm) confirm.value = '';
+      if (resetSync) resetSync();
+    }
+  });
+})();
+</script>
 {{end}}

@@ -140,12 +140,23 @@ func (d *DB) SetNodePoster(ctx context.Context, id int64, poster string) error {
 	return err
 }
 
+// SetNodeMatchIdentity records a resolved match on a directory node.
+// Title and stored candidates are left as they are.
+func (d *DB) SetNodeMatchIdentity(ctx context.Context, id int64, status, provider, metaID, poster string) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE library_nodes SET
+		match_status=NULLIF(?,''), match_error=NULL,
+		meta_provider=NULLIF(?,''), meta_id=NULLIF(?,''),
+		poster_path=COALESCE(NULLIF(?,''), poster_path)
+		WHERE id=?`, status, provider, metaID, poster, id)
+	return err
+}
+
 func (d *DB) SetNodeGroup(ctx context.Context, id int64, g NodeGroup) error {
 	_, err := d.SQL.ExecContext(ctx, `UPDATE library_nodes SET
 		mm_source=NULLIF(?,''), mm_role=NULLIF(?,''), mm_kind=NULLIF(?,''), mm_title=NULLIF(?,''), mm_year=NULLIF(?,''),
 		mm_parent_title=NULLIF(?,''), match_status=NULLIF(?,''), match_error=NULLIF(?,''), ranker=NULLIF(?,''),
 		meta_provider=NULLIF(?,''), meta_id=NULLIF(?,''), match_score=?, match_jaccard=?, catalog_for=NULLIF(?,''),
-		plot=NULLIF(?,''), poster_path=NULLIF(?,''), match_candidates=NULLIF(?,'')
+		plot=NULLIF(?,''), poster_path=COALESCE(NULLIF(?,''), poster_path), match_candidates=NULLIF(?,'')
 		WHERE id=?`,
 		g.Source, g.Role, g.Kind, g.Title, g.Year, g.ParentTitle, g.Status, g.Err, g.Ranker,
 		g.Provider, g.MetaID, g.Score, g.Jaccard, g.CatalogFor, g.Plot, g.Poster, g.Candidates, id)

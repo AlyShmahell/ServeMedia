@@ -35,7 +35,7 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 		se   matchmedia.JobFile
 	}
 	var leaves []leaf
-	if p := strings.TrimSpace(j.Path); p != "" {
+	if p := cleanMediaPath(j.Path); p != "" {
 		file := false
 		if st, err := os.Stat(p); err == nil {
 			file = !st.IsDir()
@@ -43,7 +43,7 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 		leaves = append(leaves, leaf{abs: p, file: file})
 	}
 	for _, f := range j.Files {
-		p := strings.TrimSpace(f.Path)
+		p := cleanMediaPath(f.Path)
 		if p == "" {
 			continue
 		}
@@ -68,7 +68,7 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 	if !withGroup {
 		return nil
 	}
-	groupRel, err := relWithin(lib.Path, strings.TrimSpace(j.Path))
+	groupRel, err := relWithin(lib.Path, j.Path)
 	if err == nil {
 		if id, ok := ids[groupRel]; ok {
 			score := 0.0
@@ -84,7 +84,7 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 				if strings.TrimSpace(j.Match.Year) != "" {
 					year = j.Match.Year
 				}
-				if raw := strings.TrimSpace(j.Match.Poster); strings.HasPrefix(raw, "metadata/") {
+				if raw := strings.TrimSpace(j.Match.Poster); filepath.IsAbs(raw) {
 					poster = raw
 				}
 				plot = j.Match.Synopsis
@@ -129,7 +129,7 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 		if ep := catalogEpisode(j, season, episode); ep != nil {
 			title = ep.Title
 			plot = ep.Synopsis
-			if raw := strings.TrimSpace(ep.Poster); strings.HasPrefix(raw, "metadata/") {
+			if raw := strings.TrimSpace(ep.Poster); filepath.IsAbs(raw) {
 				still = raw
 			}
 		}
@@ -185,7 +185,7 @@ func (w *Worker) stampNodePoster(ctx context.Context, lib *db.Library, it *db.Me
 	if poster == "" {
 		return
 	}
-	rel, err := relWithin(lib.Path, strings.TrimSpace(j.Path))
+	rel, err := relWithin(lib.Path, j.Path)
 	if err != nil {
 		return
 	}
@@ -201,7 +201,7 @@ func (w *Worker) groupUnchanged(ctx context.Context, lib *db.Library, j matchmed
 	if opts.Overwrite || (mode != "changes" && mode != "matchmedia-changes") || len(j.Files) == 0 {
 		return false, nil
 	}
-	rel, err := relWithin(lib.Path, strings.TrimSpace(j.Path))
+	rel, err := relWithin(lib.Path, j.Path)
 	if err != nil {
 		return false, nil
 	}
@@ -214,7 +214,7 @@ func (w *Worker) groupUnchanged(ctx context.Context, lib *db.Library, j matchmed
 		return false, err
 	}
 	for _, f := range j.Files {
-		frel, err := relWithin(lib.Path, strings.TrimSpace(f.Path))
+		frel, err := relWithin(lib.Path, f.Path)
 		if err != nil {
 			return false, nil
 		}
@@ -248,15 +248,49 @@ func (w *Worker) linkItemNode(ctx context.Context, lib *db.Library, it *db.Media
 	if w == nil || w.DB == nil || lib == nil || it == nil {
 		return
 	}
-	rel, err := relWithin(lib.Path, strings.TrimSpace(j.Path))
-	if err != nil {
+	for _, p := range linkPaths(it, j) {
+		rel, err := relWithin(lib.Path, p)
+		if err != nil {
+			continue
+		}
+		id, err := w.DB.NodeIDByRel(ctx, lib.ID, rel)
+		if err != nil || id == 0 {
+			continue
+		}
+		_ = w.DB.SetMediaItemNode(ctx, it.ID, id)
 		return
 	}
-	id, err := w.DB.NodeIDByRel(ctx, lib.ID, rel)
-	if err != nil || id == 0 {
-		return
+}
+
+func linkPaths(it *db.MediaItem, j matchmedia.Job) []string {
+	var out []string
+	add := func(p string) {
+		p = cleanMediaPath(p)
+		if p == "" {
+			return
+		}
+		for _, have := range out {
+			if have == p {
+				return
+			}
+		}
+		out = append(out, p)
 	}
-	_ = w.DB.SetMediaItemNode(ctx, it.ID, id)
+	preferFolder := func(p string) {
+		p = cleanMediaPath(p)
+		if p == "" {
+			return
+		}
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			add(filepath.Dir(p))
+		}
+		add(p)
+	}
+	if it != nil {
+		preferFolder(it.Path)
+	}
+	preferFolder(j.Path)
+	return out
 }
 
 func catalogEpisode(j matchmedia.Job, season, episode string) *matchmedia.Episode {
@@ -277,9 +311,18 @@ func catalogEpisode(j matchmedia.Job, season, episode string) *matchmedia.Episod
 	return nil
 }
 
+// cleanMediaPath drops a blank path and cleans the rest. A trailing space is
+// part of the name, so it is not trimmed.
+func cleanMediaPath(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return ""
+	}
+	return filepath.Clean(p)
+}
+
 func relWithin(root, abs string) (string, error) {
-	root = filepath.Clean(strings.TrimSpace(root))
-	abs = filepath.Clean(strings.TrimSpace(abs))
+	root = cleanMediaPath(root)
+	abs = cleanMediaPath(abs)
 	if root == "" || abs == "" {
 		return "", fmt.Errorf("empty path")
 	}

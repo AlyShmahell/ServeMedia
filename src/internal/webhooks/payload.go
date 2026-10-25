@@ -11,9 +11,6 @@ import (
 
 func BasePayload(serverID, serverURL, notificationType, serverVersion string) map[string]any {
 	serverURL = strings.TrimSpace(serverURL)
-	if serverURL == "" {
-		serverURL = "http://localhost:7676"
-	}
 	now := time.Now()
 	return map[string]any{
 		"ServerId":         serverID,
@@ -99,10 +96,10 @@ func EpisodePayload(ep *db.Episode, show *db.MediaItem) map[string]any {
 		title = fmt.Sprintf("Episode %d", ep.EpisodeNumber)
 	}
 	extra := map[string]any{
-		"Name":           title,
-		"ItemId":         strconv.FormatInt(ep.ID, 10),
-		"ItemType":       "Episode",
-		"EpisodeNumber":  ep.EpisodeNumber,
+		"Name":            title,
+		"ItemId":          strconv.FormatInt(ep.ID, 10),
+		"ItemType":        "Episode",
+		"EpisodeNumber":   ep.EpisodeNumber,
 		"EpisodeNumber00": fmt.Sprintf("%02d", ep.EpisodeNumber),
 	}
 	if show != nil {

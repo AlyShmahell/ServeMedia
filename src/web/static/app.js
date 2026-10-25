@@ -360,18 +360,20 @@
     el.textContent = best;
   }
 
-  function fitScanTitles(root) {
+  function fitMiddleTitles(root) {
+    var sel = '.scan-title';
     var scope = root && root.querySelectorAll ? root : document;
-    var nodes = scope.querySelectorAll('.scan-title');
+    if (scope.matches && scope.matches(sel)) fitMiddle(scope);
+    var nodes = scope.querySelectorAll(sel);
     for (var i = 0; i < nodes.length; i++) fitMiddle(nodes[i]);
   }
 
   document.addEventListener('htmx:afterSwap', function (e) {
     afterEntryScanPanel(e.detail && e.detail.elt);
-    fitScanTitles(e.detail && e.detail.elt);
+    fitMiddleTitles(e.detail && e.detail.elt);
   });
-  document.addEventListener('DOMContentLoaded', function () { fitScanTitles(document); });
-  window.addEventListener('resize', function () { fitScanTitles(document); });
+  document.addEventListener('DOMContentLoaded', function () { fitMiddleTitles(document); });
+  window.addEventListener('resize', function () { fitMiddleTitles(document); });
 })();
 
 (function () {
@@ -747,15 +749,147 @@
     return '';
   }
 
-  // Skip background polls while a dialog is open, but allow swaps whose target
-  // is inside any dialog (entry-scan Start posts into #fetch-modal-body).
+  // htmx fires beforeSwap on the swap target. Remember the element that sent
+  // the request so a scan dialog can update the library card behind it.
+  var requestSource = new WeakMap();
+  document.addEventListener('htmx:beforeRequest', function (e) {
+    var xhr = e.detail && e.detail.xhr;
+    var src = e.detail && e.detail.elt;
+    if (xhr && src) requestSource.set(xhr, src);
+  });
+
+  function responseHTML(detail) {
+    if (!detail) return '';
+    if (typeof detail.serverResponse === 'string') return detail.serverResponse;
+    return (detail.xhr && detail.xhr.responseText) || '';
+  }
+
+  function reusePoster(cur, next) {
+    var a = cur.querySelector('img.poster');
+    var b = next.querySelector('img.poster');
+    if (!a || !b) return;
+    if (a.getAttribute('src') === b.getAttribute('src')) b.replaceWith(a);
+  }
+
+  function syncKeyed(parent, curNodes, nextNodes, before) {
+    var byKey = {};
+    for (var i = 0; i < curNodes.length; i++) {
+      var key = curNodes[i].getAttribute('href') || '';
+      if (key) byKey[key] = curNodes[i];
+    }
+    var used = {};
+    var ordered = [];
+    for (var j = 0; j < nextNodes.length; j++) {
+      var incoming = nextNodes[j];
+      var href = incoming.getAttribute('href') || '';
+      var existing = href && byKey[href];
+      if (existing && !used[href]) {
+        used[href] = true;
+        if (existing.outerHTML !== incoming.outerHTML) {
+          reusePoster(existing, incoming);
+          existing.replaceWith(incoming);
+          ordered.push(incoming);
+        } else {
+          ordered.push(existing);
+        }
+      } else {
+        ordered.push(incoming);
+      }
+    }
+    for (var name in byKey) {
+      if (!used[name]) byKey[name].remove();
+    }
+    for (var n = 0; n < ordered.length; n++) {
+      parent.insertBefore(ordered[n], before || null);
+    }
+  }
+
+  function directCards(root) {
+    var out = [];
+    if (!root) return out;
+    var kids = root.children;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i].classList && kids[i].classList.contains('card')) out.push(kids[i]);
+    }
+    return out;
+  }
+
+  // patchItemsLive updates the open library grid from a poll without replacing
+  // cards whose poster is already on screen. Returns false when the response
+  // is not a grid, so the caller can fall back to a full swap.
+  function patchItemsLive(current, html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var next = doc.getElementById('items-live');
+    if (!next) return false;
+    var trig = next.getAttribute('hx-trigger');
+    var prev = current.getAttribute('hx-trigger');
+    if (trig) current.setAttribute('hx-trigger', trig);
+    else current.removeAttribute('hx-trigger');
+    if (trig !== prev && window.htmx && typeof htmx.process === 'function') htmx.process(current);
+
+    var count = doc.getElementById('library-count');
+    var liveCount = document.getElementById('library-count');
+    if (count && liveCount && liveCount.textContent !== count.textContent) {
+      liveCount.textContent = count.textContent;
+    }
+
+    var nextHero = next.querySelector('.folder-hero');
+    var curHero = current.querySelector('.folder-hero');
+    if (nextHero && curHero) {
+      if (curHero.outerHTML !== nextHero.outerHTML) {
+        reusePoster(curHero, nextHero);
+        curHero.replaceWith(nextHero);
+      }
+    } else if (nextHero && !curHero) {
+      current.insertBefore(nextHero, current.firstChild);
+    } else if (!nextHero && curHero) {
+      curHero.remove();
+    }
+
+    var curGrid = current.querySelector('#items');
+    var nextGrid = next.querySelector('#items');
+    if (!curGrid || !nextGrid) return true;
+    var curList = curGrid.querySelector('.file-list');
+    var nextList = nextGrid.querySelector('.file-list');
+    syncKeyed(curGrid, directCards(curGrid), directCards(nextGrid), curList || curGrid.querySelector('p.muted'));
+    curList = curGrid.querySelector('.file-list');
+    if (nextList) {
+      if (!curList) {
+        curGrid.appendChild(nextList);
+      } else {
+        syncKeyed(curList, curList.querySelectorAll('a.file-card'), nextList.querySelectorAll('a.file-card'), null);
+      }
+    } else if (curList) {
+      curList.remove();
+    }
+    var curEmpty = curGrid.querySelector(':scope > p.muted');
+    var nextEmpty = nextGrid.querySelector(':scope > p.muted');
+    if (nextEmpty) {
+      if (!curEmpty) curGrid.appendChild(nextEmpty);
+      else if (curEmpty.textContent !== nextEmpty.textContent) curEmpty.textContent = nextEmpty.textContent;
+    } else if (curEmpty) {
+      curEmpty.remove();
+    }
+    return true;
+  }
+
+  function pollSource(e) {
+    var xhr = e.detail && e.detail.xhr;
+    return xhr && requestSource.get(xhr);
+  }
+
+  // Skip background polls while a dialog is open. Allow a swap whose target is
+  // inside a dialog, or whose request came from the open dialog.
   document.addEventListener('htmx:beforeSwap', function (e) {
     var target = e.detail && e.detail.target;
     if (!target || !target.contains) return;
     var dlg = openDialog();
     if (dlg && !dlg.contains(target) && !target.closest('dialog')) {
-      e.detail.shouldSwap = false;
-      return;
+      var src = pollSource(e);
+      if (!(src && dlg.contains(src))) {
+        e.detail.shouldSwap = false;
+        return;
+      }
     }
     var active = document.activeElement;
     if (active && target.contains(active)) {
@@ -767,6 +901,13 @@
     if (selectionIn(target)) {
       e.detail.shouldSwap = false;
       return;
+    }
+    var src = pollSource(e);
+    if (target.id === 'items-live' && src && src.id === 'items-live') {
+      if (patchItemsLive(target, responseHTML(e.detail))) {
+        e.detail.shouldSwap = false;
+        return;
+      }
     }
     restoreFocus = null;
     if (active && target.contains(active)) {
@@ -786,5 +927,111 @@
     }
     restoreFocus = null;
     if (el && typeof el.focus === 'function') el.focus();
+  });
+})();
+
+(function () {
+  var cm = null;
+  var loading = null;
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var existing = document.querySelector('script[src="' + src + '"]');
+      if (existing) {
+        if (existing.getAttribute('data-loaded') === '1' || (src.indexOf('codemirror.min.js') !== -1 && typeof CodeMirror !== 'undefined')) {
+          resolve();
+          return;
+        }
+        existing.addEventListener('load', function () { resolve(); });
+        existing.addEventListener('error', function () { reject(new Error(src)); });
+        return;
+      }
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = function () { s.setAttribute('data-loaded', '1'); resolve(); };
+      s.onerror = function () { reject(new Error(src)); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function loadCSS(href) {
+    if (document.querySelector('link[href="' + href + '"]')) return;
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  function initCM() {
+    var ta = document.getElementById('overlay-yaml');
+    if (!ta || typeof CodeMirror === 'undefined') return;
+    if (ta.getAttribute('data-cm-ready') === '1') {
+      if (cm) cm.refresh();
+      return;
+    }
+    cm = CodeMirror.fromTextArea(ta, { mode: 'yaml', lineNumbers: true, lineWrapping: true, theme: 'servemedia' });
+    ta.setAttribute('data-cm-ready', '1');
+    cm.refresh();
+  }
+
+  function ensureCM() {
+    if (!document.getElementById('overlay-yaml')) return;
+    loadCSS('/static/vendor/codemirror/codemirror.min.css');
+    if (typeof CodeMirror !== 'undefined') {
+      initCM();
+      return;
+    }
+    if (!loading) {
+      loading = loadScript('/static/vendor/codemirror/codemirror.min.js').then(function () {
+        return loadScript('/static/vendor/codemirror/yaml.min.js');
+      });
+    }
+    loading.then(initCM).catch(function () {});
+  }
+
+  document.addEventListener('htmx:afterSwap', ensureCM);
+  document.addEventListener('submit', function (e) {
+    if (e.target && e.target.id === 'engines-matchmedia-form' && cm) cm.save();
+  }, true);
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#webhook-copy-key')) {
+      var key = document.getElementById('webhook-api-key');
+      if (key && navigator.clipboard) navigator.clipboard.writeText(key.value || '').catch(function () {});
+      return;
+    }
+    if (t.closest('#test-webhooks')) {
+      var testResult = document.getElementById('webhook-test-result');
+      if (!testResult) return;
+      testResult.textContent = 'Sending test…';
+      fetch('/hx/integrations/webhooks/test', { method: 'POST', credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (text) { testResult.textContent = text; })
+        .catch(function (err) { testResult.textContent = String(err); });
+      return;
+    }
+    if (!t.closest('#add-destination')) return;
+    var destWrap = document.getElementById('webhook-destinations');
+    var destCount = document.getElementById('dest-count');
+    if (!destWrap || !destCount) return;
+    var n = parseInt(destCount.value || '0', 10);
+    var first = destWrap.querySelector('.webhook-destination');
+    if (!first) return;
+    var clone = first.cloneNode(true);
+    clone.setAttribute('data-index', String(n));
+    var legend = clone.querySelector('legend');
+    if (legend) legend.textContent = 'Destination ' + (n + 1);
+    clone.querySelectorAll('[name]').forEach(function (el) {
+      el.name = el.name.replace(/^dest_\d+_/, 'dest_' + n + '_');
+      if (el.type === 'checkbox') el.checked = false;
+      else if (el.tagName === 'TEXTAREA') el.value = '';
+      else if (el.type !== 'hidden') el.value = '';
+    });
+    var hc = clone.querySelector('[name="dest_' + n + '_header_count"]');
+    if (hc) hc.value = '1';
+    destWrap.appendChild(clone);
+    destCount.value = String(n + 1);
   });
 })();

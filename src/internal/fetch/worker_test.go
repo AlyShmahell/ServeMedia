@@ -17,7 +17,112 @@ import (
 
 	"github.com/alyshmahell/servemedia/src/internal/db"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
 )
+
+func TestFetchLinePrintsTitleNFO(t *testing.T) {
+	line := fetchLine(3, 10, 1, 12, 2, "Show")
+	for _, want := range []string{"nfo:1", "episode:12", "poster:2", "Show"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line = %q missing %q", line, want)
+		}
+	}
+}
+
+type writeStatsMeta struct {
+	stats matchmedia.SidecarStats
+}
+
+func (m writeStatsMeta) WriteStats(_ context.Context, _ string, jobs []matchmedia.Job) ([]matchmedia.Job, matchmedia.SidecarStats, error) {
+	return jobs, m.stats, nil
+}
+func (writeStatsMeta) Status() (matchmedia.Status, error) { return matchmedia.Status{Ready: true}, nil }
+func (writeStatsMeta) Run(context.Context, string, string, func(int, int, string)) ([]matchmedia.Job, string, error) {
+	return nil, "", fmt.Errorf("unused")
+}
+func (writeStatsMeta) RunIngest(context.Context, []matchmedia.IngestRow, func(int, int, string)) ([]matchmedia.Job, string, error) {
+	return nil, "", fmt.Errorf("unused")
+}
+func (writeStatsMeta) Select(string, string, string, string) (matchmedia.Job, error) {
+	return matchmedia.Job{}, fmt.Errorf("unused")
+}
+func (writeStatsMeta) Job(string, string) (matchmedia.Job, error) {
+	return matchmedia.Job{}, fmt.Errorf("unused")
+}
+func (writeStatsMeta) Catalog(string, string, string) (matchmedia.Catalog, error) {
+	return matchmedia.Catalog{}, fmt.Errorf("unused")
+}
+func (writeStatsMeta) DownloadURL(string, string) ([]byte, string, error) {
+	return nil, "", fmt.Errorf("unused")
+}
+func (writeStatsMeta) ResolveURL(raw, _ string) string         { return raw }
+func (writeStatsMeta) SecretsStatus() (map[string]bool, error) { return map[string]bool{}, nil }
+func (writeStatsMeta) SetSecrets(map[string]string) error      { return nil }
+func (writeStatsMeta) Config() (map[string]any, error)         { return map[string]any{}, nil }
+func (writeStatsMeta) SetConfig(map[string]any) error          { return nil }
+func (writeStatsMeta) Reload() error                           { return nil }
+
+func TestChangesSkipCountsSavedSidecars(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	showDir := filepath.Join(media, "Known Show")
+	if err := os.MkdirAll(showDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nfoBody := []byte("<tvshow><title>Known Show</title><plot>keep-me</plot></tvshow>")
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), nfoBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "poster.jpg"), []byte("jpeg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: d, Store: store, Meta: writeStatsMeta{stats: matchmedia.SidecarStats{TitleNFO: 1, EpisodeNFO: 12, Posters: 2}}}
+	job := matchmedia.Job{
+		ID: "show-1", Status: "matched", Kind: "show", Title: "Known Show", Path: showDir,
+		Match: &matchmedia.Candidate{Provider: "tvmaze", ID: "1", Title: "Known Show"},
+	}
+	hit, err := w.applyFinishedJob(ctx, lib, job, nil, Opts{ScanMode: "changes"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hit.nfo != 1 || hit.episode != 12 || hit.poster != 2 {
+		t.Fatalf("hit nfo=%d episode=%d poster=%d", hit.nfo, hit.episode, hit.poster)
+	}
+	got, err := os.ReadFile(filepath.Join(showDir, "tvshow.nfo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(nfoBody) {
+		t.Fatalf("changes skip rewrote nfo: %s", got)
+	}
+	line := fetchLine(1, 1, hit.nfo, hit.episode, hit.poster, "Known Show")
+	for _, want := range []string{"nfo:1", "episode:12", "poster:2"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line = %q missing %q", line, want)
+		}
+	}
+
+	seen := map[string]saveHit{}
+	nfo, episode, poster := foldSaveHit(0, 0, 0, seen, "show-1", hit)
+	nfo, episode, poster = foldSaveHit(nfo, episode, poster, seen, "show-1", saveHit{})
+	if nfo != 1 || episode != 12 || poster != 2 {
+		t.Fatalf("second pass nfo=%d episode=%d poster=%d", nfo, episode, poster)
+	}
+}
 
 func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 	ctx := context.Background()
@@ -54,6 +159,9 @@ func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 	if err := os.WriteFile(epPath, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	filmPoster := filepath.Join(filmDir, "poster.jpg")
+	showPoster := filepath.Join(showDir, "poster.jpg")
+	epThumb := filepath.Join(filepath.Dir(epPath), "S01E01-thumb.jpg")
 
 	manualDir := filepath.Join(media, "Manual Film")
 	manualPath := filepath.Join(manualDir, "Manual Film.mkv")
@@ -126,12 +234,14 @@ func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 		jobs := []map[string]any{
 			{
 				"id": "job-film", "status": "matched", "path": filmDir, "source": "scan",
+				"poster_path": filmPoster, "nfo_path": filepath.Join(filmDir, "movie.nfo"),
 				"files": []map[string]any{{"path": filmPath}},
 				"match": map[string]any{"provider": "tmdb", "id": "11", "title": "Film Title", "year": "2016"},
 			},
 			{
 				"id": "job-show", "status": "matched", "path": showDir, "source": "scan",
-				"files": []map[string]any{{"path": epPath, "season": "1", "episode": "1"}},
+				"poster_path": showPoster, "nfo_path": filepath.Join(showDir, "tvshow.nfo"),
+				"files": []map[string]any{{"path": epPath, "season": "1", "episode": "1", "poster_path": epThumb}},
 				"match": map[string]any{"provider": "tmdb", "id": "22", "title": "Sample Show", "year": "2020"},
 			},
 			{
@@ -208,8 +318,8 @@ func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 	if film.MatchStatus.String != "matched" {
 		t.Fatalf("film status %q", film.MatchStatus.String)
 	}
-	if !film.PosterPath.Valid || film.PosterPath.String == "" {
-		t.Fatal("film poster missing")
+	if film.PosterPath.String != filmPoster {
+		t.Fatalf("film poster %q", film.PosterPath.String)
 	}
 
 	show, err := d.GetMediaItemByPath(ctx, lib.ID, showDir)
@@ -229,8 +339,8 @@ func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 	if !eps[0].Title.Valid || eps[0].Title.String != "Pilot" {
 		t.Fatalf("episode title %#v", eps[0].Title)
 	}
-	if !eps[0].StillPath.Valid || eps[0].StillPath.String == "" {
-		t.Fatal("catalog still missing; ffmpeg should not be required")
+	if eps[0].StillPath.String != epThumb {
+		t.Fatalf("still %q", eps[0].StillPath.String)
 	}
 
 	manual, err := d.GetMediaItemByPath(ctx, lib.ID, manualPath)
@@ -267,6 +377,13 @@ func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 	node, err := d.GetLibraryNode(ctx, nodeID)
 	if err != nil || node == nil || node.MMTitle.String != "Picked Title" || node.MatchStatus.String != "matched" {
 		t.Fatalf("stamped node %#v %v", node, err)
+	}
+	pickedNFO, err := metadata.ReadMovieNFO(filepath.Join(manualDir, "movie.nfo"))
+	if err != nil || pickedNFO == nil || pickedNFO.Title != "Picked Title" {
+		t.Fatalf("sidecar title %#v %v", pickedNFO, err)
+	}
+	if _, err := os.Stat(filepath.Join(manualDir, "poster.jpg")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -335,8 +452,9 @@ func TestMatchPathAppliesJobWhileGrouping(t *testing.T) {
 		n := statusHits.Load()
 		film := map[string]any{
 			"id": "job-film", "status": "matched", "path": filmDir, "source": "scan",
-			"files": []map[string]any{{"path": filmPath}},
-			"match": map[string]any{"provider": "tmdb", "id": "11", "title": "Film Title", "year": "2016"},
+			"poster_path": filepath.Join(filmDir, "poster.jpg"),
+			"files":       []map[string]any{{"path": filmPath}},
+			"match":       map[string]any{"provider": "tmdb", "id": "11", "title": "Film Title", "year": "2016"},
 		}
 		late := map[string]any{
 			"id": "job-late", "status": "matched", "path": lateDir, "source": "scan",
@@ -1984,7 +2102,12 @@ func TestApplyShowUsesSeasonPosterWhenCatalogPosterEmpty(t *testing.T) {
 			Number: "1", Title: "Season 1", Poster: "/v1/catalog/jikan/1/s1.jpg",
 		}},
 	}
-	if err := w.applyShow(ctx, it, cat, false, sess); err != nil {
+	poster := filepath.Join(showDir, "poster.jpg")
+	if err := os.WriteFile(poster, []byte("p"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	job := matchmedia.Job{PosterPath: poster, NFOPath: filepath.Join(showDir, "tvshow.nfo")}
+	if err := w.applyShow(ctx, it, job, cat, ""); err != nil {
 		t.Fatal(err)
 	}
 	var stored sql.NullString
@@ -1994,10 +2117,94 @@ func TestApplyShowUsesSeasonPosterWhenCatalogPosterEmpty(t *testing.T) {
 	if !stored.Valid || stored.String == "" {
 		t.Fatal("show poster_path not stored")
 	}
-	if strings.Contains(stored.String, "S01") {
-		t.Fatalf("want show cache poster, got %q", stored.String)
+	if stored.String != poster {
+		t.Fatalf("poster %q", stored.String)
 	}
-	if _, err := os.Stat(filepath.Join(store, stored.String)); err != nil {
+	if _, err := os.Stat(stored.String); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyShowWritesCatalogSeasonPoster(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	showDir := filepath.Join(media, "Spider")
+	epPath := filepath.Join(showDir, "Season 1", "S01E01.mkv")
+	if err := os.MkdirAll(filepath.Dir(epPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(epPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	showID, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "show", Title: "Spider", Path: showDir, Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1, err := d.UpsertSeason(ctx, showID, 1, "Season 1", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.UpsertEpisode(ctx, db.Episode{
+		SeasonID: s1, ShowID: showID, EpisodeNumber: 1, Path: epPath, Mtime: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	nodeID, err := d.UpsertNodeChain(ctx, lib.ID, "Spider/Season 1", "dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sess = "20260829T122800Z-a1b2c3d4e5f6g7h8"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("session") != sess {
+			http.Error(w, `{"error":"session required"}`, http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = io.WriteString(w, "fakejpeg")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	it, err := d.GetMediaItem(ctx, showID)
+	if err != nil || it == nil {
+		t.Fatal(err)
+	}
+	cat := matchmedia.Catalog{
+		Provider: "jikan", ID: "1", Title: "So I'm a Spider",
+		Seasons: []matchmedia.Season{{
+			Number: "1", Title: "Season 1", Poster: "/v1/catalog/jikan/1/s1.jpg",
+		}},
+	}
+	if err := w.applyShow(ctx, it, matchmedia.Job{}, cat, sess); err != nil {
+		t.Fatal(err)
+	}
+	w.stampSavedTree(ctx, lib, it)
+	var stored sql.NullString
+	if err := d.SQL.QueryRowContext(ctx, `SELECT poster_path FROM library_nodes WHERE id=?`, nodeID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(showDir, "Season 1", "poster.jpg")
+	if stored.String != want {
+		t.Fatalf("season node poster %q", stored.String)
+	}
+	if _, err := os.Stat(want); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -2090,7 +2297,7 @@ func TestFillMissingArtCopiesShowPosterWithoutOverwrite(t *testing.T) {
 	if !got.PosterPath.Valid || got.PosterPath.String == "" {
 		t.Fatal("poster_path not set")
 	}
-	if _, err := os.Stat(filepath.Join(store, got.PosterPath.String)); err != nil {
+	if _, err := os.Stat(got.PosterPath.String); err != nil {
 		t.Fatal(err)
 	}
 	if got.MatchStatus.Valid && got.MatchStatus.String == "manual" {
@@ -2158,7 +2365,7 @@ func TestFillMissingArtCopiesMoviePosterWithoutOverwrite(t *testing.T) {
 	if !got.PosterPath.Valid || got.PosterPath.String == "" {
 		t.Fatal("poster_path not set")
 	}
-	if _, err := os.Stat(filepath.Join(store, got.PosterPath.String)); err != nil {
+	if _, err := os.Stat(got.PosterPath.String); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -2228,7 +2435,7 @@ func TestFillMissingArtUsesStoredSessionWhenJobSessionDiffers(t *testing.T) {
 	if !got.PosterPath.Valid || got.PosterPath.String == "" {
 		t.Fatal("poster_path not set from stored session catalog")
 	}
-	if _, err := os.Stat(filepath.Join(store, got.PosterPath.String)); err != nil {
+	if _, err := os.Stat(got.PosterPath.String); err != nil {
 		t.Fatal(err)
 	}
 	if got.MatchStatus.Valid && got.MatchStatus.String == "manual" {
@@ -2277,7 +2484,7 @@ func TestFillMissingArtCopiesLocalMatchMediaCatalogPoster(t *testing.T) {
 	if !got.PosterPath.Valid || got.PosterPath.String == "" {
 		t.Fatal("poster_path not set from on-disk MatchMedia catalog")
 	}
-	b, err := os.ReadFile(filepath.Join(store, got.PosterPath.String))
+	b, err := os.ReadFile(got.PosterPath.String)
 	if err != nil {
 		t.Fatal(err)
 	}

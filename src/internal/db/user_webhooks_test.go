@@ -33,11 +33,11 @@ func TestUserWebhooksDefaultsAndSave(t *testing.T) {
 
 	saved, err := d.SaveUserWebhooks(ctx, u.ID, config.WebhooksConfig{
 		Enabled:   true,
-		ServerURL: "http://192.168.1.10:7676",
+		ServerURL: "http://192.168.1.10",
 		Destinations: []config.WebhookDestination{{
-			Name:    "Home",
-			URL:     "http://192.168.1.10:9090/hook",
-			Enabled: true,
+			Name:              "Home",
+			URL:               "http://192.168.1.10:9090/hook",
+			Enabled:           true,
 			NotificationTypes: []string{"PlaybackStart"},
 		}},
 	})

@@ -93,6 +93,71 @@ write_tar() {
   echo "wrote $DIR/package/$name"
 }
 
+require_vendor_tree() {
+  local root="$DIR/dist/.local/share/servemedia/vendor"
+  local manifest="$DIR/../src/share/vendor.yaml"
+  local missing=0 dest
+  if [[ ! -f "$manifest" ]]; then
+    echo "error: $manifest not found" >&2
+    exit 1
+  fi
+  while IFS= read -r dest; do
+    if [[ ! -s "$root/$dest" ]]; then
+      echo "error: missing $root/$dest" >&2
+      missing=1
+    fi
+  done < <(python3 - "$manifest" <<'PY'
+import sys
+path = sys.argv[1]
+section = ""
+cur = None
+items = []
+
+def flush():
+    global cur
+    if cur and cur.get("dest"):
+        items.append(cur["dest"])
+    cur = None
+
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        raw = line.rstrip("\n")
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw[0] not in " \t":
+            flush()
+            section = raw.split(":", 1)[0].strip()
+            continue
+        if section != "assets":
+            continue
+        s = raw.strip()
+        if s.startswith("- "):
+            flush()
+            cur = {}
+            s = s[2:].strip()
+            if not s:
+                continue
+        if cur is None or ":" not in s:
+            continue
+        k, _, v = s.partition(":")
+        cur[k.strip()] = v.strip().strip('"').strip("'")
+flush()
+for dest in items:
+    print(dest)
+PY
+)
+  for dest in ffmpeg/ffmpeg ffmpeg/ffprobe; do
+    if [[ ! -f "$root/$dest" ]]; then
+      echo "error: missing $root/$dest" >&2
+      missing=1
+    fi
+  done
+  if [[ "$missing" -ne 0 ]]; then
+    echo "error: vendor tree incomplete; rebuild dist so the builder can fetch it" >&2
+    exit 1
+  fi
+}
+
 package() {
   if [[ ! -x "$DIR/dist/.local/bin/servemedia" ]]; then
     echo "error: build/dist/.local/bin/servemedia not found; rebuild first" >&2
@@ -101,19 +166,15 @@ package() {
   mkdir -p "$DIR/package"
   : >"$DIR/package/.gitkeep"
   prepare_compose
+  require_vendor_tree
   local staging
-
-  HOME="$DIR/cache/xdg" \
-    XDG_DATA_HOME="$DIR/cache/xdg/.local/share" \
-    SERVEMEDIA_ROOT="$DIR/dist/.local/share/servemedia" \
-    "$DIR/dist/.local/bin/servemedia" --prepare
 
   staging="$(mktemp -d)"
   stage_package "$staging"
   local name="servemedia-linux-amd64.tar.gz"
   write_tar "$staging" "$name"
   rm -rf "$staging"
-  compose run --rm dist /build appimage "/package/$name"
+  compose run --rm dist /build/build appimage "/package/$name"
 }
 
 start() {
@@ -194,7 +255,7 @@ menu() {
 }
 
 CHOICE=
-menu "run" "(re)build & run" "(re)build & prepare" "(re)build & package"
+menu "run" "(re)build & run" "(re)build & package"
 case "$CHOICE" in
   0)
     start
@@ -204,10 +265,6 @@ case "$CHOICE" in
     start
     ;;
   2)
-    rebuild
-    start --prepare
-    ;;
-  3)
     rebuild
     package
     ;;

@@ -1,0 +1,121 @@
+{{define "partials/settings_webhooks.html"}}
+<form method="post" action="/settings/integrations" id="integrations-form" class="settings-tab-card" hx-post="/settings/integrations" hx-target="#settings-panel" hx-swap="innerHTML">
+  <div class="settings-tab-scroll">
+    <section class="page-sub-card">
+      <h2>Webhooks</h2>
+      <p class="muted">Send outbound notifications in standard webhook JSON. <code>ServerName</code> is always <strong>ServeMedia</strong>.</p>
+
+      <label><input type="checkbox" name="webhook_enabled" {{if .UserWebhooks.Enabled}}checked{{end}}> Enable webhooks</label>
+      <label>Server URL</label>
+      <input name="webhook_server_url" value="{{.UserWebhooks.ServerURL}}" placeholder="https://servemedia.example.com">
+      <label>Server ID</label>
+      <input value="{{.Config.Integrations.Webhooks.ServerID}}" readonly>
+      <label>Webhook API key</label>
+      <div class="webhook-key-row">
+        <input id="webhook-api-key" value="{{.UserWebhooks.APIKey}}" readonly>
+        <button type="button" class="secondary" id="webhook-copy-key">Copy</button>
+        <button type="button" class="secondary" id="webhook-regenerate-key"
+          hx-post="/hx/integrations/webhooks/regenerate-key"
+          hx-target="#settings-panel"
+          hx-swap="innerHTML"
+          hx-confirm="Regenerate webhook API key? Update receivers with the new key.">Regenerate</button>
+      </div>
+      <p class="muted">Displayed masked in UI: {{.WebhookKeyMasked}}. Outbound requests include header <code>X-ServeMedia-Webhook-Key</code>.</p>
+
+      <h3>Destinations</h3>
+      <div class="webhook-destinations" id="webhook-destinations">
+        {{range $i, $d := .UserWebhooks.Destinations}}
+        <fieldset class="webhook-destination" data-index="{{$i}}">
+          <legend>Destination {{add1 $i}}</legend>
+          <label>Name</label>
+          <input name="dest_{{$i}}_name" value="{{$d.Name}}" placeholder="Home Assistant">
+          <label>URL</label>
+          <input name="dest_{{$i}}_url" value="{{$d.URL}}" placeholder="https://example.com/webhook">
+          <label><input type="checkbox" name="dest_{{$i}}_enabled" {{if $d.Enabled}}checked{{end}}> Enabled</label>
+          <p class="muted">Notification types</p>
+          <div class="webhook-type-grid">
+            {{range $.NotificationTypes}}
+            <label><input type="checkbox" name="dest_{{$i}}_types" value="{{.}}" {{if hasStr $d.NotificationTypes .}}checked{{end}}> {{.}}</label>
+            {{end}}
+          </div>
+          <p class="muted">Item types (empty = all)</p>
+          <div class="webhook-type-grid">
+            {{range $.ItemTypes}}
+            <label><input type="checkbox" name="dest_{{$i}}_items" value="{{.}}" {{if hasStr $d.ItemTypes .}}checked{{end}}> {{.}}</label>
+            {{end}}
+          </div>
+          <label>Custom headers</label>
+          {{range $j, $h := $d.Headers}}
+          <div class="webhook-header-row">
+            <input name="dest_{{$i}}_header_{{$j}}_key" value="{{$h.Key}}" placeholder="Header">
+            <input name="dest_{{$i}}_header_{{$j}}_val" value="{{$h.Value}}" placeholder="Value">
+          </div>
+          {{else}}
+          <div class="webhook-header-row">
+            <input name="dest_{{$i}}_header_0_key" value="Content-Type" placeholder="Header">
+            <input name="dest_{{$i}}_header_0_val" value="application/json" placeholder="Value">
+          </div>
+          {{end}}
+          <input type="hidden" name="dest_{{$i}}_header_count" value="{{if $d.Headers}}{{len $d.Headers}}{{else}}1{{end}}">
+          <label>Template (optional JSON with {{`{{Field}}`}} placeholders)</label>
+          <textarea name="dest_{{$i}}_template" rows="4" placeholder="Leave empty for default JSON">{{$d.Template}}</textarea>
+        </fieldset>
+        {{else}}
+        <fieldset class="webhook-destination" data-index="0">
+          <legend>Destination 1</legend>
+          <input type="hidden" name="dest_0_header_count" value="1">
+          <label>Name</label>
+          <input name="dest_0_name" placeholder="Home Assistant">
+          <label>URL</label>
+          <input name="dest_0_url" placeholder="https://example.com/webhook">
+          <label><input type="checkbox" name="dest_0_enabled" checked> Enabled</label>
+          <p class="muted">Notification types</p>
+          <div class="webhook-type-grid">
+            {{range .NotificationTypes}}
+            <label><input type="checkbox" name="dest_0_types" value="{{.}}"> {{.}}</label>
+            {{end}}
+          </div>
+          <p class="muted">Item types (empty = all)</p>
+          <div class="webhook-type-grid">
+            {{range .ItemTypes}}
+            <label><input type="checkbox" name="dest_0_items" value="{{.}}"> {{.}}</label>
+            {{end}}
+          </div>
+          <label>Custom headers</label>
+          <div class="webhook-header-row">
+            <input name="dest_0_header_0_key" value="Content-Type" placeholder="Header">
+            <input name="dest_0_header_0_val" value="application/json" placeholder="Value">
+          </div>
+          <label>Template (optional JSON with {{`{{Field}}`}} placeholders)</label>
+          <textarea name="dest_0_template" rows="4" placeholder="Leave empty for default JSON"></textarea>
+        </fieldset>
+        {{end}}
+      </div>
+      <p><button type="button" class="secondary" id="add-destination">Add destination</button></p>
+
+      <h3>Default payload example</h3>
+      <pre class="webhook-example">{
+  "ServerId": "{{.Config.Integrations.Webhooks.ServerID}}",
+  "ServerName": "ServeMedia",
+  "ServerVersion": "{{.Version}}",
+  "ServerUrl": "{{.UserWebhooks.ServerURL}}",
+  "NotificationType": "PlaybackStart",
+  "ClientName": "ServeMedia",
+  "Name": "Example Movie",
+  "ItemType": "Movie",
+  "ItemId": "42",
+  "Username": "{{.User.Username}}"
+}</pre>
+    </section>
+    <input type="hidden" name="dest_count" id="dest-count" value="{{if .UserWebhooks.Destinations}}{{len .UserWebhooks.Destinations}}{{else}}1{{end}}">
+  </div>
+  <div class="settings-tab-actions">
+    <button type="submit" class="btn-with-icon">
+      {{template "partials/icon_save.html" .}}
+      Save
+    </button>
+    <button type="button" class="secondary" id="test-webhooks">Test webhooks</button>
+    <p class="muted" id="webhook-test-result" aria-live="polite"></p>
+  </div>
+</form>
+{{end}}

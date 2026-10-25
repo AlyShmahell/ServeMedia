@@ -3,7 +3,7 @@ module github.com/alyshmahell/servemedia/src
 go 1.26
 
 require (
-	github.com/alyshmahell/matchmedia/src v0.0.0-20261016080808-9900acc5752f
+	github.com/alyshmahell/matchmedia/src v0.0.0-20261025203458-de28fe9d3c3c
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.18.3

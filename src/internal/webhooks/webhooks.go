@@ -2,20 +2,21 @@ package webhooks
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
 const (
-	NotificationGeneric           = "Generic"
-	NotificationPlaybackStart     = "PlaybackStart"
-	NotificationPlaybackProgress  = "PlaybackProgress"
-	NotificationPlaybackStop      = "PlaybackStop"
-	NotificationItemAdded         = "ItemAdded"
-	NotificationTaskCompleted     = "TaskCompleted"
-	NotificationUserCreated       = "UserCreated"
-	NotificationUserDeleted       = "UserDeleted"
+	NotificationGeneric          = "Generic"
+	NotificationPlaybackStart    = "PlaybackStart"
+	NotificationPlaybackProgress = "PlaybackProgress"
+	NotificationPlaybackStop     = "PlaybackStop"
+	NotificationItemAdded        = "ItemAdded"
+	NotificationTaskCompleted    = "TaskCompleted"
+	NotificationUserCreated      = "UserCreated"
+	NotificationUserDeleted      = "UserDeleted"
 )
 
 var AllNotificationTypes = []string{
@@ -34,8 +35,9 @@ var AllItemTypes = []string{
 }
 
 type Service struct {
-	Cfg *config.Config
-	hc  *http.Client
+	Cfg         *config.Config
+	LoopbackURL string
+	hc          *http.Client
 }
 
 func New(cfg *config.Config) *Service {
@@ -50,6 +52,23 @@ func (s *Service) Refresh(cfg *config.Config) {
 		return
 	}
 	s.Cfg = cfg
+}
+
+func (s *Service) SetLoopbackURL(u string) {
+	if s == nil {
+		return
+	}
+	s.LoopbackURL = u
+}
+
+func (s *Service) serverURL(configured string) string {
+	if strings.TrimSpace(configured) != "" {
+		return configured
+	}
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.LoopbackURL)
 }
 
 func (s *Service) serverVersion() string {

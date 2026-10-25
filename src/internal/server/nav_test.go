@@ -48,10 +48,4 @@ func TestApplyNav(t *testing.T) {
 	if preset["NavTitle"] != "Keep" || preset["NavBack"] != "/custom" {
 		t.Fatalf("preset %#v", preset)
 	}
-
-	support := map[string]any{}
-	applyNav("support.html", support)
-	if support["NavTitle"] != "Support" || support["NavBack"] != "/" {
-		t.Fatalf("support %#v", support)
-	}
 }

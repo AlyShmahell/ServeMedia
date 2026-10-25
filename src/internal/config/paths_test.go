@@ -94,7 +94,7 @@ func TestFlatpakDataRoot(t *testing.T) {
 	if gotOverlay != wantOverlay {
 		t.Fatalf("overlay %q want %q", gotOverlay, wantOverlay)
 	}
-	wantMatch := filepath.Join(xdg, "matchmedia")
+	wantMatch := filepath.Join(xdg, "servemedia", "matchmedia")
 	if c.MatchMediaDataDir() != wantMatch {
 		t.Fatalf("matchmedia %q want %q", c.MatchMediaDataDir(), wantMatch)
 	}
@@ -255,21 +255,72 @@ func TestExpandMediaXDGTokens(t *testing.T) {
 	}
 }
 
-func TestLoadVendorCodeMirror(t *testing.T) {
-	t.Setenv("SERVEMEDIA_ROOT", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_DATA_HOME", t.TempDir())
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+func TestLoadIgnoresInternalPaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "share"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	t.Setenv("SERVEMEDIA_ROOT", "")
+	t.Setenv("SERVEMEDIA_HOME", home)
+	t.Setenv("SERVEMEDIA_STORE_PATH", "")
 	path := filepath.Join(t.TempDir(), "default.yaml")
-	body := "vendor:\n  htmx_url: http://htmx\n  codemirror_js_url: http://cm.js\n  codemirror_css_url: http://cm.css\n  codemirror_yaml_url: http://yaml.js\n  codemirror_license_url: http://cm.lic\n"
+	body := "version: \"1.2.3\"\nstore:\n  path: /tmp/nope\ntranscode:\n  path: /tmp/tc\nbackup:\n  dir: /tmp/bak\n  enabled: true\nmedia:\n  path: /library\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	overlay := filepath.Join(home, "config", "overlay.yaml")
+	if err := os.MkdirAll(filepath.Dir(overlay), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overlay, []byte("store:\n  path: /tmp/overlay-store\nmedia:\n  path: /from-overlay\nscan:\n  on_startup: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Vendor.HTMXURL != "http://htmx" || cfg.Vendor.CodeMirrorJSURL != "http://cm.js" || cfg.Vendor.CodeMirrorYAMLURL != "http://yaml.js" {
-		t.Fatalf("vendor %#v", cfg.Vendor)
+	if cfg.Store.Path != filepath.Join(home, "store") {
+		t.Fatalf("store %q", cfg.Store.Path)
+	}
+	if cfg.Transcode.Path != filepath.Join(home, "cache", "servemedia", "transcode") {
+		t.Fatalf("transcode %q", cfg.Transcode.Path)
+	}
+	if cfg.Backup.Dir != filepath.Join(home, "backups") {
+		t.Fatalf("backup %q", cfg.Backup.Dir)
+	}
+	if cfg.Media.Path != "/from-overlay" {
+		t.Fatalf("media %q", cfg.Media.Path)
+	}
+	if !cfg.Backup.Enabled || !cfg.Scan.OnStartup {
+		t.Fatalf("settings %#v %#v", cfg.Backup.Enabled, cfg.Scan.OnStartup)
+	}
+	if cfg.Version != "1.2.3" {
+		t.Fatalf("version %q", cfg.Version)
+	}
+}
+
+func TestSaveSettingsKeepsMediaPath(t *testing.T) {
+	cfg := Defaults()
+	cfg.Store.Path = "/resolved/store"
+	cfg.Transcode.Path = "/resolved/transcode"
+	cfg.Backup.Dir = "/resolved/backups"
+	cfg.Transcode.CRF = 21
+	path := filepath.Join(t.TempDir(), "overlay.yaml")
+	if err := os.WriteFile(path, []byte("media:\n  path: /keep/media\nstore:\n  path: /old/store\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	if strings.Contains(text, "/old/store") || strings.Contains(text, "/resolved/") {
+		t.Fatalf("internal paths written:\n%s", text)
+	}
+	if !strings.Contains(text, "/keep/media") || !strings.Contains(text, "crf:") {
+		t.Fatalf("settings missing:\n%s", text)
 	}
 }

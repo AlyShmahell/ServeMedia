@@ -59,7 +59,6 @@
       hx-swap="outerHTML"></div>
     <label for="add-library-scan-mode">What do you want to do?</label>
     <select name="mode" id="add-library-scan-mode">
-      <option value="nfo" {{if not .MetaReady}}disabled{{end}}>Scan local NFO/posters</option>
       <option value="rescan" {{if not .MetaReady}}disabled{{end}}>Rescan</option>
       <option value="changes" {{if .MetaReady}}selected{{end}} {{if not .MetaReady}}disabled{{end}}>Changes</option>
       <option value="missing" {{if not .MetaReady}}disabled{{end}}>Missing</option>
@@ -69,14 +68,6 @@
     {{else if .MetaHint}}
     <p class="muted scan-modal-hint">{{.MetaHint}}</p>
     {{end}}
-    <label class="scan-persist" id="add-library-overwrite-wrap">
-      <input type="checkbox" name="overwrite" value="1">
-      Overwrite existing metadata
-    </label>
-    <label class="scan-persist">
-      <input type="checkbox" name="persist" value="1" checked>
-      Save NFO/posters next to media files
-    </label>
     <footer class="modal-foot">
       <button type="button" class="secondary" id="add-library-cancel">Cancel</button>
       <button type="submit">Add library</button>
@@ -88,13 +79,6 @@
   var dlg = document.getElementById('add-library-dialog');
   var browser = document.getElementById('media-browser');
   var nameInput = document.getElementById('library-name');
-  var mode = document.getElementById('add-library-scan-mode');
-  var overwriteWrap = document.getElementById('add-library-overwrite-wrap');
-  function syncModeFields() {
-    var quiet = mode && (mode.value === 'changes' || mode.value === 'nfo');
-    if (overwriteWrap) overwriteWrap.hidden = !!quiet;
-  }
-
   function capitalizeFirst(s) {
     if (!s) return s;
     return s.charAt(0).toUpperCase() + s.slice(1);
@@ -113,7 +97,6 @@
   function openDlg() {
     dlg.showModal();
     syncLibraryNameFromPath();
-    syncModeFields();
     if (browser && !browser.dataset.loaded) {
       browser.dataset.loaded = '1';
       htmx.ajax('GET', '/hx/media/browse', {target: '#media-browser', swap: 'outerHTML'});
@@ -123,8 +106,6 @@
   document.getElementById('add-library-open').addEventListener('click', openDlg);
   document.getElementById('add-library-close').addEventListener('click', closeDlg);
   document.getElementById('add-library-cancel').addEventListener('click', closeDlg);
-  if (mode) mode.addEventListener('change', syncModeFields);
-  syncModeFields();
 })();
 </script>
 </body></html>

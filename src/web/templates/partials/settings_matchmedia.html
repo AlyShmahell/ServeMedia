@@ -1,0 +1,40 @@
+{{define "partials/settings_matchmedia.html"}}
+<div class="settings-tab-card" id="tab-matchmedia">
+  <div class="settings-tab-scroll">
+    <form method="post" action="/settings/engines" id="engines-matchmedia-form" hx-post="/settings/engines" hx-target="#settings-panel" hx-swap="innerHTML">
+      <section class="page-sub-card">
+        <h2>Provider keys</h2>
+        {{range .SecretKeys}}
+        <label>{{if eq . "omdb"}}OMDb{{else if eq . "tmdb"}}TMDB{{else}}{{.}}{{end}} API key {{if index $.Secrets .}}<span class="muted">(set)</span>{{else}}<span class="muted">(not set)</span>{{end}}</label>
+        <input type="password" name="secret_{{.}}" id="secret-{{.}}" placeholder="Leave blank to keep current" autocomplete="off">
+        {{else}}
+        <p class="muted">No MatchMedia secret keys available.</p>
+        {{end}}
+      </section>
+      <section class="page-sub-card">
+        <h2>Config</h2>
+        {{if .OverlayError}}<p class="muted">{{.OverlayError}}</p>{{end}}
+        <textarea name="overlay_yaml" id="overlay-yaml" rows="24" spellcheck="false">{{.OverlayYAML}}</textarea>
+      </section>
+    </form>
+  </div>
+  <div class="settings-tab-actions">
+    <button type="submit" form="engines-matchmedia-form" id="engines-save" class="btn-with-icon">
+      {{template "partials/icon_save.html" .}}
+      Save
+    </button>
+    <button type="button" class="secondary btn-with-icon" id="engines-restore"
+      hx-post="/settings/engines/restore"
+      hx-include="#engines-matchmedia-form"
+      hx-target="#settings-panel"
+      hx-swap="innerHTML"
+      hx-confirm="Restore the MatchMedia overlay? Custom overlay keys will be removed. Provider keys are kept.">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="1 4 1 10 7 10"></polyline>
+        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+      </svg>
+      Restore default
+    </button>
+  </div>
+</div>
+{{end}}

@@ -14,6 +14,7 @@ add-extensions:
 finish-args:
   - --share=network
   - --share=ipc
+  - --filesystem=xdg-run/servemedia:create
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri

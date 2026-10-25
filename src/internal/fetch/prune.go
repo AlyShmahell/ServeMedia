@@ -146,7 +146,7 @@ func (w *Worker) ReattachMovedPath(ctx context.Context, lib *db.Library, kind, n
 	if w == nil || w.DB == nil || lib == nil {
 		return nil
 	}
-	newPath = strings.TrimSpace(newPath)
+	newPath = cleanMediaPath(newPath)
 	if newPath == "" {
 		return nil
 	}

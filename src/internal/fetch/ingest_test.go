@@ -178,8 +178,12 @@ func TestEnsureSeason_showRootPoster(t *testing.T) {
 	if se.SeasonNumber != 2 {
 		t.Fatalf("season number: %d", se.SeasonNumber)
 	}
-	if !se.PosterPath.Valid || se.PosterPath.String == "" {
-		t.Fatal("expected show-root season02-poster.jpg to be copied")
+	want := filepath.Join(show, "season02-poster.jpg")
+	if !se.PosterPath.Valid || se.PosterPath.String != want {
+		t.Fatalf("poster %q", se.PosterPath.String)
+	}
+	if _, err := os.Stat(filepath.Join(store, "metadata")); !os.IsNotExist(err) {
+		t.Fatalf("store metadata: %v", err)
 	}
 }
 
@@ -560,7 +564,7 @@ func TestApplyEpisodeKeepsNFOTitlePilotWhenCatalogEmpty(t *testing.T) {
 	if eps[0].Title.String != "Pilot" {
 		t.Fatalf("ingest title %q", eps[0].Title.String)
 	}
-	w.applyEpisode(ctx, show, &seasons[0], &eps[0], &matchmedia.Episode{Title: "Sample Show - S01E01"}, false, "")
+	w.applyEpisode(ctx, show, &seasons[0], &eps[0], &matchmedia.Episode{Title: "Sample Show - S01E01"}, "", "")
 	eps, err = d.ListEpisodesByShow(ctx, showID)
 	if err != nil || len(eps) != 1 {
 		t.Fatalf("after apply %#v %v", eps, err)

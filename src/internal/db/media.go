@@ -558,6 +558,42 @@ func (d *DB) GetMediaItemByPath(ctx context.Context, libraryID int64, path strin
 	return d.GetMediaItem(ctx, id)
 }
 
+// MovieInFolder returns a movie whose file sits directly in folder.
+func (d *DB) MovieInFolder(ctx context.Context, libraryID int64, folder string) (*MediaItem, error) {
+	folder = filepath.Clean(strings.TrimSpace(folder))
+	if folder == "" || folder == "." {
+		return nil, nil
+	}
+	prefix := folder + string(os.PathSeparator)
+	rows, err := d.SQL.QueryContext(ctx, `SELECT id, path FROM media_items WHERE library_id=? AND kind='movie' AND path LIKE ?`, libraryID, prefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var found int64
+	for rows.Next() {
+		var id int64
+		var path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		if filepath.Clean(filepath.Dir(path)) == folder {
+			found = id
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if found == 0 {
+		return nil, nil
+	}
+	return d.GetMediaItem(ctx, found)
+}
+
 // TouchMediaItemMtime updates only mtime (used when scan must not re-poison meta).
 func (d *DB) TouchMediaItemMtime(ctx context.Context, id int64, mtime int64) error {
 	_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET mtime=? WHERE id=?`, mtime, id)
@@ -692,19 +728,21 @@ func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string,
 	if err != nil {
 		return nil, err
 	}
+	poster := showPosterSQL("")
 	var total int
 	if err := d.SQL.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM media_items
-		WHERE library_id = ? AND poster_path IS NOT NULL AND poster_path != ''`, libraryID).Scan(&total); err != nil {
+		WHERE library_id = ? AND `+poster+` IS NOT NULL AND `+poster+` != ''`, libraryID).Scan(&total); err != nil {
 		return nil, err
 	}
 	if total == 0 {
 		return nil, nil
 	}
 
+	chosen := newPosterSet(stills)
 	rows, err := d.SQL.QueryContext(ctx, `
-		SELECT poster_path FROM media_items
-		WHERE library_id = ? AND poster_path IS NOT NULL AND poster_path != ''
+		SELECT `+poster+`, COALESCE(meta_provider,''), COALESCE(meta_id,''), title FROM media_items
+		WHERE library_id = ? AND `+poster+` IS NOT NULL AND `+poster+` != ''
 		  AND rating IS NOT NULL AND rating > 0
 		ORDER BY rating DESC, date_added DESC, id DESC`, libraryID)
 	if err != nil {
@@ -712,17 +750,15 @@ func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string,
 	}
 	defer rows.Close()
 	var out []string
-	chosen := map[string]bool{}
 	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
+		var p, provider, id, title string
+		if err := rows.Scan(&p, &provider, &id, &title); err != nil {
 			return nil, err
 		}
-		if stills[p] || chosen[p] {
+		if !chosen.take(p, provider, id, title) {
 			continue
 		}
 		out = append(out, p)
-		chosen[p] = true
 		if len(out) >= maxStrips {
 			return out, rows.Err()
 		}
@@ -732,8 +768,8 @@ func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string,
 	}
 
 	fillRows, err := d.SQL.QueryContext(ctx, `
-		SELECT poster_path FROM media_items
-		WHERE library_id = ? AND poster_path IS NOT NULL AND poster_path != ''
+		SELECT `+poster+`, COALESCE(meta_provider,''), COALESCE(meta_id,''), title FROM media_items
+		WHERE library_id = ? AND `+poster+` IS NOT NULL AND `+poster+` != ''
 		ORDER BY date_added DESC, id DESC`, libraryID)
 	if err != nil {
 		return nil, err
@@ -743,17 +779,96 @@ func (d *DB) ListLibraryPosters(ctx context.Context, libraryID int64) ([]string,
 		if len(out) >= maxStrips {
 			break
 		}
-		var p string
-		if err := fillRows.Scan(&p); err != nil {
+		var p, provider, id, title string
+		if err := fillRows.Scan(&p, &provider, &id, &title); err != nil {
 			return nil, err
 		}
-		if stills[p] || chosen[p] {
+		if !chosen.take(p, provider, id, title) {
 			continue
 		}
 		out = append(out, p)
-		chosen[p] = true
 	}
 	return out, fillRows.Err()
+}
+
+type posterSet struct {
+	posters map[string]bool
+	metas   map[string]bool
+	titles  map[string]bool
+}
+
+func newPosterSet(stills map[string]bool) posterSet {
+	return posterSet{posters: stills, metas: map[string]bool{}, titles: map[string]bool{}}
+}
+
+func (s posterSet) take(poster, provider, id, title string) bool {
+	if s.posters[poster] {
+		return false
+	}
+	meta := ""
+	if strings.TrimSpace(provider) != "" && strings.TrimSpace(id) != "" {
+		meta = strings.ToLower(strings.TrimSpace(provider)) + "\t" + strings.TrimSpace(id)
+		if s.metas[meta] {
+			return false
+		}
+	}
+	key := titleKey(title)
+	if key != "" && s.titles[key] {
+		return false
+	}
+	s.posters[poster] = true
+	if meta != "" {
+		s.metas[meta] = true
+	}
+	if key != "" {
+		s.titles[key] = true
+	}
+	return true
+}
+
+func titleKey(title string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(title) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// UnratedPosterItem is a show or movie that has poster art and an NFO, but no stored rating yet.
+type UnratedPosterItem struct {
+	ID      int64
+	Kind    string
+	NFOPath string
+}
+
+func (d *DB) ListUnratedPosterItems(ctx context.Context, libraryID int64) ([]UnratedPosterItem, error) {
+	poster := showPosterSQL("")
+	rows, err := d.SQL.QueryContext(ctx, `
+		SELECT id, kind, nfo_path FROM media_items
+		WHERE library_id = ?
+		  AND rating IS NULL
+		  AND nfo_path IS NOT NULL AND nfo_path != ''
+		  AND `+poster+` IS NOT NULL AND `+poster+` != ''`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UnratedPosterItem
+	for rows.Next() {
+		var it UnratedPosterItem
+		if err := rows.Scan(&it.ID, &it.Kind, &it.NFOPath); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+func (d *DB) SetMediaItemRating(ctx context.Context, id int64, rating float64) error {
+	_, err := d.SQL.ExecContext(ctx, `UPDATE media_items SET rating=? WHERE id=?`, rating, id)
+	return err
 }
 
 func (d *DB) libraryStillPaths(ctx context.Context, libraryID int64) (map[string]bool, error) {
@@ -878,7 +993,9 @@ func (d *DB) RecentlyAdded(ctx context.Context, userID int64, limit int) ([]Medi
 			m.meta_provider, m.meta_id, m.matchmedia_session_id, m.matchmedia_job_id, m.match_status, m.match_error, m.mtime, m.date_added, m.parent_id
 		FROM media_items m
 		JOIN libraries l ON l.id = m.library_id
-		WHERE l.user_id = ? AND m.parent_id IS NULL
+		WHERE l.user_id = ? AND (
+			lower(m.nfo_path) LIKE '%/movie.nfo' OR lower(m.nfo_path) LIKE '%/tvshow.nfo'
+			OR lower(m.nfo_path) IN ('movie.nfo', 'tvshow.nfo'))
 		ORDER BY m.date_added DESC LIMIT ?`, userID, limit)
 	if err != nil {
 		return nil, err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -48,9 +49,19 @@ func editErr(w http.ResponseWriter, status int, err error) {
 	writeEditJSON(w, status, map[string]string{"error": msg})
 }
 
-func posterSrc(rel string) string {
-	p := strings.TrimPrefix(strings.TrimPrefix(rel, "/"), "metadata/")
-	return "/metadata/" + p + "?m=" + strconv.FormatInt(time.Now().Unix(), 10)
+func posterSrc(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "/static/placeholder.svg"
+	}
+	q := url.Values{}
+	q.Set("m", strconv.FormatInt(time.Now().Unix(), 10))
+	if filepath.IsAbs(p) {
+		q.Set("path", p)
+		return "/metadata/?" + q.Encode()
+	}
+	p = strings.TrimPrefix(strings.TrimPrefix(p, "/"), "metadata/")
+	return "/metadata/" + p + "?" + q.Encode()
 }
 
 func (s *Server) readPosterFile(w http.ResponseWriter, r *http.Request) ([]byte, error) {
@@ -490,7 +501,7 @@ func (s *Server) handleNodeStill(w http.ResponseWriter, r *http.Request) {
 		writeEditJSON(w, http.StatusOK, map[string]any{"src": posterSrc(rel)})
 		return
 	}
-	rel, err := s.Fetch.SaveNodeStill(r.Context(), node.ID, data)
+	rel, err := s.Fetch.SaveNodeStill(r.Context(), node.ID, abs, data)
 	if err != nil {
 		editErr(w, http.StatusBadRequest, err)
 		return

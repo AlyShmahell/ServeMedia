@@ -592,7 +592,10 @@
   }
   function applyTitle(cfg) {
     if (!cfg || !cfg.title) return;
-    if (titleEl) titleEl.textContent = cfg.title;
+    if (titleEl) {
+      titleEl.setAttribute('title', cfg.title);
+      titleEl.textContent = cfg.title;
+    }
     document.title = cfg.title + ' — Play';
   }
   async function applyPlayback(cfg, absoluteOrRelSeek) {

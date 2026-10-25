@@ -289,8 +289,8 @@ func TestScanModalMatchMediaModes(t *testing.T) {
 	if !strings.Contains(html, `value="changes" selected`) {
 		t.Fatal("changes selected when ready")
 	}
-	if !strings.Contains(html, `id="scan-overwrite-wrap"`) {
-		t.Fatal("overwrite wrap")
+	if strings.Contains(html, `value="nfo"`) || strings.Contains(html, `name="persist"`) || strings.Contains(html, `name="overwrite"`) {
+		t.Fatal("library scan dialog still exposes nfo or sidecar checkboxes")
 	}
 }
 
@@ -303,9 +303,17 @@ func TestParseScanProgress(t *testing.T) {
 	if match.Phase != "match" || match.Title != "dark matter" || len(match.Stats) != 4 || match.Stats[0].Value != 185 || match.Stats[3].Tone != "error" {
 		t.Fatalf("match %#v", match)
 	}
+	full := parseScanProgress("match 12/40 matched:9 manual:2 unmatched:1 error:0 sidecar:4 replay:3 folded:6 Cowboy Bebop")
+	if full.Title != "Cowboy Bebop" || len(full.Stats) != 7 || full.Stats[4].Label != "sidecar" || full.Stats[4].Value != 4 || full.Stats[5].Label != "replay" || full.Stats[6].Value != 6 || full.Stats[6].Tone != "folded" {
+		t.Fatalf("full match %#v", full)
+	}
 	fetch := parseScanProgress("fetch 185/185 nfo:2467 poster:183 somali and the forest spirit")
 	if fetch.Phase != "fetch" || len(fetch.Stats) != 2 || fetch.Stats[0].Label != "nfo" || fetch.Stats[0].Value != 2467 || fetch.Stats[1].Value != 183 {
 		t.Fatalf("fetch %#v", fetch)
+	}
+	withEp := parseScanProgress("fetch 3/10 nfo:1 episode:12 poster:2 Show")
+	if withEp.Title != "Show" || len(withEp.Stats) != 3 || withEp.Stats[0].Label != "nfo" || withEp.Stats[0].Value != 1 || withEp.Stats[1].Label != "episode" || withEp.Stats[1].Value != 12 || withEp.Stats[2].Label != "poster" || withEp.Stats[2].Value != 2 {
+		t.Fatalf("fetch with episode %#v", withEp)
 	}
 	open := parseScanProgress("fetch 40 nfo:510 poster:38 other title")
 	if open.Done != 40 || open.Total != 0 || open.Title != "other title" || open.Stats[0].Value != 510 {
@@ -415,11 +423,11 @@ func TestHomeAddLibraryScanModes(t *testing.T) {
 	if !strings.Contains(html, `id="add-library-scan-mode"`) {
 		t.Fatal("add-library mode")
 	}
-	if !strings.Contains(html, `value="nfo"`) || !strings.Contains(html, `value="rescan"`) || !strings.Contains(html, `value="changes"`) || !strings.Contains(html, `value="missing"`) {
-		t.Fatal("add-library mode values")
+	if strings.Contains(html, `value="nfo"`) || strings.Contains(html, `name="persist"`) || strings.Contains(html, `name="overwrite"`) {
+		t.Fatal("add-library still exposes nfo or sidecar checkboxes")
 	}
-	if !strings.Contains(html, `id="add-library-overwrite-wrap"`) {
-		t.Fatal("add-library overwrite")
+	if !strings.Contains(html, `value="rescan"`) || !strings.Contains(html, `value="changes"`) || !strings.Contains(html, `value="missing"`) {
+		t.Fatal("add-library mode values")
 	}
 	if !strings.Contains(html, `value="changes" selected`) {
 		t.Fatal("changes selected when ready")

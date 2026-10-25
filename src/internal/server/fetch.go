@@ -45,6 +45,22 @@ func (s *Server) handleMatchGet(w http.ResponseWriter, r *http.Request) {
 	}
 	job = mergePickerSnapshot(job, it)
 	if len(pickerCandidates(job)) == 0 {
+		if searched, ok := s.searchMatchCandidates(r, it); ok {
+			it = searched
+			session = ""
+			if it.MatchMediaSessionID.Valid {
+				session = strings.TrimSpace(it.MatchMediaSessionID.String)
+			}
+			job = matchmedia.Job{}
+			if s.Meta != nil && it.MatchMediaJobID.Valid && it.MatchMediaJobID.String != "" && session != "" {
+				if j, err := s.Meta.Job(session, it.MatchMediaJobID.String); err == nil {
+					job = j
+				}
+			}
+			job = mergePickerSnapshot(job, it)
+		}
+	}
+	if len(pickerCandidates(job)) == 0 {
 		jobErr = "no MatchMedia job for this title — rescan to match again"
 	}
 	if s.Meta != nil {
@@ -128,6 +144,33 @@ func mergePickerSnapshot(job matchmedia.Job, it *db.MediaItem) matchmedia.Job {
 		job.Candidates = snap.Candidates
 	}
 	return job
+}
+
+// searchMatchCandidates runs the same title search as the scan overlay when the picker has nothing stored.
+func (s *Server) searchMatchCandidates(r *http.Request, it *db.MediaItem) (*db.MediaItem, bool) {
+	if s == nil || s.Fetch == nil || s.DB == nil || it == nil {
+		return it, false
+	}
+	title := strings.TrimSpace(it.Title)
+	if title == "" {
+		return it, false
+	}
+	u := userFrom(r)
+	if u == nil {
+		return it, false
+	}
+	lib, err := s.DB.GetLibrary(r.Context(), u.ID, it.LibraryID)
+	if err != nil || lib == nil {
+		return it, false
+	}
+	if err := s.Fetch.MatchItem(r.Context(), lib, it, fetch.Opts{QueryTitle: title, ScanMode: "rescan"}); err != nil {
+		return it, false
+	}
+	fresh, err := s.DB.GetMediaItem(r.Context(), it.ID)
+	if err != nil || fresh == nil {
+		return it, false
+	}
+	return fresh, true
 }
 
 // RefreshFetchConfig re-syncs the MatchMedia-backed fetch worker after config save / reopen.

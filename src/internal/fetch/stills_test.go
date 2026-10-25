@@ -75,7 +75,7 @@ func TestExtractMovieStillDoesNotClobberShowPoster(t *testing.T) {
 	if err != nil || film == nil || (film.PosterPath.Valid && film.PosterPath.String != "") {
 		t.Fatalf("extracted frame stored as title poster %#v %v", film, err)
 	}
-	still := filepath.Join(store, "metadata", "movies", "Legend of Crimson", "still.jpg")
+	still := filepath.Join(filepath.Dir(moviePath), "Legend of Crimson-thumb.jpg")
 	if _, err := os.Stat(still); err != nil {
 		t.Fatalf("movie still: %v", err)
 	}

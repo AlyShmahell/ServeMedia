@@ -29,7 +29,7 @@ type NumberedEpisode struct {
 // numbers (MatchMedia files[]). Only positive season and episode numbers count.
 func (w *Worker) IngestNumberedEpisodes(ctx context.Context, showID int64, eps []NumberedEpisode) error {
 	for _, ep := range eps {
-		path := strings.TrimSpace(ep.Path)
+		path := cleanMediaPath(ep.Path)
 		if path == "" || !metadata.IsVideo(filepath.Base(path)) {
 			continue
 		}
@@ -57,9 +57,8 @@ func (w *Worker) ingestEpisodeAt(ctx context.Context, showID int64, path string,
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	epPlot := ""
 	runtime := 0
-	nfoRel := ""
-	nfoSrc := metadata.FindSidecar(dir, base, "episode.nfo", base+".nfo")
-	if nfoSrc != "" {
+	nfoPath := ""
+	if nfoSrc := metadata.FindSidecar(dir, base, "episode.nfo", base+".nfo"); nfoSrc != "" {
 		if n, err := metadata.ReadEpisodeNFO(nfoSrc); err == nil {
 			if n.Title != "" {
 				title = n.Title
@@ -67,27 +66,20 @@ func (w *Worker) ingestEpisodeAt(ctx context.Context, showID int64, path string,
 			epPlot = n.Plot
 			runtime = n.Runtime
 		}
-		show, _ := w.DB.GetMediaItem(ctx, showID)
-		showKey := "show"
-		if show != nil {
-			showKey = metadata.SanitizePathSegment(show.Title)
-		}
-		nfoRel = filepath.Join("metadata", "tv", showKey, fmt.Sprintf("S%02d", season), base+".nfo")
-		_ = metadata.CopyFile(nfoSrc, filepath.Join(w.Store, nfoRel))
+		nfoPath = nfoSrc
 	}
-	stillRel := ""
-	if p := metadata.FindSidecar(dir, base, "thumb.jpg", "thumb.png", base+"-thumb.jpg", base+".jpg", base+".png"); p != "" {
-		show, _ := w.DB.GetMediaItem(ctx, showID)
-		showKey := "show"
-		if show != nil {
-			showKey = metadata.SanitizePathSegment(show.Title)
+	stillPath := metadata.FindSidecar(dir, base, "thumb.jpg", "thumb.png", base+"-thumb.jpg", base+".jpg", base+".png")
+	if nfoPath == "" || stillPath == "" {
+		if prevID, err := w.DB.EpisodeIDByPath(ctx, path); err == nil && prevID > 0 {
+			if prev, err := w.DB.GetEpisode(ctx, prevID); err == nil && prev != nil {
+				if nfoPath == "" && prev.NFOPath.Valid {
+					nfoPath = prev.NFOPath.String
+				}
+				if stillPath == "" && prev.StillPath.Valid {
+					stillPath = prev.StillPath.String
+				}
+			}
 		}
-		ext := filepath.Ext(p)
-		if ext == "" {
-			ext = ".jpg"
-		}
-		stillRel = filepath.Join("metadata", "tv", showKey, fmt.Sprintf("S%02d", season), base+"-thumb"+ext)
-		_ = metadata.CopyFile(p, filepath.Join(w.Store, stillRel))
 	}
 	existed, _ := w.DB.EpisodeExistsAtPath(ctx, showID, path)
 	id, err := w.DB.UpsertEpisode(ctx, db.Episode{
@@ -98,8 +90,8 @@ func (w *Worker) ingestEpisodeAt(ctx context.Context, showID int64, path string,
 		Path:           path,
 		RuntimeSeconds: nullInt(runtime),
 		Plot:           sql.NullString{String: epPlot, Valid: epPlot != ""},
-		StillPath:      sql.NullString{String: stillRel, Valid: stillRel != ""},
-		NFOPath:        sql.NullString{String: nfoRel, Valid: nfoRel != ""},
+		StillPath:      sql.NullString{String: stillPath, Valid: stillPath != ""},
+		NFOPath:        sql.NullString{String: nfoPath, Valid: nfoPath != ""},
 		Mtime:          info.ModTime().Unix(),
 	})
 	if err == nil && !existed && w.Webhooks != nil {
@@ -141,18 +133,32 @@ func (w *Worker) ensureSeason(ctx context.Context, showID int64, seasonNum int, 
 			}
 		}
 	}
-	showKey := "show"
-	if show != nil {
-		showKey = metadata.SanitizePathSegment(show.Title)
+	poster := findSeasonPoster(seasonDir, showRoot, seasonNum)
+	if title == "" {
+		existing, _ := w.DB.GetSeasonByShowNum(ctx, showID, seasonNum)
+		if existing == nil {
+			if seasonNum == 0 {
+				title = "Specials"
+			} else {
+				title = fmt.Sprintf("Season %d", seasonNum)
+			}
+		}
 	}
-	posterRel := ""
-	posterDirs := []string{seasonDir}
+	return w.DB.UpsertSeason(ctx, showID, seasonNum, title, poster, plot)
+}
+
+// findSeasonPoster returns the season artwork already beside the media.
+func findSeasonPoster(seasonDir, showRoot string, seasonNum int) string {
+	dirs := []string{seasonDir}
 	if showRoot != "" && filepath.Clean(showRoot) != filepath.Clean(seasonDir) {
-		posterDirs = append(posterDirs, showRoot)
+		dirs = append(dirs, showRoot)
 	}
 	base := fmt.Sprintf("season%02d", seasonNum)
 	baseAlt := fmt.Sprintf("season%d", seasonNum)
-	for _, dir := range posterDirs {
+	for _, dir := range dirs {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
 		p := metadata.FindSidecar(dir, base, "poster.jpg", "folder.jpg", "poster.png", "folder.png")
 		if p == "" {
 			p = metadata.FindSidecar(dir, baseAlt, "poster.jpg", "folder.jpg", "poster.png", "folder.png")
@@ -170,22 +176,10 @@ func (w *Worker) ensureSeason(ctx context.Context, showID int64, seasonNum int, 
 			}
 		}
 		if p != "" {
-			posterRel = filepath.Join("metadata", "tv", showKey, fmt.Sprintf("S%02d", seasonNum), "poster"+filepath.Ext(p))
-			_ = metadata.CopyFile(p, filepath.Join(w.Store, posterRel))
-			break
+			return p
 		}
 	}
-	if title == "" {
-		existing, _ := w.DB.GetSeasonByShowNum(ctx, showID, seasonNum)
-		if existing == nil {
-			if seasonNum == 0 {
-				title = "Specials"
-			} else {
-				title = fmt.Sprintf("Season %d", seasonNum)
-			}
-		}
-	}
-	return w.DB.UpsertSeason(ctx, showID, seasonNum, title, posterRel, plot)
+	return ""
 }
 
 func nullInt(y int) sql.NullInt64 {

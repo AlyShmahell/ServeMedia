@@ -1,5 +1,6 @@
-# github.com/alyshmahell/matchmedia/src v0.0.0-20261016080808-9900acc5752f
+# github.com/alyshmahell/matchmedia/src v0.0.0-20261025203458-de28fe9d3c3c
 ## explicit; go 1.26
+github.com/alyshmahell/matchmedia/src/mod/clean
 github.com/alyshmahell/matchmedia/src/mod/config
 github.com/alyshmahell/matchmedia/src/mod/engine/group
 github.com/alyshmahell/matchmedia/src/mod/engine/rank

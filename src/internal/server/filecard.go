@@ -1,6 +1,7 @@
 package server
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -60,14 +61,103 @@ func folderWatch(files []db.FileWatch, rel string) (watched, total, pct int) {
 }
 
 func fileTitle(node db.LibraryNode, side sideNFO) string {
-	title := strings.TrimSpace(node.FileTitle.String)
-	if title == "" {
-		title = strings.TrimSpace(side.Title)
+	if title := strings.TrimSpace(side.Title); title != "" {
+		return stripVideoExt(title)
 	}
-	if title == "" {
-		title = node.Name
+	if title := strings.TrimSpace(node.FileTitle.String); title != "" {
+		return stripVideoExt(title)
 	}
-	return stripVideoExt(title)
+	return stripVideoExt(node.Name)
+}
+
+// folderDisplayTitle prefers a sidecar NFO title, then a stored match title, then the folder name.
+func folderDisplayTitle(dir, name string, mmTitle, mmYear sql.NullString, seasonNum int) string {
+	if t := folderNFOTitle(dir, seasonNum); t != "" {
+		return t
+	}
+	title := name
+	if mmTitle.Valid {
+		if t := strings.TrimSpace(mmTitle.String); t != "" {
+			title = t
+			if mmYear.Valid {
+				if y := strings.TrimSpace(mmYear.String); y != "" && !strings.Contains(title, "("+y+")") {
+					title += " (" + y + ")"
+				}
+			}
+		}
+	}
+	return title
+}
+
+func folderNFOTitle(dir string, seasonNum int) string {
+	if strings.TrimSpace(dir) == "" {
+		return ""
+	}
+	if t := showOrMovieNFOTitle(filepath.Join(dir, "tvshow.nfo")); t != "" {
+		return t
+	}
+	if t := showOrMovieNFOTitle(filepath.Join(dir, "movie.nfo")); t != "" {
+		return t
+	}
+	if seasonNum <= 0 {
+		seasonNum = seasonNumberFromName(filepath.Base(dir))
+	}
+	if p := metadata.FindSeasonNFO(dir, seasonNum); p != "" {
+		if n, err := metadata.ReadSeasonNFO(p); err == nil && n != nil {
+			if t := strings.TrimSpace(n.Title); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
+func showOrMovieNFOTitle(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil || len(bytesTrim(b)) == 0 {
+		return ""
+	}
+	low := strings.ToLower(string(b))
+	if strings.Contains(low, "<tvshow") {
+		n, err := metadata.ReadTVShowNFO(path)
+		if err != nil || n == nil {
+			return ""
+		}
+		return strings.TrimSpace(n.Title)
+	}
+	if strings.Contains(low, "<movie") {
+		n, err := metadata.ReadMovieNFO(path)
+		if err != nil || n == nil {
+			return ""
+		}
+		return strings.TrimSpace(n.Title)
+	}
+	return ""
+}
+
+func seasonNumberFromName(name string) int {
+	name = strings.ToLower(strings.TrimSpace(name))
+	i := strings.Index(name, "season")
+	if i < 0 {
+		return 0
+	}
+	rest := strings.TrimSpace(name[i+len("season"):])
+	n := 0
+	seen := false
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			if seen {
+				break
+			}
+			continue
+		}
+		seen = true
+		n = n*10 + int(r-'0')
+	}
+	if !seen {
+		return 0
+	}
+	return n
 }
 
 func isShowKind(kind string) bool {

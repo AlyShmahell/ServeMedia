@@ -54,9 +54,11 @@ type ScanProgress struct {
 }
 
 type JobFile struct {
-	Path    string `json:"path"`
-	Season  string `json:"season,omitempty"`
-	Episode string `json:"episode,omitempty"`
+	Path       string `json:"path"`
+	Season     string `json:"season,omitempty"`
+	Episode    string `json:"episode,omitempty"`
+	NFOPath    string `json:"nfo_path,omitempty"`
+	PosterPath string `json:"poster_path,omitempty"`
 }
 
 type Job struct {
@@ -66,49 +68,69 @@ type Job struct {
 	Year       string      `json:"year,omitempty"`
 	Parent     string      `json:"parent,omitempty"`
 	Path       string      `json:"path,omitempty"`
+	NFOPath    string      `json:"nfo_path,omitempty"`
+	PosterPath string      `json:"poster_path,omitempty"`
 	Kind       string      `json:"kind,omitempty"`
 	Role       string      `json:"role,omitempty"`
 	CatalogFor string      `json:"catalog_for,omitempty"`
 	Files      []JobFile   `json:"files,omitempty"`
+	Ngrams     int         `json:"ngrams,omitempty"`
 	Status     string      `json:"status"`
 	Error      string      `json:"error,omitempty"`
 	Match      *Candidate  `json:"match,omitempty"`
 	Candidates []Candidate `json:"candidates,omitempty"`
 	Catalog    []Season    `json:"catalog,omitempty"`
 	Ranker     string      `json:"ranker,omitempty"`
+	Requests   []Request   `json:"requests,omitempty"`
+}
+
+// Request is one provider call stored in a title NFO or returned on a hit.
+type Request struct {
+	Section  string `json:"section,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	NFO      string `json:"nfo,omitempty"`
+	URL      string `json:"url,omitempty"`
+	Query    string `json:"query,omitempty"`
+	Season   string `json:"season,omitempty"`
 }
 
 type Candidate struct {
-	Provider string  `json:"provider"`
-	ID       string  `json:"id"`
-	Title    string  `json:"title"`
-	Year     string  `json:"year,omitempty"`
-	Score    float64 `json:"score,omitempty"`
-	Jaccard  float64 `json:"jaccard,omitempty"`
-	Synopsis string  `json:"synopsis,omitempty"`
-	Poster   string  `json:"poster,omitempty"`
+	Provider string            `json:"provider"`
+	ID       string            `json:"id"`
+	Title    string            `json:"title"`
+	Year     string            `json:"year,omitempty"`
+	Score    float64           `json:"score,omitempty"`
+	Jaccard  float64           `json:"jaccard,omitempty"`
+	Synopsis string            `json:"synopsis,omitempty"`
+	Poster   string            `json:"poster,omitempty"`
+	Attrs    map[string]string `json:"attrs,omitempty"`
+	Requests []Request         `json:"requests,omitempty"`
 }
 
 // UnmarshalJSON accepts both the stored picker names (provider, id) and
 // MatchMedia's exported field names (Provider, ID).
 func (c *Candidate) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		Provider  string  `json:"provider"`
-		Provider2 string  `json:"Provider"`
-		ID        string  `json:"id"`
-		ID2       string  `json:"ID"`
-		Title     string  `json:"title"`
-		Title2    string  `json:"Title"`
-		Year      string  `json:"year"`
-		Year2     string  `json:"Year"`
-		Score     float64 `json:"score"`
-		Score2    float64 `json:"Score"`
-		Jaccard   float64 `json:"jaccard"`
-		Jaccard2  float64 `json:"Jaccard"`
-		Synopsis  string  `json:"synopsis"`
-		Synopsis2 string  `json:"Synopsis"`
-		Poster    string  `json:"poster"`
-		Poster2   string  `json:"Poster"`
+		Provider  string            `json:"provider"`
+		Provider2 string            `json:"Provider"`
+		ID        string            `json:"id"`
+		ID2       string            `json:"ID"`
+		Title     string            `json:"title"`
+		Title2    string            `json:"Title"`
+		Year      string            `json:"year"`
+		Year2     string            `json:"Year"`
+		Score     float64           `json:"score"`
+		Score2    float64           `json:"Score"`
+		Jaccard   float64           `json:"jaccard"`
+		Jaccard2  float64           `json:"Jaccard"`
+		Synopsis  string            `json:"synopsis"`
+		Synopsis2 string            `json:"Synopsis"`
+		Poster    string            `json:"poster"`
+		Poster2   string            `json:"Poster"`
+		Attrs     map[string]string `json:"attrs"`
+		Attrs2    map[string]string `json:"Attrs"`
+		Requests  []Request         `json:"requests"`
+		Requests2 []Request         `json:"Requests"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -127,6 +149,41 @@ func (c *Candidate) UnmarshalJSON(b []byte) error {
 	}
 	c.Synopsis = firstNonEmpty(raw.Synopsis, raw.Synopsis2)
 	c.Poster = firstNonEmpty(raw.Poster, raw.Poster2)
+	c.Attrs = raw.Attrs
+	if len(c.Attrs) == 0 {
+		c.Attrs = raw.Attrs2
+	}
+	c.Requests = raw.Requests
+	if len(c.Requests) == 0 {
+		c.Requests = raw.Requests2
+	}
+	return nil
+}
+
+func (r *Request) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Section   string `json:"section"`
+		Section2  string `json:"Section"`
+		Provider  string `json:"provider"`
+		Provider2 string `json:"Provider"`
+		NFO       string `json:"nfo"`
+		NFO2      string `json:"NFO"`
+		URL       string `json:"url"`
+		URL2      string `json:"URL"`
+		Query     string `json:"query"`
+		Query2    string `json:"Query"`
+		Season    string `json:"season"`
+		Season2   string `json:"Season"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	r.Section = firstNonEmpty(raw.Section, raw.Section2)
+	r.Provider = firstNonEmpty(raw.Provider, raw.Provider2)
+	r.NFO = firstNonEmpty(raw.NFO, raw.NFO2)
+	r.URL = firstNonEmpty(raw.URL, raw.URL2)
+	r.Query = firstNonEmpty(raw.Query, raw.Query2)
+	r.Season = firstNonEmpty(raw.Season, raw.Season2)
 	return nil
 }
 
@@ -138,14 +195,15 @@ func firstNonEmpty(a, b string) string {
 }
 
 type Catalog struct {
-	Provider string   `json:"provider"`
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Year     string   `json:"year,omitempty"`
-	Type     string   `json:"type"`
-	Synopsis string   `json:"synopsis,omitempty"`
-	Poster   string   `json:"poster,omitempty"`
-	Seasons  []Season `json:"seasons,omitempty"`
+	Provider string            `json:"provider"`
+	ID       string            `json:"id"`
+	Title    string            `json:"title"`
+	Year     string            `json:"year,omitempty"`
+	Type     string            `json:"type"`
+	Synopsis string            `json:"synopsis,omitempty"`
+	Poster   string            `json:"poster,omitempty"`
+	Attrs    map[string]string `json:"attrs,omitempty"`
+	Seasons  []Season          `json:"seasons,omitempty"`
 }
 
 type Season struct {
@@ -163,6 +221,8 @@ type Episode struct {
 	Synopsis string   `json:"synopsis,omitempty"`
 	Poster   string   `json:"poster,omitempty"`
 	Year     string   `json:"year,omitempty"`
+	Runtime  string   `json:"runtime,omitempty"`
+	Aired    string   `json:"aired,omitempty"`
 	Path     string   `json:"path,omitempty"`
 	Paths    []string `json:"paths,omitempty"`
 }

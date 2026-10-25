@@ -1,5 +1,5 @@
-github.com/alyshmahell/matchmedia/src v0.0.0-20261016080808-9900acc5752f h1:H7Pi8hVp5zsBcaN9Y9A9P6zoujKAk3kENjSJqI8ZbIY=
-github.com/alyshmahell/matchmedia/src v0.0.0-20261016080808-9900acc5752f/go.mod h1:aZ617aRTr/NphkvjlBiLwyHt5tBsVaQfuk+eIWgqs0M=
+github.com/alyshmahell/matchmedia/src v0.0.0-20261025203458-de28fe9d3c3c h1:eSKsv5fSeLMRlVCRM05juLX7q3WL5/b4Av7w0iMUkVQ=
+github.com/alyshmahell/matchmedia/src v0.0.0-20261025203458-de28fe9d3c3c/go.mod h1:aZ617aRTr/NphkvjlBiLwyHt5tBsVaQfuk+eIWgqs0M=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/go-chi/chi/v5 v5.2.1 h1:KOIHODQj58PmL80G2Eak4WdvUzjSJSm0vG72crDCqb8=

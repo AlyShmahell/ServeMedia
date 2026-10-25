@@ -30,20 +30,6 @@ func navFor(name string, data map[string]any) (title, back string) {
 			back = libraryFolderBack(int64FromData(data["LibraryID"]), stringFromData(data["Folder"]))
 		}
 		return title, back
-	case "about.html":
-		return "About", "/"
-	case "support.html":
-		return "Support", "/"
-	case "settings.html":
-		return "Settings", "/"
-	case "settings_engines.html":
-		return "Engines", "/settings"
-	case "settings_integrations.html":
-		return "Integrations", "/settings"
-	case "settings_backup.html":
-		return "Backup", "/settings"
-	case "settings_users.html":
-		return "Users", "/settings"
 	}
 	return "", ""
 }

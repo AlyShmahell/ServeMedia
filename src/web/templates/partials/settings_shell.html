@@ -1,0 +1,14 @@
+{{define "partials/settings_shell.html"}}
+<div class="settings-modal-layout">
+  <header class="modal-head">
+    <h2>Settings</h2>
+    <button type="button" class="btn-icon secondary" id="settings-modal-close" aria-label="Close">×</button>
+  </header>
+  <div class="settings-page">
+    {{template "partials/settings_nav.html" .}}
+    <div class="settings-panel" id="settings-panel">
+      {{template "partials/settings_panel.html" .}}
+    </div>
+  </div>
+</div>
+{{end}}

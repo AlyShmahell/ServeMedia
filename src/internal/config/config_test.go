@@ -6,6 +6,16 @@ import (
 	"github.com/alyshmahell/servemedia/src/internal/config"
 )
 
+func TestDefaultsBooleansOff(t *testing.T) {
+	c := config.Defaults()
+	if c.Backup.Enabled || c.Scan.OnStartup {
+		t.Fatalf("enabled %v startup %v", c.Backup.Enabled, c.Scan.OnStartup)
+	}
+	if c.Watchdog.TTLSeconds != 60 || c.Transcode.HWAccel != "auto" {
+		t.Fatalf("defaults %+v", c)
+	}
+}
+
 func TestEnsureIntegrationDefaults(t *testing.T) {
 	cfg := config.Defaults()
 	if !cfg.EnsureIntegrationDefaults() {

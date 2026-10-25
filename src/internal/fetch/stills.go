@@ -174,17 +174,8 @@ func (w *Worker) stampFileStill(ctx context.Context, lib *db.Library, filePath, 
 }
 
 func (w *Worker) extractMovieStill(ctx context.Context, lib *db.Library, it *db.MediaItem, persist bool) error {
-	year := 0
-	if it.Year.Valid {
-		year = int(it.Year.Int64)
-	}
-	cacheKey := metadata.SanitizePathSegment(metadata.TitleYear(it.Title, year))
-	if cacheKey == "" {
-		cacheKey = metadata.SanitizePathSegment(strings.TrimSuffix(filepath.Base(it.Path), filepath.Ext(it.Path)))
-	}
-	cacheDir := filepath.Join(w.Store, "metadata", "movies", cacheKey)
-	dst := filepath.Join(cacheDir, "still.jpg")
-	stillRel := filepath.Join("metadata", "movies", cacheKey, "still.jpg")
+	base := strings.TrimSuffix(filepath.Base(it.Path), filepath.Ext(it.Path))
+	dst := filepath.Join(filepath.Dir(it.Path), base+"-thumb.jpg")
 	if !stillFileOK(dst) {
 		if err := extractStill(it.Path, dst); err != nil {
 			log.Printf("still %s: %v", it.Path, err)
@@ -194,22 +185,17 @@ func (w *Worker) extractMovieStill(ctx context.Context, lib *db.Library, it *db.
 			return nil
 		}
 	}
-	if persist {
-		mediaDir := filepath.Dir(it.Path)
-		base := strings.TrimSuffix(filepath.Base(it.Path), filepath.Ext(it.Path))
-		_ = copyIfAbsent(dst, filepath.Join(mediaDir, base+"-thumb.jpg"))
-	}
-	w.stampFileStill(ctx, lib, it.Path, stillRel)
+	w.stampFileStill(ctx, lib, it.Path, dst)
+	_ = persist
 	return nil
 }
 
 func (w *Worker) extractEpisodeStill(ctx context.Context, lib *db.Library, show *db.MediaItem, season *db.Season, ep *db.Episode, persist bool) error {
-	showKey := metadata.SanitizePathSegment(show.Title)
-	seasonDir := fmt.Sprintf("S%02d", season.SeasonNumber)
-	cacheDir := filepath.Join(w.Store, "metadata", "tv", showKey, seasonDir)
 	base := strings.TrimSuffix(filepath.Base(ep.Path), filepath.Ext(ep.Path))
-	dst := filepath.Join(cacheDir, base+"-thumb.jpg")
-	stillRel := filepath.Join("metadata", "tv", showKey, seasonDir, base+"-thumb.jpg")
+	dst := strings.TrimSpace(ep.StillPath.String)
+	if !filepath.IsAbs(dst) {
+		dst = filepath.Join(filepath.Dir(ep.Path), base+"-thumb.jpg")
+	}
 	if !stillFileOK(dst) {
 		if err := extractStill(ep.Path, dst); err != nil {
 			log.Printf("still %s: %v", ep.Path, err)
@@ -219,13 +205,13 @@ func (w *Worker) extractEpisodeStill(ctx context.Context, lib *db.Library, show 
 			return nil
 		}
 	}
-	if persist {
-		_ = copyIfAbsent(dst, filepath.Join(filepath.Dir(ep.Path), base+"-thumb.jpg"))
-	}
-	if err := w.DB.UpdateEpisodeMeta(ctx, ep.ID, "", "", stillRel, "", "", ""); err != nil {
+	if err := w.DB.UpdateEpisodeMeta(ctx, ep.ID, "", "", dst, "", "", ""); err != nil {
 		return err
 	}
-	w.stampFileStill(ctx, lib, ep.Path, stillRel)
+	w.stampFileStill(ctx, lib, ep.Path, dst)
+	_ = show
+	_ = season
+	_ = persist
 	return nil
 }
 

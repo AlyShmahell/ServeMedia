@@ -5,12 +5,12 @@
 <h1 align="center">ServeMedia</h1>
 
 <p align="justified">
-<b>ServeMedia</b> is <it>The Self-Hosted Media-Server for Linux</it>. It is built around a core application called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. <b>ServeMedia</b> is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. <b>ServeMedia</b> provides a desktop entry which starts its services then opens the browser pointed to its webpage (port <b>7676</b>), which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback.
+<b>ServeMedia</b> is <it>The Self-Hosted Media-Server for Linux</it>. It is built around a core module called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. <b>ServeMedia</b> is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. <b>ServeMedia</b> provides a desktop entry which starts its services then opens the browser pointed at its webpage, which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback.
 </p>
 
 > [!WARNING]
 > ServeMedia is currently in Beta, users might face some breaking bugs or incomplete functionality.
-> Work is being done to remedy any issues, please feel free to open up [issues on github](https://github.com/AlyShmahell/ServeMedia/issues )
+> Work is being done to remedy any problems, please feel free to open up [issues on github](https://github.com/AlyShmahell/ServeMedia/issues )
 
 ## Requirements
 
@@ -46,10 +46,14 @@ curl -fL https://github.com/AlyShmahell/ServeMedia/releases/latest/download/serv
 ```
 
 ## Start
-
-- Desktop entry, `flatpak run eu.alyshmahell.ServeMedia`, or `servemedia`
-- Browser opens on port **7676** (`SERVEMEDIA_NO_BROWSER=1` skips that)
-- A second start opens the app and exits if ServeMedia is already listening
+### As a Desktop Application
+- Desktop entry or in a terminal `flatpak run eu.alyshmahell.ServeMedia`
+### As a Server Application
+- in a terminal `servemedia`
+- `--host` sets the bind address. Unset listens on every interface. `--port` sets the port. Unset uses `7676`, and a busy `7676` asks the kernel for another port. `--host 127.0.0.1`, `localhost`, or `::1` listens only on this computer.
+- The browser opens on `http://127.0.0.1:<port>` (`SERVEMEDIA_NO_BROWSER=1` skips that).
+- Other machines on the LAN use `http://<lan-ip>:<port>`. The firewall has to allow that port from the LAN.
+- A second start finds the running process on its Unix socket, opens the app, and exits
 - First visit is `/register` and creates the **admin**; after that `/register` is gone
 - Other users: Settings → Users
 

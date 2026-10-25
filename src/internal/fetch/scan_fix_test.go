@@ -124,6 +124,10 @@ func TestDirectoryNodeKeepsJobPoster(t *testing.T) {
 	if err := os.WriteFile(epPath, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	posterPath := filepath.Join(showDir, "poster.jpg")
+	if err := os.WriteFile(posterPath, []byte("poster"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +141,7 @@ func TestDirectoryNodeKeepsJobPoster(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]map[string]any{{
 			"id": "job-show", "status": "matched", "kind": "show", "path": showDir, "source": "scan",
-			"title": "Cool Show", "year": "2020",
+			"title": "Cool Show", "year": "2020", "poster_path": posterPath,
 			"files": []map[string]any{{"path": epPath, "season": "1", "episode": "1"}},
 			"match": map[string]any{
 				"provider": "tvmaze", "id": "22", "title": "Cool Show", "year": "2020",
@@ -176,10 +180,10 @@ func TestDirectoryNodeKeepsJobPoster(t *testing.T) {
 	if title != "Cool Show" || year != "2020" {
 		t.Fatalf("card meta %q %q", title, year)
 	}
-	if poster == "" || strings.HasPrefix(poster, "http") || strings.HasPrefix(poster, "/v1/") {
+	if poster != posterPath {
 		t.Fatalf("poster %q", poster)
 	}
-	if _, err := os.Stat(filepath.Join(store, poster)); err != nil {
+	if _, err := os.Stat(poster); err != nil {
 		t.Fatalf("poster file %q: %v", poster, err)
 	}
 }

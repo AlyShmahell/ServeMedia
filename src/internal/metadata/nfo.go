@@ -15,6 +15,13 @@ type NFOActor struct {
 	Role string `xml:"role"`
 }
 
+// NFOUniqueID is the provider id stored in a movie or show NFO.
+type NFOUniqueID struct {
+	Type    string `xml:"type,attr,omitempty"`
+	Default string `xml:"default,attr,omitempty"`
+	Value   string `xml:",chardata"`
+}
+
 type NFORating struct {
 	Name  string  `xml:"name,attr"`
 	Max   float64 `xml:"max,attr"`
@@ -23,48 +30,58 @@ type NFORating struct {
 }
 
 type MovieNFO struct {
-	XMLName       xml.Name    `xml:"movie"`
-	Title         string      `xml:"title"`
-	OriginalTitle string      `xml:"originaltitle"`
-	SortTitle     string      `xml:"sorttitle"`
-	Year          int         `xml:"year"`
-	Plot          string      `xml:"plot"`
-	Outline       string      `xml:"outline"`
-	Tagline       string      `xml:"tagline"`
-	Runtime       int         `xml:"runtime"`
-	Rating        float64     `xml:"rating"`
-	Ratings       []NFORating `xml:"ratings>rating"`
-	MPAA          string      `xml:"mpaa"`
-	Genre         []string    `xml:"genre"`
-	Studio        []string    `xml:"studio"`
-	Country       []string    `xml:"country"`
-	Premiered     string      `xml:"premiered"`
-	Director      []string    `xml:"director"`
-	Credits       []string    `xml:"credits"`
-	Actor         []NFOActor  `xml:"actor"`
+	XMLName       xml.Name     `xml:"movie"`
+	Title         string       `xml:"title"`
+	OriginalTitle string       `xml:"originaltitle"`
+	SortTitle     string       `xml:"sorttitle"`
+	Year          int          `xml:"year"`
+	Plot          string       `xml:"plot"`
+	Outline       string       `xml:"outline"`
+	Tagline       string       `xml:"tagline"`
+	Runtime       int          `xml:"runtime"`
+	Rating        float64      `xml:"rating"`
+	Ratings       []NFORating  `xml:"ratings>rating"`
+	MPAA          string       `xml:"mpaa"`
+	Genre         []string     `xml:"genre"`
+	Studio        []string     `xml:"studio"`
+	Country       []string     `xml:"country"`
+	Premiered     string       `xml:"premiered"`
+	Language      string       `xml:"language,omitempty"`
+	Ended         string       `xml:"ended,omitempty"`
+	EndDate       string       `xml:"enddate,omitempty"`
+	Network       []string     `xml:"network,omitempty"`
+	Director      []string     `xml:"director"`
+	Credits       []string     `xml:"credits"`
+	Actor         []NFOActor   `xml:"actor"`
+	UniqueID      *NFOUniqueID `xml:"uniqueid,omitempty"`
 }
 
 type TVShowNFO struct {
-	XMLName       xml.Name    `xml:"tvshow"`
-	Title         string      `xml:"title"`
-	OriginalTitle string      `xml:"originaltitle"`
-	SortTitle     string      `xml:"sorttitle"`
-	Year          int         `xml:"year"`
-	Plot          string      `xml:"plot"`
-	Outline       string      `xml:"outline"`
-	Tagline       string      `xml:"tagline"`
-	Runtime       int         `xml:"runtime"`
-	Rating        float64     `xml:"rating"`
-	Ratings       []NFORating `xml:"ratings>rating"`
-	MPAA          string      `xml:"mpaa"`
-	Genre         []string    `xml:"genre"`
-	Studio        []string    `xml:"studio"`
-	Country       []string    `xml:"country"`
-	Premiered     string      `xml:"premiered"`
-	Aired         string      `xml:"aired"`
-	Director      []string    `xml:"director"`
-	Credits       []string    `xml:"credits"`
-	Actor         []NFOActor  `xml:"actor"`
+	XMLName       xml.Name     `xml:"tvshow"`
+	Title         string       `xml:"title"`
+	OriginalTitle string       `xml:"originaltitle"`
+	SortTitle     string       `xml:"sorttitle"`
+	Year          int          `xml:"year"`
+	Plot          string       `xml:"plot"`
+	Outline       string       `xml:"outline"`
+	Tagline       string       `xml:"tagline"`
+	Runtime       int          `xml:"runtime"`
+	Rating        float64      `xml:"rating"`
+	Ratings       []NFORating  `xml:"ratings>rating"`
+	MPAA          string       `xml:"mpaa"`
+	Genre         []string     `xml:"genre"`
+	Studio        []string     `xml:"studio"`
+	Country       []string     `xml:"country"`
+	Premiered     string       `xml:"premiered"`
+	Language      string       `xml:"language,omitempty"`
+	Ended         string       `xml:"ended,omitempty"`
+	EndDate       string       `xml:"enddate,omitempty"`
+	Network       []string     `xml:"network,omitempty"`
+	Aired         string       `xml:"aired"`
+	Director      []string     `xml:"director"`
+	Credits       []string     `xml:"credits"`
+	Actor         []NFOActor   `xml:"actor"`
+	UniqueID      *NFOUniqueID `xml:"uniqueid,omitempty"`
 }
 
 type SeasonNFO struct {
@@ -79,9 +96,9 @@ type EpisodeNFO struct {
 	Title   string   `xml:"title"`
 	Season  int      `xml:"season"`
 	Episode int      `xml:"episode"`
-	Plot    string   `xml:"plot"`
-	Runtime int      `xml:"runtime"`
-	Aired   string   `xml:"aired"`
+	Plot    string   `xml:"plot,omitempty"`
+	Runtime int      `xml:"runtime,omitempty"`
+	Aired   string   `xml:"aired,omitempty"`
 }
 
 func (n MovieNFO) DisplayRating() string {
@@ -255,6 +272,17 @@ func ReadEpisodeNFO(path string) (*EpisodeNFO, error) {
 		return nil, err
 	}
 	return &n, nil
+}
+
+// FolderPoster is a poster image sitting in dir.
+func FolderPoster(dir string) string {
+	for _, name := range []string{"poster.jpg", "poster.png", "poster.webp", "folder.jpg", "folder.png"} {
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 // FindSeasonNFO looks for season.nfo or seasonNN.nfo in dir.
