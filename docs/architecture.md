@@ -1,6 +1,6 @@
 # Architecture
 
-ServeMedia is the self-hosted media server for Linux (scan, metadata, playback). A Podman **builder** writes `build/dist/` as an XDG tree; runtime is the **host binary** (`./build/run`), not a container. Metadata lookup is first-party [MatchMedia](https://github.com/AlyShmahell/MatchMedia) as a sibling XDG app. Third-party assets live under `{payload}/vendor/`. Payload is `SERVEMEDIA_ROOT` or `$XDG_DATA_HOME/servemedia`.
+ServeMedia is the self-hosted media server for Linux (scan, metadata, playback). A Podman **builder** writes `build/dist/` as an XDG tree; runtime is the **host binary** (`./build/run`), not a container. Metadata lookup is first-party [MatchMedia](https://github.com/AlyShmahell/MatchMedia), linked into the `servemedia` binary. Third-party assets live under `{payload}/vendor/`. Payload is `SERVEMEDIA_ROOT` or `$XDG_DATA_HOME/servemedia`.
 
 Go module: `github.com/alyshmahell/servemedia/src`.
 
@@ -11,8 +11,7 @@ flowchart LR
     CF --> Dist["build/dist: .local/bin + .local/share"]
   end
   subgraph host [Host runtime]
-    Dist --> ServeMedia[".local/bin/servemedia :7676"]
-    ServeMedia --> MatchMedia[".local/bin/matchmedia :7680 localhost"]
+    Dist --> ServeMedia[".local/bin/servemedia"]
     ServeMedia --> FFmpeg["vendor/ffmpeg"]
   end
 ```
@@ -21,24 +20,23 @@ flowchart LR
 
 | Path | Role |
 |------|------|
-| `src/cmd` | HTTP server (`-config`, `--prepare`) |
+| `src/cmd` | HTTP server (`-config`, `--host`, `--port`) |
 | `src/internal` | config, db, fetch (numbered `files[]` ingest, prune, reattach, dissociate), media (probe/HLS/ffmpeg), matchmedia client |
 | `src/web` | go:embed templates + first-party static |
-| `src/share/config` | Seed `default.yaml` → `build/dist/.local/share/servemedia/config` |
+| `src/share/config` | Seed `default.yaml` (version + `media.path`) → `build/dist/.local/share/servemedia/config` |
+| `src/share/vendor.yaml` | Builder-only asset and codec URLs; not loaded by the binary |
 | `src/share/applications` | `servemedia.desktop` staged to `.local/share/applications` |
 | `build/` | Podman dist builder (`Containerfile`, compose, host `run`, `build`) |
-| `flatpak/` | TTY `build` online/offline, manifest, AppStream, `pins/`, wrapper (`eu.alyshmahell.ServeMedia`, Freedesktop 26.08) |
-| `build/cache/` | ffmpeg bins + LICENSE; `matchmedia-<version>-linux-amd64.tar.gz` (filename and inner `version:` must match `matchmedia.version`); Flatpak SDK/Platform under `cache/flatpak` |
+| `flatpak/` | TTY `build` online/offline, manifest, AppStream, `pins/`, wrapper (`eu.alyshmahell.ServeMedia`, GNOME 51) |
+| `build/cache/` | ffmpeg bins + LICENSE; Flatpak SDK/Platform under `cache/flatpak` |
 | `{payload}/config` | Seed YAML (`-config` default `{payload}/config/default.yaml`) |
 | `{payload}/public` | First-party static in dist (templates stay embedded) |
 | `$XDG_DATA_HOME/servemedia` | SQLite store, backups, overlay `config/overlay.yaml` (Flatpak: sandbox XDG) |
 | `$XDG_CACHE_HOME/servemedia/transcode` | HLS cache |
-| `.local/bin/matchmedia` | MatchMedia v0.1.0 (Flatpak: `/app/tools/matchmedia/matchmedia`) |
-| `.local/share/matchmedia` | MatchMedia seed `config/` + `public/` (Flatpak: `/app/tools/matchmedia`) |
 | `{payload}/vendor` | Third-party only: htmx, video.js, hls.js, ffmpeg (+ licenses) |
 | `tests/` | Podman unit + Playwright smoke against bind-mounted dist |
 
-`vendor/` is third-party only. Host MatchMedia is a sibling XDG app; Flatpak keeps it under `/app/tools/matchmedia`.
+`vendor/` is third-party only. MatchMedia is the Go module `github.com/alyshmahell/matchmedia/src`, pinned in [`flatpak/pins/servemedia-go-sources.yml`](../flatpak/pins/servemedia-go-sources.yml).
 
 ## Rules
 
@@ -55,9 +53,9 @@ flowchart LR
 | Item | Value |
 |------|--------|
 | Go image | `docker.io/library/golang:1.26-bookworm` |
-| Build | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` |
+| Build | glibc: `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build` on `golang:1.26-bookworm`. musl: `CGO_ENABLED=1` on `golang:1.26-alpine` (`build/Containerfile.servemedia-musl`), cached at `build/cache/servemedia-musl`. The binary opens the site in the browser (`xdg-open`; `SERVEMEDIA_NO_BROWSER=1` skips). |
 | App version SoT | `version` in `src/share/config/default.yaml` |
-| MatchMedia pin | `matchmedia.version` in the same file |
+| MatchMedia | Go module in the `servemedia` binary; Flatpak pins it with the other modules |
 | Dist wipe | `build/dist` wiped at container start (`.gitkeep` kept) |
 | `build/cache` | never deleted |
 
@@ -65,16 +63,15 @@ Stage tree:
 
 | Dest | Source |
 |------|--------|
-| `.local/bin/servemedia` | Go `./cmd` |
+| `.local/bin/servemedia` | Go `./cmd`; opens the site in the browser |
 | `.local/share/servemedia/config/` | `src/share/config` |
 | `.local/share/servemedia/public/` | first-party static |
 | `.local/share/applications/` | desktop |
 | dist root + share `LICENSE` | repo `LICENSE` |
 | `.local/share/servemedia/vendor/` | third-party JS at image build |
-| `.local/bin/matchmedia` + `.local/share/matchmedia/{config,public}` | `build/cache/matchmedia-<pin>-linux-amd64.tar.gz` when filename and inner `version:` match; else `matchmedia.url` (basename must be that archive name) |
-| `.local/share/servemedia/vendor/ffmpeg` | copy from `build/cache/ffmpeg` or compile into that cache |
+| `.local/share/servemedia/vendor/ffmpeg` | glibc pair from `build/cache/ffmpeg` in the glibc dist. The musl archive replaces that directory with `build/cache/ffmpeg-musl` |
 
-ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; `libva` / `libdrm` dynamic; NVENC headers only. Delete `build/cache/ffmpeg` to force a recompile after bumping vendor URLs.
+ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; `libva` / `libdrm` dynamic; NVENC headers only. URLs live in `src/share/vendor.yaml`. The glibc pair is compiled in the Debian builder and shipped only in the glibc archive. The musl pair is the same recipe in [`build/Containerfile.musl`](../build/Containerfile.musl) (Alpine), cached at `build/cache/ffmpeg-musl`, and shipped only in the musl archive at `vendor/ffmpeg/`. Delete `build/cache/ffmpeg`, `build/cache/ffmpeg-musl`, or `build/cache/servemedia-musl` to force a rebuild after bumping them. The binary does not download vendor files.
 
 `./build/run` menu:
 
@@ -82,16 +79,17 @@ ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; 
 |--------|------|
 | **run** | copy `build/dist/.local` → `build/cache/xdg`, exec with `HOME` there (fails if `.local/bin/servemedia` missing) |
 | **(re)build & run** | rebuild dist, then run |
-| **(re)build & prepare** | verify `.local/bin/matchmedia`, fetch vendor if missing, exit |
-| **(re)build & package** | tarball + AppImage (not Flatpak) |
+| **(re)build & package** | glibc and musl tarballs + AppImages (not Flatpak); refuses a dist tree missing vendor files |
 
 ## Packages
 
 | Archive | ffmpeg | Notes |
 |---------|--------|-------|
-| `servemedia-linux-amd64.tar.gz` | vendored `vendor/ffmpeg` (static codecs, host libva) | root `servemedia/` + `LICENSE`; `.local/bin/{servemedia,matchmedia}` + share trees |
-| `servemedia-linux-amd64.AppImage` | same ELFs; host `libva` / Mesa | packs that tarball (quick-sharun / sharun / uruntime); `SERVEMEDIA_ROOT` = bundled share; data under `$XDG_DATA_HOME/servemedia`; needs `/dev/dri` for GPU |
-| `servemedia-linux-amd64.flatpak` | none; `org.freedesktop.Platform.ffmpeg-full` (26.08) | `./flatpak/build`; app id `eu.alyshmahell.ServeMedia`; wrapper `SERVEMEDIA_ROOT=/app`; data `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` |
+| `servemedia-linux-amd64-glibc.tar.gz` | glibc `vendor/ffmpeg/{ffmpeg,ffprobe}` (static codecs, host libva) | root `servemedia/` + `LICENSE`; glibc `.local/bin/servemedia` + share trees |
+| `servemedia-linux-amd64-glibc.AppImage` | same ELFs | packs that tarball (quick-sharun / sharun / uruntime). quick-sharun deploys the server binary only. `libva` and `libdrm` are deleted from the image. Host `libwebkitgtk-6.0` with GTK 4 when installed, otherwise `libwebkit2gtk-4.1` with GTK 3, the same as a local `--webkit` run; `SERVEMEDIA_ROOT` = bundled share; data under `$XDG_DATA_HOME/servemedia`; needs `/dev/dri` for GPU |
+| `servemedia-linux-amd64-musl.tar.gz` | musl `vendor/ffmpeg/{ffmpeg,ffprobe}` | same share tree; `.local/bin/servemedia` is the Alpine cgo binary (`ld-musl`, no `libc.so.6`) |
+| `servemedia-linux-amd64-musl.AppImage` | same ELFs | static musl `AppRun` execs the untouched musl binary with `--webkit`. quick-sharun only packs the AppDir, so the ELF keeps `ld-musl`. Host musl `libva` / WebKit; `libva` and `libdrm` are not shipped |
+| `servemedia-linux-amd64.flatpak` | none; `org.freedesktop.Platform.ffmpeg-full` (26.08); WebKitGTK 6.0 from the runtime when present, otherwise WebKitGTK 4.1 | `./flatpak/build`; runtime `org.gnome.Platform//51`; app id `eu.alyshmahell.ServeMedia`; wrapper `SERVEMEDIA_ROOT=/app` and `--webkit`; data `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` |
 
 Sideload:
 
@@ -105,15 +103,15 @@ flatpak run eu.alyshmahell.ServeMedia
 | Mode | Source |
 |------|--------|
 | **online** | latest GitHub ServeMedia release; regen Go pins from tags; `modules.txt` as URL+sha256 |
-| **offline** | local `src/share/config/default.yaml` (version SoT); regen from local `src/` (`type: dir`); MatchMedia still cloned by tag; pin `modules.txt` stays `path:` |
+| **offline** | local `src/share/config/default.yaml` (version SoT) and `src/share/vendor.yaml` (asset URLs); regen from local `src/` (`type: dir`); pin `modules.txt` stays `path:` |
 
-Each mode: resync → regen → lint → build → package → install. Manifest: [`flatpak/eu.alyshmahell.ServeMedia.yml`](../flatpak/eu.alyshmahell.ServeMedia.yml). Wrapper: [`flatpak/servemedia-wrapper`](../flatpak/servemedia-wrapper). Pins: [`flatpak/pins/`](../flatpak/pins/). Dist and Flatpak MatchMedia are `v0.1.0` (`matchmedia.version` / git tag); dist prefers `build/cache/matchmedia-0.1.0-linux-amd64.tar.gz`.
+Each mode: resync → regen → lint → build → package → install. Manifest: [`flatpak/eu.alyshmahell.ServeMedia.yml`](../flatpak/eu.alyshmahell.ServeMedia.yml). Wrapper: [`flatpak/servemedia-wrapper`](../flatpak/servemedia-wrapper). Pins: [`flatpak/pins/`](../flatpak/pins/). The MatchMedia Go module is pinned with the other modules in `servemedia-go-sources.yml`.
 
 Sandbox reads `/media`, `/mnt`, `/run/media`, `~/Videos`, `~/Music`; other paths need `flatpak override --filesystem=…`.
 
 ## HTTP
 
-ServeMedia is the only public listener (`:7676`). Opens the browser when `DISPLAY`/`WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips). If the port is in use, a second start opens the app and exits. MatchMedia binds `127.0.0.1:7680` (not a user-facing console).
+ServeMedia listens on a TCP address from `--host` and `--port`. Unset `--host` is every interface. Unset `--port` is `7676`. If that bind fails, ServeMedia listens again on port `0` and the kernel chooses the port. An explicit `--port` that cannot bind stops the process. `--webkit` forces `127.0.0.1` and port `0` and opens a window on that loopback URL, using host `libwebkitgtk-6.0` with GTK 4 when that library is installed and otherwise `libwebkit2gtk-4.1` with GTK 3. A successful window does not also open a browser. If the window cannot be created, the error is logged, the system browser opens, and the server keeps running until a signal or the watchdog. A second `--webkit` start that cannot open a window opens the browser and exits, leaving the existing server up. Without `--webkit`, the browser opens `http://127.0.0.1:<port>` when `DISPLAY` or `WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips that open). Other machines use `http://<lan-ip>:<port>`. The chosen port is written to `port` and the loopback URL to `http.url` in `$XDG_RUNTIME_DIR/servemedia`, or under `$XDG_STATE_HOME/servemedia` when `XDG_RUNTIME_DIR` is unset. A second start reads `http.url` and `GET`s `/healthz` on that loopback URL. A live server is opened and this process exits. A missing file or a failed check starts a new server. Shutdown deletes `http.url` and `port`. MatchMedia runs inside that process.
 
 | Method | Path | Role |
 |--------|------|------|
@@ -136,10 +134,10 @@ Idle HLS jobs are cancelled a few minutes after last segment access. The process
 | Item | Where |
 |------|--------|
 | Writable data | `$XDG_DATA_HOME/servemedia` (`SERVEMEDIA_HOME` override) |
-| Overlay | `config/overlay.yaml` merged after seed |
+| Overlay | `config/overlay.yaml` stores settings (backup, webhooks, transcode knobs, startup scan, watchdog). Internal paths in that file are ignored. `media.path` there still overrides the seed. |
 | Transcode cache | `$XDG_CACHE_HOME/servemedia/transcode` |
 | Media root | `SERVEMEDIA_MEDIA_PATH` / overlay `media.path` (comma-separated paths jailed separately, one picker tree; `$HOME`, `$XDG_VIDEOS_DIR`, `$XDG_MUSIC_DIR` expand) |
-| ffmpeg/ffprobe | `{payload}/vendor/ffmpeg/` (`SERVEMEDIA_FFMPEG` override); Flatpak: `ffmpeg` on `PATH` when that tree is absent |
+| ffmpeg/ffprobe | `{payload}/vendor/ffmpeg/` pair shipped with that archive. A tree that also has `musl/` uses it when host `libva` needs `libc.musl` (`SERVEMEDIA_FFMPEG` override). Flatpak: `ffmpeg` on `PATH` when that tree is absent |
 
 ## Libraries and scan
 
@@ -151,7 +149,7 @@ Libraries have a name and folder only (no movie/TV/anime type). Local, Rescan, a
 | Rescan | `mode=rescan` | — | omit | — |
 | Changes | `mode=changes` | when MM is ready | omit (MM default true) | forced off |
 
-When MatchMedia is down, all three options are disabled (no walker fallback). Entry scan keeps Dissociate. Persist-beside-media NFO/art stays in ServeMedia when checked. User title, plot, and poster edits always write store plus beside-media NFO/art (not gated on the scan persist checkbox). Stills and nested-movie sidecars never overwrite an existing show `poster.jpg`. Poster/still file changes persist only when Save is clicked in the poster dialog.
+When MatchMedia is down, all three options are disabled (no walker fallback). Entry scan keeps Dissociate. Persist-beside-media NFO/art stays in ServeMedia when checked. User title, plot, and poster edits write the NFO and art beside the media and store that absolute path in SQLite. Stills and nested-movie sidecars never overwrite an existing show `poster.jpg`. Poster/still file changes persist only when Save is clicked in the poster dialog.
 
 | Apply input | Rule |
 |-------------|------|
@@ -164,21 +162,16 @@ When MatchMedia is down, all three options are disabled (no walker fallback). En
 | per-item | `POST /v1/ingest` `[{title, year?}]` untyped; never auto-applies (`matched` parks at `manual` + picker) |
 | Changes skip | catalog/nest (and episode re-ingest when `files[]` already matches) if path already has meta |
 | after library scan | reuse a unique moved title onto the existing row when the old path is gone; drop catalog rows whose files no longer exist |
-| Dissociate | delete store + beside NFO/art; revert title to filename; `match_status=skipped` |
+| Dissociate | delete the NFO and art at the stored paths; revert title to filename; `match_status=skipped` |
 | **Don't add** | `skipped` without catalog NFO/art; closing the dialog leaves the orange `!` |
 
 `match.prefer.anime` is a rank/auto-match hint on typed `anime` jobs and on untyped scans when any candidate matches. Ranking is token-set Jaccard plus residual plot/parent (`ranker: set`). SequenceMatcher is grouping-only. Overlay YAML must not set removed `match.weights`. Title-similar nesting is a **strict** token prefix (spin-off titles longer than the parent). Identical titles and the same `catalog_for` / `meta_id` are not spin-offs. Short tokens stay so Stargate SG-1 / Atlantis stay separate.
 
 ## MatchMedia
 
-On start ServeMedia:
+On start ServeMedia opens the linked MatchMedia library. MatchMedia’s embedded default is the config. `$XDG_DATA_HOME/servemedia/matchmedia/overlay.yaml` is optional and merged on top when it exists; the directory is created only when that file is written. ServeMedia does not copy the default into that file. `SERVEMEDIA_MATCHMEDIA_OVERLAY`, when set, is merged into the overlay.
 
-1. Seeds `$XDG_DATA_HOME/matchmedia/{config/default.yaml,public}` from bundled share (Flatpak: `/app/tools/matchmedia`) when missing
-2. Writes `$XDG_DATA_HOME/matchmedia/config/overlay.yaml` from MatchMedia `default.yaml` merged with any existing overlay and optional `SERVEMEDIA_MATCHMEDIA_OVERLAY` (UI-saved keys win except `group.kinds`, which the seed always restores so upgrades drop removed tokens such as `movie` / `movies` / `film`; new seed keys still appear; `data_dir` / `browse_root` dropped; ServeMedia does not write `http.addr` or `browse_roots`)
-3. Exec `.local/bin/matchmedia -config <seed>` (Flatpak: `/app/tools/matchmedia/matchmedia`)
-4. Connects at `matchmedia.addr` (`127.0.0.1:7680`); if a listener is already healthy, it is restarted so the new overlay loads
-
-`--prepare` verifies the MatchMedia binary, fetches third-party `vendor/` if missing, then exits. Admin Settings → Engines: secrets (`GET`/`POST /v1/secrets`), overlay YAML (`GET`/`POST /v1/config`), Restore default (delete overlay then POST the seed), Restart (`Stop` then `Start`). ffmpeg probe copy is on the same page’s ffmpeg tab.
+Vendor JS, licenses, and ffmpeg sources are fetched by the Podman builder and by `flatpak-builder`. A missing file under `{payload}/vendor/` stays missing. Admin Settings → Engines shows the resolved MatchMedia config (the default with the overlay applied) and edits ServeMedia transcode, startup scan, and watchdog settings. MatchMedia saving writes only values that differ from the default. Restore keeps provider API keys and drops other MatchMedia overlay keys. Restart reloads the in-process MatchMedia config. ffmpeg probe copy is on the same page’s ffmpeg tab. The seed file is `version` plus `media.path`. Backup and startup scan default off until enabled in Settings. ffmpeg chooses the VAAPI device from `/dev/dri/renderD*`.
 
 | Call | Body / query | Result |
 |------|----------------|--------|
@@ -220,7 +213,7 @@ No TTY (CI): unit then smoke. `./tests/run` builds `build/dist/` before smoke. I
 
 Manual: `./build/run` → **(re)build & run** (or **run** if dist exists) → register admin → set `SERVEMEDIA_MEDIA_PATH` if needed.
 
-Idle `servemedia` is ~0% CPU. MatchMedia is a second process on `127.0.0.1:7680`. Ctrl+C on `./build/run` stops the host binary.
+Idle `servemedia` is ~0% CPU. Ctrl+C on `./build/run` stops the host binary.
 
 ```bash
 pgrep -a servemedia
@@ -229,12 +222,13 @@ ps -o pid,pcpu,rss,comm -p "$(pgrep -n -f '/servemedia$')"
 
 ## VAAPI
 
-GPU encode uses **host** Mesa/libva and `/dev/dri`. Dist ffmpeg: static codecs, dynamic libva/libdrm. AppImage does not ship `libva.so.2`. Fully static builds cannot drive host VAAPI. Software `libx264` is the probe fallback. A host without `libva.so.2` cannot start the bundled `ffmpeg`.
+GPU encode uses **host** libva and `/dev/dri`. Dist ffmpeg: static codecs, dynamic libva/libdrm. The glibc pair loads a glibc host `libva`. The musl pair loads Alpine's `/usr/lib/libva.so.2` and `/usr/lib/dri` drivers. A child whose ELF needs `libc.musl` has `LD_LIBRARY_PATH` and `LD_PRELOAD` cleared so it does not load a bundled glibc. AppImages do not ship `libva.so.2`. Fully static ffmpeg builds cannot drive host VAAPI. Software `libx264` is the probe fallback. A host without a matching `libva.so.2` cannot start the selected `ffmpeg`.
 
 | Distro | Packages |
 |--------|----------|
 | Fedora | `libva libdrm mesa-dri-drivers mesa-va-drivers`; H.264/HEVC VA also needs RPM Fusion `mesa-va-drivers-freeworld` |
 | Debian | `libva2 libdrm2 mesa-va-drivers` |
+| Alpine | `libva libdrm mesa-va-gallium`; Intel also needs community `intel-media-driver` |
 
 `hwaccel: none` in overlay skips the probe / forces software.
 

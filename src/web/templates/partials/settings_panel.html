@@ -1,0 +1,9 @@
+{{define "partials/settings_panel.html"}}
+{{if eq .SettingsTab "ffmpeg"}}{{template "partials/settings_ffmpeg.html" .}}
+{{else if eq .SettingsTab "matchmedia"}}{{template "partials/settings_matchmedia.html" .}}
+{{else if eq .SettingsTab "webhooks"}}{{template "partials/settings_webhooks.html" .}}
+{{else if eq .SettingsTab "backup"}}{{template "partials/settings_backup.html" .}}
+{{else if eq .SettingsTab "accounts"}}{{template "partials/settings_accounts.html" .}}
+{{else}}{{template "partials/settings_general.html" .}}
+{{end}}
+{{end}}

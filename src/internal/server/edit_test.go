@@ -98,7 +98,7 @@ func TestHandleMediaMetaUnauthorized404(t *testing.T) {
 }
 
 func TestHandleMediaMetaAndPoster(t *testing.T) {
-	ctx, store, media, d, owner, _, lib, s := editTestServer(t)
+	ctx, _, media, d, owner, _, lib, s := editTestServer(t)
 	filmDir := filepath.Join(media, "Film")
 	filmPath := filepath.Join(filmDir, "Film.mkv")
 	if err := os.MkdirAll(filmDir, 0o755); err != nil {
@@ -160,7 +160,7 @@ func TestHandleMediaMetaAndPoster(t *testing.T) {
 		t.Fatalf("src %s", pw.Body.String())
 	}
 	it, _ = d.GetMediaItem(ctx, id)
-	if _, err := os.Stat(filepath.Join(store, it.PosterPath.String)); err != nil {
+	if _, err := os.Stat(it.PosterPath.String); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(filmDir, "poster.png")); err != nil {
@@ -230,5 +230,96 @@ func TestHandleSeasonEpisodeMetaUnauthorized404(t *testing.T) {
 	rtr.ServeHTTP(ew, ereq)
 	if ew.Code != http.StatusNotFound {
 		t.Fatalf("episode %d %s", ew.Code, ew.Body.String())
+	}
+}
+
+func TestHandleNodeStillAndGenerate(t *testing.T) {
+	ctx, _, mediaDir, d, owner, _, lib, s := editTestServer(t)
+	path := filepath.Join(mediaDir, "Film.mkv")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nodeID, err := d.UpsertNodeChain(ctx, lib.ID, "Film.mkv", "file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origD, origA, origO := videoDuration, extractStillAt, randomStillOffset
+	t.Cleanup(func() {
+		videoDuration, extractStillAt, randomStillOffset = origD, origA, origO
+	})
+	videoDuration = func(string) (float64, error) { return 120, nil }
+	randomStillOffset = func(dur float64) float64 {
+		if dur != 120 {
+			t.Fatalf("dur %v", dur)
+		}
+		return 40
+	}
+	extractStillAt = func(src, dst string, at float64) error {
+		if at != 40 {
+			t.Fatalf("at %v", at)
+		}
+		return os.WriteFile(dst, []byte("\xff\xd8\xff\xe0fakejpeg"), 0o644)
+	}
+
+	rtr := chi.NewRouter()
+	rtr.Post("/hx/nodes/{id}/still/generate", s.handleNodeStillGenerate)
+	rtr.Post("/hx/nodes/{id}/still", s.handleNodeStill)
+	rtr.Delete("/hx/nodes/{id}/still", s.handleNodeStillDelete)
+
+	greq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/hx/nodes/%d/still/generate", nodeID), nil)
+	greq = greq.WithContext(context.WithValue(greq.Context(), userKey, owner))
+	gw := httptest.NewRecorder()
+	rtr.ServeHTTP(gw, greq)
+	if gw.Code != http.StatusOK {
+		t.Fatalf("generate %d %s", gw.Code, gw.Body.String())
+	}
+	if ct := gw.Header().Get("Content-Type"); ct != "image/jpeg" {
+		t.Fatalf("content-type %s", ct)
+	}
+	if !bytes.Contains(gw.Body.Bytes(), []byte("fakejpeg")) {
+		t.Fatalf("jpeg body %q", gw.Body.Bytes())
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "p.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write(tinyPNG()); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	preq := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/hx/nodes/%d/still", nodeID), &buf)
+	preq.Header.Set("Content-Type", mw.FormDataContentType())
+	preq = preq.WithContext(context.WithValue(preq.Context(), userKey, owner))
+	pw := httptest.NewRecorder()
+	rtr.ServeHTTP(pw, preq)
+	if pw.Code != http.StatusOK {
+		t.Fatalf("upload %d %s", pw.Code, pw.Body.String())
+	}
+	n, err := d.GetLibraryNode(ctx, nodeID)
+	if err != nil || n == nil || !filepath.IsAbs(n.StillPath.String) {
+		t.Fatalf("still %#v %v", n, err)
+	}
+	if _, err := os.Stat(n.StillPath.String); err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(n.StillPath.String) != mediaDir {
+		t.Fatalf("still %s", n.StillPath.String)
+	}
+
+	dreq := httptest.NewRequest(http.MethodDelete, fmt.Sprintf("/hx/nodes/%d/still", nodeID), nil)
+	dreq = dreq.WithContext(context.WithValue(dreq.Context(), userKey, owner))
+	dw := httptest.NewRecorder()
+	rtr.ServeHTTP(dw, dreq)
+	if dw.Code != http.StatusOK {
+		t.Fatalf("delete %d %s", dw.Code, dw.Body.String())
+	}
+	n, _ = d.GetLibraryNode(ctx, nodeID)
+	if n.StillPath.Valid && n.StillPath.String != "" {
+		t.Fatalf("still remains %#v", n.StillPath)
 	}
 }

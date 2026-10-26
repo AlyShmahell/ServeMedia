@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alyshmahell/servemedia/src/internal/backup"
@@ -41,18 +42,21 @@ type Server struct {
 	Transcode   *media.Manager
 	Watchdog    *watchdog.Watchdog
 	Webhooks    *webhooks.Service
-	Meta        *matchmedia.Client
+	Meta        matchmedia.Service
 	Templates   *template.Template
 	Static      fs.FS
 	reopen      func() error
 	restartMeta func() error
+	repointOnce sync.Map
+	// Overlord signs every request in as the admin named overlord.
+	Overlord bool
 }
 
 type ctxKey int
 
 const userKey ctxKey = 1
 
-func New(cfg *config.Config, database *db.DB, bak *backup.Service, tr *media.Manager, webFS fs.FS, meta *matchmedia.Client, reopen func() error) (*Server, error) {
+func New(cfg *config.Config, database *db.DB, bak *backup.Service, tr *media.Manager, webFS fs.FS, meta matchmedia.Service, reopen func() error) (*Server, error) {
 	tplFS, err := fs.Sub(webFS, "templates")
 	if err != nil {
 		return nil, err
@@ -117,8 +121,7 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 			}
 		},
 		"posterURL": func(p string, metaID ...string) string {
-			p = strings.TrimPrefix(strings.TrimSpace(p), "/")
-			p = strings.TrimPrefix(p, "metadata/")
+			p = strings.TrimSpace(p)
 			if p == "" {
 				return "/static/placeholder.svg"
 			}
@@ -128,6 +131,13 @@ func MustParseTemplates(fsys fs.FS) *template.Template {
 					key = m
 				}
 			}
+			if filepath.IsAbs(p) {
+				q := url.Values{}
+				q.Set("path", p)
+				q.Set("m", key)
+				return "/metadata/?" + q.Encode()
+			}
+			p = strings.TrimPrefix(strings.TrimPrefix(p, "/"), "metadata/")
 			return "/metadata/" + p + "?m=" + url.QueryEscape(key)
 		},
 		"queryEscape": url.QueryEscape,
@@ -194,17 +204,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/", s.handleHome)
 		r.Get("/libraries", s.handleLibraries)
 		r.Get("/libraries/{id}", s.handleLibrary)
-		r.Get("/movies/{id}", s.handleMovie)
-		r.Get("/shows/{id}", s.handleShow)
-		r.Get("/shows/{id}/seasons/{n}", s.handleSeason)
+		r.Get("/libraries/{id}/tree", s.handleLibrary)
 		r.Get("/play/movie/{id}", s.handlePlayMovie)
 		r.Get("/play/episode/{id}", s.handlePlayEpisode)
+		r.Get("/play/file/{id}", s.handlePlayFile)
 		r.Get("/about", s.handleAbout)
-		r.Get("/support", s.handleSupport)
 		r.Get("/settings", s.handleSettings)
 		r.Get("/settings/libraries", s.handleSettingsLibrariesRedirect)
 		r.Get("/hx/libraries/{id}/items", s.handleHXItems)
-		r.Get("/hx/search", s.handleHXSearch)
 		r.Get("/hx/home/continue", s.handleHXContinue)
 		r.Get("/hx/home/recent", s.handleHXRecent)
 		r.Post("/hx/progress", s.handleProgress)
@@ -225,12 +232,17 @@ func (s *Server) Router() http.Handler {
 		r.Post("/hx/episodes/{id}/meta", s.handleEpisodeMeta)
 		r.Post("/hx/episodes/{id}/poster", s.handleEpisodePoster)
 		r.Delete("/hx/episodes/{id}/poster", s.handleEpisodePosterDelete)
+		r.Post("/hx/episodes/{id}/poster/generate", s.handleEpisodePosterGenerate)
+		r.Post("/hx/nodes/{id}/still", s.handleNodeStill)
+		r.Delete("/hx/nodes/{id}/still", s.handleNodeStillDelete)
+		r.Post("/hx/nodes/{id}/still/generate", s.handleNodeStillGenerate)
 		r.Post("/hx/libraries/{id}", s.handleRenameLibrary)
 		r.Delete("/hx/libraries/{id}", s.handleDeleteLibrary)
 		r.Get("/hx/media/browse", s.handleMediaBrowse)
 		r.Get("/metadata/*", s.handleMetadata)
 		r.Get("/stream/movie/{id}", s.handleStreamMovie)
 		r.Get("/stream/episode/{id}", s.handleStreamEpisode)
+		r.Get("/stream/file/{id}", s.handleStreamFile)
 		r.Post("/play/{kind}/{id}/session", s.handlePlaySession)
 		r.Get("/play/{kind}/{id}/sub/{index}.vtt", s.handleSubtitleVTT)
 		r.Get("/hls/{job}/master.m3u8", s.handleHLSMaster)
@@ -243,6 +255,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAdmin)
+			r.Post("/settings", s.handleSaveGeneral)
 			r.Get("/settings/engines", s.handleSettingsEngines)
 			r.Post("/settings/engines", s.handleSaveEngines)
 			r.Post("/settings/engines/restore", s.handleRestoreEngines)
@@ -269,6 +282,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" || r.URL.Path == "/favicon.ico" || r.URL.Path == "/favicon.svg" {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if s.Overlord {
+			u, err := s.DB.EnsureOverlord(r.Context())
+			if err != nil || u == nil {
+				http.Error(w, "db error", 500)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
 			return
 		}
 		n, err := s.DB.UserCount(r.Context())
@@ -380,6 +402,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 	u := userFrom(r)
 	data["User"] = u
+	data["Overlord"] = s.Overlord || (u != nil && db.IsOverlord(u.Username))
 	if _, ok := data["Version"]; !ok {
 		ver := ""
 		if s.Cfg != nil {
@@ -463,6 +486,10 @@ func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if db.IsOverlord(r.FormValue("username")) {
+		s.render(w, r, "login.html", map[string]any{"Error": "Invalid credentials"})
+		return
+	}
 	u, err := s.DB.GetUserByUsername(r.Context(), r.FormValue("username"))
 	if err != nil || u == nil || !db.CheckPassword(u.PasswordHash, r.FormValue("password")) {
 		s.render(w, r, "login.html", map[string]any{"Error": "Invalid credentials"})
@@ -478,11 +505,30 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
 	if c, _ := r.Cookie(sessionCookie); c != nil {
 		_ = s.DB.DeleteSession(r.Context(), c.Value)
 	}
 	s.clearSession(w)
+	if s.Overlord || (u != nil && db.IsOverlord(u.Username)) {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	http.Redirect(w, r, "/login", http.StatusFound)
+}
+
+type scanStat struct {
+	Label string
+	Value int
+	Tone  string
+}
+
+type scanProgress struct {
+	Phase string
+	Done  int
+	Total int
+	Title string
+	Stats []scanStat
 }
 
 type libraryCard struct {
@@ -490,21 +536,39 @@ type libraryCard struct {
 	Posters     []string
 	Job         *db.ScanJob
 	Message     string
+	Lines       []scanProgress
 	Poll        bool
 	ProgressPct int
 	Enriching   bool
+	Watched     int
+	Total       int
+	WatchPct    int
 }
 
-func (s *Server) libraryCardData(ctx context.Context, lib *db.Library, job *db.ScanJob) libraryCard {
+func (s *Server) libraryCardData(ctx context.Context, userID int64, lib *db.Library, job *db.ScanJob) libraryCard {
+	if lib != nil {
+		s.ensureLibraryRatings(ctx, lib.ID)
+	}
 	posters, _ := s.DB.ListLibraryPosters(ctx, lib.ID)
 	card := libraryCard{Library: *lib, Posters: posters}
+	if userID > 0 && lib != nil {
+		if files, err := s.DB.ListFileWatch(ctx, userID, lib.ID); err == nil {
+			card.Watched, card.Total, card.WatchPct = folderWatch(files, "")
+		}
+	}
 	if job != nil {
 		card.Job = job
 		card.ProgressPct = job.ProgressPct
 		card.Poll = job.Status == "running"
 		if job.Message.Valid {
 			card.Message = job.Message.String
+			card.Lines = parseScanLines(card.Message)
 			card.Enriching = strings.HasPrefix(card.Message, "Matching") || strings.HasPrefix(card.Message, "Applying")
+			for _, line := range card.Lines {
+				if line.Phase == "match" || line.Phase == "fetch" || line.Phase == "save" {
+					card.Enriching = true
+				}
+			}
 		}
 	}
 	return card
@@ -535,9 +599,26 @@ func (s *Server) userHasRunningScan(ctx context.Context, userID int64) bool {
 	return false
 }
 
-func (s *Server) libraryScanPolling(ctx context.Context, libraryID int64) bool {
+// libraryGridPolling refreshes the library grid while a scan is still changing
+// titles. Stills run after that, and swapping the grid then resets the scroll.
+func (s *Server) libraryGridPolling(ctx context.Context, libraryID int64) bool {
 	job, err := s.DB.RunningScanForLibrary(ctx, libraryID)
-	return err == nil && job != nil
+	if err != nil || job == nil {
+		return false
+	}
+	if !job.Message.Valid {
+		return true
+	}
+	lines := parseScanLines(job.Message.String)
+	if len(lines) == 0 {
+		return true
+	}
+	switch lines[len(lines)-1].Phase {
+	case "scan", "match", "fetch":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
@@ -562,7 +643,7 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 				job = running
 			}
 		}
-		cards = append(cards, s.libraryCardData(r.Context(), &lib, job))
+		cards = append(cards, s.libraryCardData(r.Context(), u.ID, &lib, job))
 	}
 	s.render(w, r, "home.html", map[string]any{
 		"Continue": cont, "Recent": s.mediaItemCards(r.Context(), u.ID, recent), "LibraryCards": cards,
@@ -576,11 +657,7 @@ func (s *Server) handleLibraries(w http.ResponseWriter, r *http.Request) {
 
 type itemCard struct {
 	Item        db.MediaItem
-	ProgressPct int
-}
-
-type episodeCard struct {
-	Episode     db.Episode
+	Href        string
 	ProgressPct int
 }
 
@@ -588,19 +665,359 @@ func (s *Server) mediaItemCards(ctx context.Context, userID int64, items []db.Me
 	progress, _ := s.DB.MediaItemsProgressPct(ctx, userID, items)
 	cards := make([]itemCard, 0, len(items))
 	for _, it := range items {
-		cards = append(cards, itemCard{Item: it, ProgressPct: progress[it.ID]})
+		item := it
+		cards = append(cards, itemCard{
+			Item:        item,
+			Href:        s.showFolderBack(ctx, &item),
+			ProgressPct: progress[it.ID],
+		})
 	}
 	return cards
 }
 
-func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Library, sort, q string, swapCount bool) map[string]any {
+type nodeCard struct {
+	Node        db.LibraryNode
+	Href        string
+	Title       string
+	Match       string
+	Kind        string
+	LibraryID   int64
+	Rel         string
+	Plot        string
+	Still       string
+	ProgressPct int
+	Watched     int
+	Total       int
+	WatchPct    int
+	Facts       []fileFact
+	Chips       []heroChip
+	MediaID     int64
+	MatchStatus string
+	MatchError  string
+	EditURL     string
+	UploadURL   string
+	GenerateURL string
+}
+
+func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Library, sort, q, rel string, swapCount bool) map[string]any {
+	rel = strings.Trim(strings.ReplaceAll(rel, "\\", "/"), "/")
+	n, _ := s.DB.CountLibraryNodes(ctx, lib.ID)
+	if n > 0 {
+		nodes, _ := s.DB.ListChildNodes(ctx, lib.ID, rel)
+		qn := strings.TrimSpace(q)
+		if qn != "" {
+			under, _ := s.DB.ListNodesUnder(ctx, lib.ID, rel)
+			keep := matchingContainers(rel, under, qn)
+			var filtered []db.LibraryNode
+			for _, node := range nodes {
+				if keep[node.RelPath] {
+					filtered = append(filtered, node)
+				}
+			}
+			nodes = filtered
+		}
+		files, _ := s.DB.ListFileWatch(ctx, u.ID, lib.ID)
+		pctByID := map[int64]int{}
+		for _, f := range files {
+			pctByID[f.ID] = f.Pct
+		}
+		var dirs, fileCards []nodeCard
+		for _, node := range nodes {
+			if node.NodeKind == "file" {
+				card := nodeCard{Node: node, LibraryID: lib.ID, Rel: node.RelPath, Kind: "file"}
+				card.EditURL, card.MediaID, card.MatchStatus, card.MatchError = s.nodeActions(ctx, lib, node)
+				card.Href = s.nodeHref(ctx, lib, node)
+				art := s.nodeArt(ctx, node, card.MediaID)
+				card.Title, card.Plot, card.Still, card.Facts = fileCardFields(lib.Path, node, s.fileIsShow(ctx, node))
+				if art != "" {
+					card.Still = art
+				}
+				card.ProgressPct = pctByID[node.ID]
+				card.UploadURL = "/hx/nodes/" + strconv.FormatInt(node.ID, 10) + "/still"
+				card.GenerateURL = card.UploadURL + "/generate"
+				fileCards = append(fileCards, card)
+				continue
+			}
+			card := s.dirNodeCard(ctx, lib, node)
+			card.Watched, card.Total, card.WatchPct = folderWatch(files, node.RelPath)
+			dirs = append(dirs, card)
+		}
+		out := map[string]any{
+			"Library": lib, "Tree": true, "Nodes": dirs, "Files": fileCards, "Path": rel,
+			"ItemCount": len(dirs) + len(fileCards), "Sort": sort, "Q": q,
+			"Poll": s.libraryGridPolling(ctx, lib.ID), "SwapCount": swapCount,
+		}
+		if rel != "" {
+			if hero := s.folderHeroCard(ctx, lib, rel); hero != nil {
+				out["FolderHero"] = *hero
+			}
+		}
+		return out
+	}
 	all, _ := s.DB.ListMediaItems(ctx, lib.ID, "name", "")
 	items, _ := s.DB.ListMediaItems(ctx, lib.ID, sort, q)
 	return map[string]any{
 		"Library": lib, "Items": s.mediaItemCards(ctx, u.ID, items),
-		"ItemCount": len(all), "Sort": sort, "Q": q,
-		"Poll": s.libraryScanPolling(ctx, lib.ID), "SwapCount": swapCount,
+		"ItemCount": len(all), "Sort": sort, "Q": q, "Path": rel,
+		"Poll": s.libraryGridPolling(ctx, lib.ID), "SwapCount": swapCount,
 	}
+}
+
+func (s *Server) dirNodeCard(ctx context.Context, lib *db.Library, node db.LibraryNode) nodeCard {
+	card := nodeCard{Node: node, LibraryID: lib.ID, Rel: node.RelPath, Kind: "dir"}
+	card.EditURL, card.MediaID, card.MatchStatus, card.MatchError = s.nodeActions(ctx, lib, node)
+	card.Href = s.nodeHref(ctx, lib, node)
+	art := s.dirArt(ctx, lib, node, card.MediaID)
+	seasonNum := 0
+	if node.SeasonNum.Valid {
+		seasonNum, _ = strconv.Atoi(strings.TrimSpace(node.SeasonNum.String))
+	}
+	card.Title = folderDisplayTitle(filepath.Join(lib.Path, filepath.FromSlash(node.RelPath)), node.Name, node.MMTitle, node.MMYear, seasonNum)
+	if art != "" {
+		card.Node.PosterPath = sql.NullString{String: art, Valid: true}
+	}
+	card.Plot = s.nodePlot(ctx, node, card.MediaID)
+	return card
+}
+
+func nodePosterUploadURL(editURL string) string {
+	if strings.HasSuffix(editURL, "/meta") {
+		return strings.TrimSuffix(editURL, "/meta") + "/poster"
+	}
+	return ""
+}
+
+func (s *Server) folderHeroCard(ctx context.Context, lib *db.Library, rel string) *nodeCard {
+	rel = strings.Trim(strings.ReplaceAll(rel, "\\", "/"), "/")
+	if rel == "" || lib == nil || s.DB == nil {
+		return nil
+	}
+	id, err := s.DB.NodeIDByRel(ctx, lib.ID, rel)
+	if err != nil {
+		return nil
+	}
+	if id == 0 {
+		name := rel
+		if i := strings.LastIndex(rel, "/"); i >= 0 {
+			name = rel[i+1:]
+		}
+		card := nodeCard{Title: folderDisplayTitle(filepath.Join(lib.Path, filepath.FromSlash(rel)), name, sql.NullString{}, sql.NullString{}, 0), Rel: rel, Kind: "dir", LibraryID: lib.ID}
+		card.Chips = s.heroChips(ctx, lib, rel, 0)
+		return &card
+	}
+	node, err := s.DB.GetLibraryNode(ctx, id)
+	if err != nil || node == nil {
+		return nil
+	}
+	card := s.dirNodeCard(ctx, lib, *node)
+	card.UploadURL = nodePosterUploadURL(card.EditURL)
+	card.Chips = s.heroChips(ctx, lib, node.RelPath, card.MediaID)
+	return &card
+}
+
+func (s *Server) nodePlot(ctx context.Context, node db.LibraryNode, mediaID int64) string {
+	if p := strings.TrimSpace(node.Plot.String); p != "" {
+		return p
+	}
+	if mediaID <= 0 {
+		return ""
+	}
+	it, err := s.DB.GetMediaItem(ctx, mediaID)
+	if err != nil || it == nil || !it.Plot.Valid {
+		return ""
+	}
+	return strings.TrimSpace(it.Plot.String)
+}
+
+func (s *Server) fileIsShow(ctx context.Context, node db.LibraryNode) bool {
+	if isShowKind(node.MMKind.String) {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(node.MMKind.String), "movie") {
+		return false
+	}
+	if !node.GroupNodeID.Valid {
+		return false
+	}
+	g, err := s.DB.GetLibraryNode(ctx, node.GroupNodeID.Int64)
+	if err != nil || g == nil {
+		return false
+	}
+	return isShowKind(g.MMKind.String)
+}
+
+func (s *Server) nodeActions(ctx context.Context, lib *db.Library, node db.LibraryNode) (editURL string, mediaID int64, status, matchErr string) {
+	id, kind, itemStatus, errStr, err := s.DB.ItemByNode(ctx, node.ID)
+	if err != nil {
+		return
+	}
+	status = strings.TrimSpace(node.MatchStatus.String)
+	if id > 0 {
+		mediaID = id
+		matchErr = errStr
+		if status == "" {
+			status = itemStatus
+		}
+	}
+	if mediaID == 0 && node.GroupNodeID.Valid {
+		if gid, _, _, _, gerr := s.DB.ItemByNode(ctx, node.GroupNodeID.Int64); gerr == nil && gid > 0 {
+			mediaID = gid
+		}
+	}
+	if mediaID == 0 && node.NodeKind != "file" && lib != nil {
+		if it, own := s.folderMedia(ctx, lib, node); it != nil {
+			mediaID = it.ID
+			if own {
+				id = it.ID
+				kind = it.Kind
+				if status == "" && it.MatchStatus.Valid {
+					status = strings.TrimSpace(it.MatchStatus.String)
+				}
+				if matchErr == "" && it.MatchError.Valid {
+					matchErr = it.MatchError.String
+				}
+			}
+		}
+	}
+	if id > 0 && (kind == "movie" || kind == "show") {
+		return "/hx/media/" + strconv.FormatInt(id, 10) + "/meta", mediaID, status, matchErr
+	}
+	if node.NodeKind == "file" {
+		abs := filepath.Join(lib.Path, filepath.FromSlash(node.RelPath))
+		epID, err := s.DB.EpisodeIDByPath(ctx, abs)
+		if err == nil && epID > 0 {
+			return "/hx/episodes/" + strconv.FormatInt(epID, 10) + "/meta", mediaID, status, matchErr
+		}
+	}
+	showID, num, ok := s.DB.SeasonEdit(ctx, node.ID)
+	if ok {
+		if mediaID == 0 {
+			mediaID = showID
+		}
+		return fmt.Sprintf("/hx/shows/%d/seasons/%d/meta", showID, num), mediaID, status, matchErr
+	}
+	return "", mediaID, status, matchErr
+}
+
+func (s *Server) folderMedia(ctx context.Context, lib *db.Library, node db.LibraryNode) (*db.MediaItem, bool) {
+	if s == nil || s.DB == nil || lib == nil {
+		return nil, false
+	}
+	abs := filepath.Clean(filepath.Join(lib.Path, filepath.FromSlash(node.RelPath)))
+	if found, err := s.DB.GetMediaItemByPath(ctx, lib.ID, abs); err == nil && found != nil {
+		return found, true
+	}
+	if found, err := s.DB.MovieInFolder(ctx, lib.ID, abs); err == nil && found != nil {
+		return found, true
+	}
+	root := filepath.Clean(lib.Path)
+	parent := abs
+	for {
+		next := filepath.Dir(parent)
+		if next == parent || !pathInside(root, next) {
+			break
+		}
+		parent = next
+		found, err := s.DB.GetMediaItemByPath(ctx, lib.ID, parent)
+		if err == nil && found != nil && (found.Kind == "show" || found.Kind == "tv") {
+			return found, false
+		}
+	}
+	return nil, false
+}
+
+func pathInside(root, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func (s *Server) dirArt(ctx context.Context, lib *db.Library, node db.LibraryNode, mediaID int64) string {
+	if p := strings.TrimSpace(node.PosterPath.String); p != "" {
+		return p
+	}
+	dir := filepath.Join(lib.Path, filepath.FromSlash(node.RelPath))
+	if p := metadata.FolderPoster(dir); p != "" {
+		return p
+	}
+	if mediaID <= 0 || s == nil || s.DB == nil || lib == nil {
+		return ""
+	}
+	it, err := s.DB.GetMediaItem(ctx, mediaID)
+	if err != nil || it == nil || !it.PosterPath.Valid {
+		return ""
+	}
+	if !sameMediaFolder(lib.Path, node.RelPath, it.Path) {
+		return ""
+	}
+	return strings.TrimSpace(it.PosterPath.String)
+}
+
+func sameMediaFolder(libPath, rel, itemPath string) bool {
+	abs := filepath.Clean(filepath.Join(libPath, filepath.FromSlash(rel)))
+	itemPath = filepath.Clean(strings.TrimSpace(itemPath))
+	if itemPath == "" {
+		return false
+	}
+	if abs == itemPath {
+		return true
+	}
+	return filepath.Dir(itemPath) == abs
+}
+
+func (s *Server) nodeHref(_ context.Context, lib *db.Library, node db.LibraryNode) string {
+	if node.NodeKind != "file" {
+		return "/libraries/" + strconv.FormatInt(lib.ID, 10) + "/tree?path=" + urlQueryEscape(node.RelPath)
+	}
+	return "/play/file/" + strconv.FormatInt(node.ID, 10)
+}
+
+func (s *Server) showFolderBack(ctx context.Context, it *db.MediaItem) string {
+	if it == nil {
+		return ""
+	}
+	fallback := fmt.Sprintf("/libraries/%d", it.LibraryID)
+	nodeID, err := s.DB.MediaItemNodeID(ctx, it.ID)
+	if err != nil || nodeID == 0 {
+		return fallback
+	}
+	n, err := s.DB.GetLibraryNode(ctx, nodeID)
+	if err != nil || n == nil {
+		return fallback
+	}
+	rel := n.RelPath
+	if n.NodeKind == "file" {
+		rel = parentRel(rel)
+	}
+	return libraryFolderBack(it.LibraryID, rel)
+}
+
+func urlQueryEscape(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
+
+func withinLibrary(root, rel string) (string, error) {
+	rel = strings.Trim(strings.ReplaceAll(rel, "\\", "/"), "/")
+	if rel == "" || strings.Contains(rel, "..") {
+		return "", fmt.Errorf("invalid path")
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(filepath.Join(rootAbs, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", err
+	}
+	if abs != rootAbs && !strings.HasPrefix(abs, rootAbs+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid path")
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
@@ -611,7 +1028,33 @@ func (s *Server) handleLibrary(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, r, "library.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), false))
+	s.repointLibrary(lib)
+	s.render(w, r, "library.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), r.URL.Query().Get("path"), false))
+}
+
+func (s *Server) repointLibrary(lib *db.Library) {
+	if s == nil || s.Fetch == nil || s.DB == nil || lib == nil {
+		return
+	}
+	if _, loaded := s.repointOnce.LoadOrStore(lib.ID, true); loaded {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		stale, err := s.Fetch.LibraryUsesStoreMetadata(ctx, lib.ID)
+		if err != nil || !stale {
+			return
+		}
+		if job, err := s.DB.RunningScanForLibrary(ctx, lib.ID); err == nil && job != nil {
+			s.repointOnce.Delete(lib.ID)
+			return
+		}
+		if err := s.Fetch.RepointLibraryMetadata(ctx, lib); err != nil {
+			log.Printf("repoint library %d: %v", lib.ID, err)
+			s.repointOnce.Delete(lib.ID)
+		}
+	}()
 }
 
 func (s *Server) handleHXItems(w http.ResponseWriter, r *http.Request) {
@@ -622,19 +1065,7 @@ func (s *Server) handleHXItems(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, r, "partials/items_live.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), true))
-}
-
-func (s *Server) handleHXSearch(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r)
-	q := r.URL.Query().Get("q")
-	libID, _ := strconv.ParseInt(r.URL.Query().Get("library"), 10, 64)
-	if lib, _ := s.DB.GetLibrary(r.Context(), u.ID, libID); lib == nil {
-		http.NotFound(w, r)
-		return
-	}
-	items, _ := s.DB.ListMediaItems(r.Context(), libID, "name", q)
-	s.render(w, r, "partials/items.html", map[string]any{"Items": s.mediaItemCards(r.Context(), u.ID, items)})
+	s.render(w, r, "partials/items_live.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), r.URL.Query().Get("path"), true))
 }
 
 func (s *Server) handleHXContinue(w http.ResponseWriter, r *http.Request) {
@@ -678,93 +1109,17 @@ func (s *Server) ownedEpisode(r *http.Request, id int64) *db.Episode {
 	return ep
 }
 
-func (s *Server) loadMovieNFO(it *db.MediaItem) *metadata.MovieNFO {
-	if it == nil || !it.NFOPath.Valid || it.NFOPath.String == "" {
-		return nil
-	}
-	n, err := metadata.ReadMovieNFO(filepath.Join(s.Cfg.Store.Path, it.NFOPath.String))
-	if err != nil {
-		return nil
-	}
-	return n
-}
-
-func (s *Server) loadShowNFO(it *db.MediaItem) *metadata.TVShowNFO {
-	if it == nil || !it.NFOPath.Valid || it.NFOPath.String == "" {
-		return nil
-	}
-	n, err := metadata.ReadTVShowNFO(filepath.Join(s.Cfg.Store.Path, it.NFOPath.String))
-	if err != nil {
-		return nil
-	}
-	return n
-}
-
-func (s *Server) handleMovie(w http.ResponseWriter, r *http.Request) {
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	it := s.ownedMediaItem(r, id)
-	if it == nil || it.Kind != "movie" {
-		http.NotFound(w, r)
-		return
-	}
-	s.render(w, r, "movie.html", map[string]any{"Item": it, "NFO": s.loadMovieNFO(it)})
-}
-
-func (s *Server) handleShow(w http.ResponseWriter, r *http.Request) {
+func (s *Server) ownedLibraryNode(r *http.Request, id int64) (*db.LibraryNode, *db.Library) {
 	u := userFrom(r)
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	it := s.ownedMediaItem(r, id)
-	if it == nil || it.Kind != "show" {
-		http.NotFound(w, r)
-		return
+	n, err := s.DB.GetLibraryNode(r.Context(), id)
+	if err != nil || n == nil {
+		return nil, nil
 	}
-	seasons, _ := s.DB.ListSeasons(r.Context(), id)
-	type seasonCard struct {
-		Season       db.Season
-		EpisodeCount int
-		ProgressPct  int
+	lib, err := s.DB.GetLibrary(r.Context(), u.ID, n.LibraryID)
+	if err != nil || lib == nil {
+		return nil, nil
 	}
-	cards := make([]seasonCard, 0, len(seasons))
-	for _, se := range seasons {
-		n, _ := s.DB.CountEpisodes(r.Context(), se.ID)
-		if n <= 0 {
-			continue
-		}
-		pct, _ := s.DB.SeasonWatchProgressPct(r.Context(), u.ID, se.ID)
-		cards = append(cards, seasonCard{Season: se, EpisodeCount: n, ProgressPct: pct})
-	}
-	children, _ := s.DB.ListChildMediaItems(r.Context(), id)
-	s.render(w, r, "show.html", map[string]any{
-		"Item": it, "SeasonCards": cards, "ChildItems": s.mediaItemCards(r.Context(), u.ID, children),
-		"NFO": s.loadShowNFO(it),
-	})
-}
-
-func (s *Server) handleSeason(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r)
-	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	n, _ := strconv.Atoi(chi.URLParam(r, "n"))
-	it := s.ownedMediaItem(r, id)
-	if it == nil {
-		http.NotFound(w, r)
-		return
-	}
-	season, _ := s.DB.GetSeasonByShowNum(r.Context(), id, n)
-	if season == nil {
-		http.NotFound(w, r)
-		return
-	}
-	eps, _ := s.DB.ListEpisodes(r.Context(), season.ID)
-	ids := make([]int64, 0, len(eps))
-	for _, ep := range eps {
-		ids = append(ids, ep.ID)
-	}
-	pcts, _ := s.DB.WatchProgressPctByEpisodeIDs(r.Context(), u.ID, ids)
-	cards := make([]episodeCard, 0, len(eps))
-	for _, ep := range eps {
-		cards = append(cards, episodeCard{Episode: ep, ProgressPct: pcts[ep.ID]})
-	}
-	s.render(w, r, "season.html", map[string]any{"Item": it, "Season": season, "Episodes": cards})
+	return n, lib
 }
 
 func (s *Server) handlePlayMovie(w http.ResponseWriter, r *http.Request) {
@@ -774,7 +1129,56 @@ func (s *Server) handlePlayMovie(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, r, "player.html", map[string]any{"Kind": "movie", "ID": id, "Title": it.Title, "SessionURL": fmt.Sprintf("/play/movie/%d/session", id)})
+	s.render(w, r, "player.html", map[string]any{
+		"Kind": "movie", "ID": id, "Title": it.Title,
+		"NavBack":    s.showFolderBack(r.Context(), it),
+		"SessionURL": fmt.Sprintf("/play/movie/%d/session", id),
+	})
+}
+
+func (s *Server) handlePlayFile(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	path, title, ok := s.fileNodePath(r, id)
+	if !ok || path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if title == "" {
+		title = stripVideoExt(filepath.Base(path))
+	}
+	n, _ := s.DB.GetLibraryNode(r.Context(), id)
+	var libID int64
+	folder := ""
+	if n != nil {
+		libID = n.LibraryID
+		folder = parentRel(n.RelPath)
+	}
+	s.render(w, r, "player.html", map[string]any{
+		"Kind": "file", "ID": id, "Title": title, "LibraryID": libID, "Folder": folder,
+		"SessionURL": fmt.Sprintf("/play/file/%d/session", id),
+	})
+}
+
+func (s *Server) fileNodePath(r *http.Request, id int64) (path, title string, ok bool) {
+	u := userFrom(r)
+	if u == nil {
+		return "", "", false
+	}
+	n, err := s.DB.GetLibraryNode(r.Context(), id)
+	if err != nil || n == nil || n.NodeKind != "file" {
+		return "", "", false
+	}
+	lib, err := s.DB.GetLibrary(r.Context(), u.ID, n.LibraryID)
+	if err != nil || lib == nil {
+		return "", "", false
+	}
+	abs := filepath.Join(lib.Path, filepath.FromSlash(n.RelPath))
+	rel, err := filepath.Rel(lib.Path, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", false
+	}
+	title = fileTitle(*n, readSideNFO(abs))
+	return abs, title, true
 }
 
 func (s *Server) handlePlayEpisode(w http.ResponseWriter, r *http.Request) {
@@ -785,8 +1189,13 @@ func (s *Server) handlePlayEpisode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := ep.Title.String
+	var show *db.MediaItem
+	if ep.ShowID > 0 {
+		show, _ = s.DB.GetMediaItem(r.Context(), ep.ShowID)
+	}
 	s.render(w, r, "player.html", map[string]any{
 		"Kind": "episode", "ID": id, "Title": title, "ShowID": ep.ShowID,
+		"NavBack":    s.showFolderBack(r.Context(), show),
 		"SessionURL": fmt.Sprintf("/play/episode/%d/session", id),
 	})
 }
@@ -807,6 +1216,9 @@ func (s *Server) playMediaPath(r *http.Request) (path string, ok bool) {
 			return "", false
 		}
 		return ep.Path, true
+	case "file":
+		path, _, ok := s.fileNodePath(r, id)
+		return path, ok
 	default:
 		return "", false
 	}
@@ -1036,6 +1448,18 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	if dur > 0 {
 		resp.Duration = dur
 	}
+	if kind == "file" {
+		if prev, next, err := s.DB.AdjacentFileNodes(r.Context(), id); err == nil {
+			if prev != nil {
+				pid := prev.ID
+				resp.PrevEpisodeID = &pid
+			}
+			if next != nil {
+				nid := next.ID
+				resp.NextEpisodeID = &nid
+			}
+		}
+	}
 	if kind == "episode" {
 		if prev, next, err := s.DB.AdjacentEpisodes(r.Context(), id); err == nil {
 			if prev != nil {
@@ -1191,9 +1615,39 @@ func (s *Server) handleHLSSeg(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetadata(w http.ResponseWriter, r *http.Request) {
-	rel := strings.TrimPrefix(r.URL.Path, "/metadata/")
 	w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+	if abs := strings.TrimSpace(r.URL.Query().Get("path")); abs != "" {
+		if !s.sidecarAllowed(r, abs) {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, abs)
+		return
+	}
+	rel := strings.TrimPrefix(r.URL.Path, "/metadata/")
 	http.ServeFile(w, r, filepath.Join(s.Cfg.Store.Path, "metadata", rel))
+}
+
+func (s *Server) sidecarAllowed(r *http.Request, abs string) bool {
+	abs = filepath.Clean(abs)
+	if !filepath.IsAbs(abs) || s == nil || s.DB == nil {
+		return false
+	}
+	u := userFrom(r)
+	if u == nil {
+		return false
+	}
+	libs, err := s.DB.ListLibraries(r.Context(), u.ID)
+	if err != nil {
+		return false
+	}
+	for _, lib := range libs {
+		root := filepath.Clean(lib.Path)
+		if abs == root || strings.HasPrefix(abs, root+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleKPA(w http.ResponseWriter, r *http.Request) {
@@ -1265,6 +1719,14 @@ func (s *Server) handleProgress(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if nid := r.FormValue("node_id"); nid != "" {
+		id, _ := strconv.ParseInt(nid, 10, 64)
+		if _, _, ok := s.fileNodePath(r, id); !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_ = s.DB.UpsertWatchNode(r.Context(), u.ID, id, pos, dur, completed)
+	}
 	if eid := r.FormValue("episode_id"); eid != "" {
 		id, _ := strconv.ParseInt(eid, 10, 64)
 		if s.ownedEpisode(r, id) == nil {
@@ -1302,6 +1764,13 @@ func (s *Server) handlePlaybackPrefs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		scope = s.playbackScope(r, "movie", id)
+	} else if nid := r.FormValue("node_id"); nid != "" {
+		id, _ := strconv.ParseInt(nid, 10, 64)
+		if _, _, ok := s.fileNodePath(r, id); !ok {
+			http.NotFound(w, r)
+			return
+		}
+		scope = nil
 	} else if eid := r.FormValue("episode_id"); eid != "" {
 		id, _ := strconv.ParseInt(eid, 10, 64)
 		if s.ownedEpisode(r, id) == nil {
@@ -1356,7 +1825,89 @@ func (s *Server) handlePlaybackPrefs(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, tab string, data map[string]any) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["SettingsTab"] = tab
+	name := "partials/settings_shell.html"
+	if r.Header.Get("HX-Target") == "settings-panel" {
+		name = "partials/settings_panel.html"
+	}
+	s.render(w, r, name, data)
+}
+
+func (s *Server) finishSettings(w http.ResponseWriter, r *http.Request, tab string, data map[string]any) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	r.Header.Set("HX-Target", "settings-panel")
+	s.renderSettings(w, r, tab, data)
+}
+
+func (s *Server) integrationsData(r *http.Request) (map[string]any, int, error) {
+	u := userFrom(r)
+	if u == nil {
+		return nil, http.StatusUnauthorized, fmt.Errorf("unauthorized")
+	}
+	if s.Cfg.EnsureIntegrationDefaults() {
+		_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
+	}
+	userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID)
+	if err != nil {
+		return nil, http.StatusInternalServerError, err
+	}
+	return map[string]any{
+		"Config":            s.Cfg,
+		"UserWebhooks":      userWH.ToConfig(),
+		"WebhookKeyMasked":  webhooks.MaskKey(userWH.APIKey),
+		"NotificationTypes": webhooks.AllNotificationTypes,
+		"ItemTypes":         webhooks.AllItemTypes,
+	}, http.StatusOK, nil
+}
+
+func (s *Server) accountsData(r *http.Request) (map[string]any, error) {
+	users, err := s.accountUsers(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"Users": users}, nil
+}
+
+func (s *Server) accountUsers(ctx context.Context) ([]db.User, error) {
+	users, err := s.DB.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]db.User, 0, len(users))
+	for _, u := range users {
+		if db.IsOverlord(u.Username) {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out, nil
+}
+
+func (s *Server) backupData() map[string]any {
+	names, _ := s.Backup.List()
+	return map[string]any{
+		"Archives": names,
+		"Status":   s.Backup.Status(),
+		"Config":   s.Cfg,
+	}
+}
+
 func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") != "true" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	dir := "."
 	if s.Cfg != nil && strings.TrimSpace(s.Cfg.ExeDir) != "" {
 		dir = s.Cfg.ExeDir
@@ -1368,17 +1919,42 @@ func (s *Server) handleAbout(w http.ResponseWriter, r *http.Request) {
 	if license == "" {
 		license = "Unavailable"
 	}
-	s.render(w, r, "about.html", map[string]any{
+	s.render(w, r, "partials/about_body.html", map[string]any{
 		"License": license,
 	})
 }
 
-func (s *Server) handleSupport(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "support.html", nil)
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil || u.Role != db.RoleAdmin {
+		s.handleSettingsIntegrations(w, r)
+		return
+	}
+	s.renderSettings(w, r, "general", map[string]any{"Config": s.Cfg})
 }
 
-func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "settings.html", nil)
+func (s *Server) handleSaveGeneral(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
+	if u == nil || u.Role != db.RoleAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	_ = r.ParseForm()
+	ttl, err := strconv.Atoi(strings.TrimSpace(r.FormValue("watchdog_ttl")))
+	if err != nil || ttl < 0 {
+		http.Error(w, "watchdog ttl must be zero or a positive number", http.StatusBadRequest)
+		return
+	}
+	s.Cfg.Scan.OnStartup = r.FormValue("scan_on_startup") == "on"
+	s.Cfg.Watchdog.TTLSeconds = ttl
+	if err := s.Cfg.Save(s.Cfg.OverlaySavePath()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if s.Watchdog != nil {
+		s.Watchdog.SetTTL(time.Duration(ttl) * time.Second)
+	}
+	s.finishSettings(w, r, "general", map[string]any{"Config": s.Cfg})
 }
 
 func (s *Server) handleSettingsLibrariesRedirect(w http.ResponseWriter, r *http.Request) {
@@ -1386,11 +1962,11 @@ func (s *Server) handleSettingsLibrariesRedirect(w http.ResponseWriter, r *http.
 }
 
 func (s *Server) handleSettingsServer(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/settings/engines?tab=ffmpeg", http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) handleSaveServer(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/settings/engines?tab=ffmpeg", http.StatusFound)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (s *Server) handleSaveBackup(w http.ResponseWriter, r *http.Request) {
@@ -1409,22 +1985,20 @@ func (s *Server) handleSaveBackup(w http.ResponseWriter, r *http.Request) {
 	_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
 	s.Backup.Cfg = s.Cfg
 	s.Backup.StartScheduler(context.Background())
-	http.Redirect(w, r, "/settings/backup", http.StatusFound)
+	s.finishSettings(w, r, "backup", s.backupData())
 }
 
 func (s *Server) handleSettingsBackup(w http.ResponseWriter, r *http.Request) {
-	names, _ := s.Backup.List()
-	st := s.Backup.Status()
-	s.render(w, r, "settings_backup.html", map[string]any{
-		"Archives": names,
-		"Status":   st,
-		"Config":   s.Cfg,
-	})
+	s.renderSettings(w, r, "backup", s.backupData())
 }
 
 func (s *Server) handleSettingsUsers(w http.ResponseWriter, r *http.Request) {
-	users, _ := s.DB.ListUsers(r.Context())
-	s.render(w, r, "settings_users.html", map[string]any{"Users": users})
+	data, err := s.accountsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderSettings(w, r, "accounts", data)
 }
 
 func (s *Server) handleCreateLibrary(w http.ResponseWriter, r *http.Request) {
@@ -1469,7 +2043,7 @@ func (s *Server) handleCreateLibrary(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
-	jobID, err := s.startLibraryScan(lib, mode, persist, overwrite)
+	jobID, err := s.startLibraryScan(lib, "", mode, persist, overwrite)
 	if err != nil {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
@@ -1652,51 +2226,62 @@ func (s *Server) handleDeleteLibrary(w http.ResponseWriter, r *http.Request) {
 func parseLibraryScanForm(r *http.Request) (mode string, persist, overwrite bool) {
 	mode = r.FormValue("mode")
 	switch mode {
-	case "local", "matchmedia", "matchmedia-changes":
+	case "rescan", "changes", "missing", "nfo", "local", "matchmedia", "matchmedia-changes":
 	default:
-		mode = "matchmedia-changes"
+		mode = "changes"
 	}
 	persist = r.FormValue("persist") == "1" || r.FormValue("persist") == "on" || r.FormValue("persist") == "true"
 	overwrite = r.FormValue("overwrite") == "1" || r.FormValue("overwrite") == "on" || r.FormValue("overwrite") == "true"
-	if mode == "local" || mode == "matchmedia-changes" {
-		if mode == "local" {
-			persist = false
-		}
+	switch mode {
+	case "nfo", "local":
+		persist = false
 		overwrite = false
+	case "changes", "matchmedia-changes":
+		overwrite = false
+	case "rescan", "matchmedia":
+		overwrite = true
 	}
 	return mode, persist, overwrite
 }
 
 func matchMediaScanMode(mode string) string {
 	switch mode {
-	case "local":
+	case "nfo", "local":
 		return "nfo"
-	case "matchmedia-changes":
+	case "changes", "matchmedia-changes":
 		return "changes"
+	case "missing":
+		return "missing"
 	default:
 		return "rescan"
 	}
 }
 
-func (s *Server) startLibraryScan(lib *db.Library, mode string, persist, overwrite bool) (int64, error) {
+func (s *Server) startLibraryScan(lib *db.Library, scanAbs, mode string, persist, overwrite bool) (int64, error) {
 	jobID, err := s.DB.CreateScanJob(context.Background(), lib.ID)
 	if err != nil {
 		return 0, err
 	}
-	go s.runLibraryScan(lib, jobID, mode, persist, overwrite)
+	go s.runLibraryScan(lib, scanAbs, jobID, mode, persist, overwrite)
 	return jobID, nil
 }
 
-func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persist, overwrite bool) {
+func (s *Server) runLibraryScan(lib *db.Library, scanAbs string, jobID int64, mode string, persist, overwrite bool) {
 	ctx := context.Background()
 	s.syncFetchClients()
-	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 1, "Matching…")
+	_ = s.DB.UpdateScanJob(ctx, jobID, "running", 0, "scan 0/0")
 	scanMode := matchMediaScanMode(mode)
-	if mode == "matchmedia-changes" {
+	if scanMode == "changes" {
 		overwrite = false
 	}
 	opts := fetch.Opts{Persist: persist, Overwrite: overwrite, ScanJobID: jobID, ScanMode: scanMode}
-	if err := s.Fetch.MatchLibrary(ctx, lib, opts); err != nil {
+	var err error
+	if scanAbs != "" && filepath.Clean(scanAbs) != filepath.Clean(lib.Path) {
+		err = s.Fetch.MatchPath(ctx, lib, scanAbs, nil, opts)
+	} else {
+		err = s.Fetch.MatchLibrary(ctx, lib, opts)
+	}
+	if err != nil {
 		log.Printf("match library %d: %v", lib.ID, err)
 		_ = s.DB.UpdateScanJob(ctx, jobID, "error", 100, err.Error())
 		return
@@ -1708,11 +2293,16 @@ func (s *Server) runLibraryScan(lib *db.Library, jobID int64, mode string, persi
 }
 
 func (s *Server) renderLibraryCard(w http.ResponseWriter, r *http.Request, lib *db.Library, job *db.ScanJob) {
-	card := s.libraryCardData(r.Context(), lib, job)
+	u := userFrom(r)
+	var userID int64
+	if u != nil {
+		userID = u.ID
+	}
+	card := s.libraryCardData(r.Context(), userID, lib, job)
 	s.render(w, r, "partials/library_card.html", map[string]any{
 		"Library": card.Library, "Posters": card.Posters, "Job": card.Job,
-		"Message": card.Message, "Poll": card.Poll, "ProgressPct": card.ProgressPct,
-		"Enriching": card.Enriching,
+		"Message": card.Message, "Lines": card.Lines, "Poll": card.Poll, "ProgressPct": card.ProgressPct,
+		"Enriching": card.Enriching, "Watched": card.Watched, "Total": card.Total, "WatchPct": card.WatchPct,
 	})
 }
 
@@ -1734,7 +2324,16 @@ func (s *Server) handleScanLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mode, persist, overwrite := parseLibraryScanForm(r)
-	jobID, err := s.startLibraryScan(lib, mode, persist, overwrite)
+	scanAbs := ""
+	if rel := strings.TrimSpace(r.FormValue("path")); rel != "" {
+		var err error
+		scanAbs, err = withinLibrary(lib.Path, rel)
+		if err != nil {
+			http.Error(w, "invalid path", 400)
+			return
+		}
+	}
+	jobID, err := s.startLibraryScan(lib, scanAbs, mode, persist, overwrite)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -1759,7 +2358,21 @@ func (s *Server) handleScanStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.renderLibraryCard(w, r, lib, j)
+	s.renderLibraryCardStatus(w, r, lib, j)
+}
+
+func (s *Server) renderLibraryCardStatus(w http.ResponseWriter, r *http.Request, lib *db.Library, job *db.ScanJob) {
+	u := userFrom(r)
+	var userID int64
+	if u != nil {
+		userID = u.ID
+	}
+	card := s.libraryCardData(r.Context(), userID, lib, job)
+	s.render(w, r, "partials/library_card_status_poll.html", map[string]any{
+		"Library": card.Library, "Job": card.Job, "Posters": card.Posters,
+		"Message": card.Message, "Lines": card.Lines, "Poll": card.Poll, "ProgressPct": card.ProgressPct,
+		"Enriching": card.Enriching, "Total": card.Total, "WatchPct": card.WatchPct,
+	})
 }
 
 func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
@@ -1787,6 +2400,9 @@ func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
 	if mode == "local" || mode == "dissociate" {
 		persist = false
 		overwrite = false
+	}
+	if mode == "matchmedia" {
+		overwrite = true
 	}
 	if mode == "matchmedia" || mode == "local" {
 		ready, reason, _ := s.metaStatus()
@@ -1890,10 +2506,91 @@ func entryScanProgressData(j *db.ScanJob, poll bool, mediaID int64, matchMedia b
 			reload = true
 		}
 	}
+	var lines []scanProgress
+	if j != nil && j.Message.Valid {
+		lines = parseScanLines(j.Message.String)
+	}
 	return map[string]any{
 		"Job": j, "Poll": poll, "MediaID": mediaID, "MatchMedia": matchMedia,
-		"NeedPick": needPick, "Reload": reload,
+		"NeedPick": needPick, "Reload": reload, "Lines": lines,
 	}
+}
+
+func parseScanLines(msg string) []scanProgress {
+	var out []scanProgress
+	for _, line := range strings.Split(msg, "\n") {
+		if p := parseScanProgress(strings.TrimSpace(line)); p.Phase != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func parseScanProgress(msg string) scanProgress {
+	msg = strings.TrimSpace(msg)
+	phase, rest, ok := strings.Cut(msg, " ")
+	if !ok {
+		return scanProgress{}
+	}
+	switch phase {
+	case "scan", "match", "fetch", "save", "stills":
+	default:
+		return scanProgress{}
+	}
+	head, tail, _ := strings.Cut(rest, " ")
+	done, total, ok := parsePhaseCount(head)
+	if !ok {
+		return scanProgress{}
+	}
+	out := scanProgress{Phase: phase, Done: done, Total: total}
+	switch phase {
+	case "scan", "stills":
+		out.Title = strings.TrimSpace(tail)
+	case "match":
+		out.Stats, out.Title = parseScanStats(tail, []string{"matched", "manual", "unmatched", "error", "sidecar", "replay", "folded"})
+	case "fetch", "save":
+		out.Stats, out.Title = parseScanStats(tail, []string{"nfo", "episode", "poster"})
+	}
+	return out
+}
+
+func parsePhaseCount(head string) (done, total int, ok bool) {
+	if doneS, totalS, slash := strings.Cut(head, "/"); slash {
+		d, err1 := strconv.Atoi(doneS)
+		t, err2 := strconv.Atoi(totalS)
+		if err1 != nil || err2 != nil {
+			return 0, 0, false
+		}
+		return d, t, true
+	}
+	d, err := strconv.Atoi(head)
+	if err != nil {
+		return 0, 0, false
+	}
+	return d, 0, true
+}
+
+func parseScanStats(s string, keys []string) ([]scanStat, string) {
+	want := map[string]bool{}
+	for _, k := range keys {
+		want[k] = true
+	}
+	fields := strings.Fields(s)
+	var stats []scanStat
+	i := 0
+	for i < len(fields) {
+		k, v, ok := strings.Cut(fields[i], ":")
+		if !ok || !want[k] {
+			break
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			break
+		}
+		stats = append(stats, scanStat{Label: k, Value: n, Tone: k})
+		i++
+	}
+	return stats, strings.Join(fields[i:], " ")
 }
 
 func (s *Server) handleBackupNow(w http.ResponseWriter, r *http.Request) {
@@ -1920,7 +2617,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/settings/backup", http.StatusFound)
+	s.finishSettings(w, r, "backup", s.backupData())
 }
 
 func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
@@ -1938,6 +2635,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	pass := r.FormValue("password")
 	confirm := r.FormValue("confirm")
+	if db.IsOverlord(username) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if username == "" || pass == "" || pass != confirm {
 		http.Error(w, "invalid input or passwords do not match", http.StatusBadRequest)
 		return
@@ -1950,7 +2651,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if u, err := s.DB.GetUserByUsername(r.Context(), username); err == nil && u != nil && s.Webhooks != nil {
 		s.dispatchWebhooks(r.Context(), u.ID, webhooks.NotificationUserCreated, webhooks.UserPayload(u))
 	}
-	http.Redirect(w, r, "/settings/users", http.StatusFound)
+	data, err := s.accountsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.finishSettings(w, r, "accounts", data)
 }
 
 func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request) {
@@ -1967,7 +2673,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	if u == nil || u.Role == db.RoleAdmin {
+	if u == nil || u.Role == db.RoleAdmin || db.IsOverlord(u.Username) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -1975,12 +2681,21 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/settings/users", http.StatusFound)
+	data, err := s.accountsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.finishSettings(w, r, "accounts", data)
 }
 
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	u, _ := s.DB.GetUser(r.Context(), id)
+	if u != nil && db.IsOverlord(u.Username) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	var whCfg *config.WebhooksConfig
 	if u != nil {
 		if userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID); err == nil && userWH != nil {
@@ -1995,7 +2710,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if u != nil && s.Webhooks != nil && whCfg != nil {
 		s.Webhooks.Dispatch(r.Context(), whCfg, s.serverID(), webhooks.NotificationUserDeleted, webhooks.UserPayload(u))
 	}
-	users, err := s.DB.ListUsers(r.Context())
+	users, err := s.accountUsers(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -2004,27 +2719,12 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSettingsIntegrations(w http.ResponseWriter, r *http.Request) {
-	u := userFrom(r)
-	if u == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	changed := s.Cfg.EnsureIntegrationDefaults()
-	if changed {
-		_ = s.Cfg.Save(s.Cfg.OverlaySavePath())
-	}
-	userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID)
+	data, code, err := s.integrationsData(r)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		http.Error(w, err.Error(), code)
 		return
 	}
-	s.render(w, r, "settings_integrations.html", map[string]any{
-		"Config":            s.Cfg,
-		"UserWebhooks":      userWH.ToConfig(),
-		"WebhookKeyMasked":  webhooks.MaskKey(userWH.APIKey),
-		"NotificationTypes": webhooks.AllNotificationTypes,
-		"ItemTypes":         webhooks.AllItemTypes,
-	})
+	s.renderSettings(w, r, "webhooks", data)
 }
 
 func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -2043,7 +2743,12 @@ func (s *Server) handleSaveIntegrations(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+	data, code, err := s.integrationsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), code)
+		return
+	}
+	s.finishSettings(w, r, "webhooks", data)
 }
 
 func parseWebhookDestinationsFromForm(r *http.Request) []config.WebhookDestination {
@@ -2090,7 +2795,12 @@ func (s *Server) handleRegenerateWebhookKey(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	http.Redirect(w, r, "/settings/integrations", http.StatusFound)
+	data, code, err := s.integrationsData(r)
+	if err != nil {
+		http.Error(w, err.Error(), code)
+		return
+	}
+	s.finishSettings(w, r, "webhooks", data)
 }
 
 func (s *Server) handleTestWebhooks(w http.ResponseWriter, r *http.Request) {

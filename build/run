@@ -4,24 +4,84 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+COMPOSE_FILE="$DIR/compose.yaml"
+
 compose() {
   if command -v podman-compose >/dev/null 2>&1; then
-    podman-compose -f compose.yaml "$@"
+    podman-compose -f "$COMPOSE_FILE" "$@"
   elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then
-    podman compose -f compose.yaml "$@"
+    podman compose -f "$COMPOSE_FILE" "$@"
   elif command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    docker compose -f compose.yaml "$@"
+    docker compose -f "$COMPOSE_FILE" "$@"
   else
     echo "error: need podman-compose, podman compose, or docker compose" >&2
     exit 1
   fi
 }
 
+yaml_quote() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '"%s"' "$s"
+}
+
+path_has_glob() {
+  case "$1" in
+    *'*'*|*'?'*|*'['*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Buildah globs the context path, so a literal * in the repo path matches nothing.
+prepare_compose() {
+  local root dest
+  root="$(cd "$DIR/.." && pwd)"
+  COMPOSE_FILE="$DIR/compose.yaml"
+  if ! path_has_glob "$root"; then
+    return 0
+  fi
+  dest="${XDG_CACHE_HOME:-$HOME/.cache}/servemedia/build-context"
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  tar -C "$root" \
+    --exclude=./build/cache \
+    --exclude=./build/dist \
+    --exclude=./build/package \
+    --exclude=./.git \
+    -cf - . | tar -C "$dest" -xf -
+  COMPOSE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/servemedia/compose.yaml"
+  cat >"$COMPOSE_FILE" <<EOF
+services:
+  dist:
+    build:
+      context: $(yaml_quote "$dest")
+      dockerfile: $(yaml_quote "$dest/build/Containerfile")
+    volumes:
+      - $(yaml_quote "$DIR/dist:/out:z")
+      - $(yaml_quote "$DIR/cache:/cache:z")
+      - $(yaml_quote "$DIR/package:/package:z")
+  ffmpeg-musl:
+    build:
+      context: $(yaml_quote "$dest")
+      dockerfile: $(yaml_quote "$dest/build/Containerfile.musl")
+    volumes:
+      - $(yaml_quote "$DIR/cache:/cache:z")
+  servemedia-musl:
+    build:
+      context: $(yaml_quote "$dest")
+      dockerfile: $(yaml_quote "$dest/build/Containerfile.servemedia-musl")
+    volumes:
+      - $(yaml_quote "$DIR/cache:/cache:z")
+EOF
+}
+
 rebuild() {
   mkdir -p "$DIR/dist" "$DIR/cache" "$DIR/package"
   : >"$DIR/dist/.gitkeep"
   : >"$DIR/cache/.gitkeep"
-  compose up --build --force-recreate --abort-on-container-exit
+  prepare_compose
+  compose up --build --force-recreate --abort-on-container-exit --no-deps dist
 }
 
 stage_package() {
@@ -45,6 +105,156 @@ write_tar() {
   echo "wrote $DIR/package/$name"
 }
 
+require_vendor_tree() {
+  local root="$DIR/dist/.local/share/servemedia/vendor"
+  local manifest="$DIR/../src/share/vendor.yaml"
+  local missing=0 dest
+  if [[ ! -f "$manifest" ]]; then
+    echo "error: $manifest not found" >&2
+    exit 1
+  fi
+  while IFS= read -r dest; do
+    if [[ ! -s "$root/$dest" ]]; then
+      echo "error: missing $root/$dest" >&2
+      missing=1
+    fi
+  done < <(python3 - "$manifest" <<'PY'
+import sys
+path = sys.argv[1]
+section = ""
+cur = None
+items = []
+
+def flush():
+    global cur
+    if cur and cur.get("dest"):
+        items.append(cur["dest"])
+    cur = None
+
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        raw = line.rstrip("\n")
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw[0] not in " \t":
+            flush()
+            section = raw.split(":", 1)[0].strip()
+            continue
+        if section != "assets":
+            continue
+        s = raw.strip()
+        if s.startswith("- "):
+            flush()
+            cur = {}
+            s = s[2:].strip()
+            if not s:
+                continue
+        if cur is None or ":" not in s:
+            continue
+        k, _, v = s.partition(":")
+        cur[k.strip()] = v.strip().strip('"').strip("'")
+flush()
+for dest in items:
+    print(dest)
+PY
+)
+  for dest in ffmpeg/ffmpeg ffmpeg/ffprobe; do
+    if [[ ! -f "$root/$dest" ]]; then
+      echo "error: missing $root/$dest" >&2
+      missing=1
+    fi
+  done
+  if [[ "$missing" -ne 0 ]]; then
+    echo "error: vendor tree incomplete; rebuild dist so the builder can fetch it" >&2
+    exit 1
+  fi
+}
+
+elf_interp() {
+  readelf -l "$1" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p'
+}
+
+require_ld_linux() {
+  local bin="$1" interp
+  interp="$(elf_interp "$bin")"
+  case "$interp" in
+    *ld-linux*)
+      echo "$bin interpreter: $interp"
+      ;;
+    *)
+      echo "error: $bin interpreter is ${interp:-unset}; expected ld-linux" >&2
+      exit 1
+      ;;
+  esac
+}
+
+require_ld_musl() {
+  local bin="$1" interp
+  interp="$(elf_interp "$bin")"
+  case "$interp" in
+    *ld-musl*)
+      echo "$bin interpreter: $interp"
+      ;;
+    *)
+      echo "error: $bin interpreter is ${interp:-unset}; expected ld-musl" >&2
+      exit 1
+      ;;
+  esac
+  if readelf -d "$bin" | grep -q 'libc\.so\.6'; then
+    echo "error: $bin needs libc.so.6" >&2
+    exit 1
+  fi
+}
+
+ensure_musl_ffmpeg() {
+  local cache="$DIR/cache/ffmpeg-musl"
+  if [[ ! -x "$cache/ffmpeg" || ! -x "$cache/ffprobe" ]]; then
+    echo "compiling musl ffmpeg into $cache"
+    compose build ffmpeg-musl
+    compose run --rm --no-deps ffmpeg-musl
+  else
+    echo "using cached musl ffmpeg from $cache"
+  fi
+  if [[ ! -x "$cache/ffmpeg" || ! -x "$cache/ffprobe" ]]; then
+    echo "error: musl ffmpeg missing in $cache" >&2
+    exit 1
+  fi
+  require_ld_musl "$cache/ffmpeg"
+}
+
+ensure_musl_servemedia() {
+  echo "building musl servemedia into $DIR/cache"
+  compose build servemedia-musl
+  compose run --rm --no-deps servemedia-musl
+  if [[ ! -x "$DIR/cache/servemedia-musl" || ! -x "$DIR/cache/servemedia-apprun" ]]; then
+    echo "error: musl servemedia missing in $DIR/cache" >&2
+    exit 1
+  fi
+  require_ld_musl "$DIR/cache/servemedia-musl"
+}
+
+stage_musl_package() {
+  local staging="$1"
+  local share ff
+  stage_package "$staging"
+  share="$staging/servemedia/.local/share/servemedia"
+  ff="$share/vendor/ffmpeg"
+  rm -rf "$ff"
+  mkdir -p "$ff"
+  cp -a "$DIR/cache/ffmpeg-musl/ffmpeg" "$DIR/cache/ffmpeg-musl/ffprobe" "$ff/"
+  if [[ -f "$DIR/cache/ffmpeg-musl/LICENSE" ]]; then
+    cp -a "$DIR/cache/ffmpeg-musl/LICENSE" "$ff/"
+  fi
+  if [[ -f "$DIR/cache/ffmpeg-musl/LICENSE.NOTICE" ]]; then
+    cp -a "$DIR/cache/ffmpeg-musl/LICENSE.NOTICE" "$ff/"
+  fi
+  chmod a+x "$ff/ffmpeg" "$ff/ffprobe"
+  cp -a "$DIR/cache/servemedia-musl" "$staging/servemedia/.local/bin/servemedia"
+  chmod a+x "$staging/servemedia/.local/bin/servemedia"
+  require_ld_musl "$staging/servemedia/.local/bin/servemedia"
+  require_ld_musl "$ff/ffmpeg"
+}
+
 package() {
   if [[ ! -x "$DIR/dist/.local/bin/servemedia" ]]; then
     echo "error: build/dist/.local/bin/servemedia not found; rebuild first" >&2
@@ -52,19 +262,26 @@ package() {
   fi
   mkdir -p "$DIR/package"
   : >"$DIR/package/.gitkeep"
+  prepare_compose
+  require_vendor_tree
+  require_ld_linux "$DIR/dist/.local/bin/servemedia"
+  require_ld_linux "$DIR/dist/.local/share/servemedia/vendor/ffmpeg/ffmpeg"
+  ensure_musl_ffmpeg
+  ensure_musl_servemedia
   local staging
-
-  HOME="$DIR/cache/xdg" \
-    XDG_DATA_HOME="$DIR/cache/xdg/.local/share" \
-    SERVEMEDIA_ROOT="$DIR/dist/.local/share/servemedia" \
-    "$DIR/dist/.local/bin/servemedia" --prepare
 
   staging="$(mktemp -d)"
   stage_package "$staging"
-  local name="servemedia-linux-amd64.tar.gz"
-  write_tar "$staging" "$name"
+  rm -rf "$staging/servemedia/.local/share/servemedia/vendor/ffmpeg/musl"
+  write_tar "$staging" "servemedia-linux-amd64-glibc.tar.gz"
   rm -rf "$staging"
-  compose run --rm dist /build appimage "/package/$name"
+
+  staging="$(mktemp -d)"
+  stage_musl_package "$staging"
+  write_tar "$staging" "servemedia-linux-amd64-musl.tar.gz"
+  rm -rf "$staging"
+  compose run --rm dist /build/build appimage "/package/servemedia-linux-amd64-glibc.tar.gz"
+  compose run --rm dist /build/build appimage-musl "/package/servemedia-linux-amd64-musl.tar.gz"
 }
 
 start() {
@@ -145,20 +362,23 @@ menu() {
 }
 
 CHOICE=
-menu "run" "(re)build & run" "(re)build & prepare" "(re)build & package"
+menu "run" "run (webkit)" "(re)build & run" "(re)build & run (webkit)" "(re)build & package"
 case "$CHOICE" in
   0)
     start
     ;;
   1)
-    rebuild
-    start
+    start --webkit
     ;;
   2)
     rebuild
-    start --prepare
+    start
     ;;
   3)
+    rebuild
+    start --webkit
+    ;;
+  4)
     rebuild
     package
     ;;

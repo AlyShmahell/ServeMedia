@@ -22,7 +22,7 @@ async function ensureAdmin(page) {
 
 async function ensureMovieLibrary(page) {
   await page.goto('/');
-  // Anime films also live at /movies/:id — always open the Movies library.
+  // Sample Movie lives in the Movies library tree.
   const moviesLib = page.locator('.library-card').filter({
     has: page.locator('.library-card-title', { hasText: 'Movies' }),
   }).first();
@@ -133,10 +133,12 @@ async function injectSessionTracks(page) {
 async function openSampleMoviePlayer(page) {
   await page.goto('/');
   await page.locator('.library-card-title', { hasText: 'Movies' }).first().click();
-  await page.locator('#items a.card').filter({
-    has: page.locator('.t', { hasText: /Sample Movie/i }),
+  await page.locator('#items a.card, #items a.file-card').filter({
+    hasText: /Sample Movie/i,
   }).first().click();
-  await page.locator('a[href^="/play/movie/"]').first().click();
+  if (!/\/play\//.test(page.url())) {
+    await page.locator('a.file-card[href^="/play/file/"]').first().click();
+  }
   await expect(page.locator('.video-js')).toBeVisible({ timeout: 30000 });
   await expect(page.locator('#status')).toContainText(/Direct play|Playing|Converting/, { timeout: 30000 });
 }
@@ -211,10 +213,10 @@ test('episode player has prev/next in the control bar', async ({ page }) => {
     show = page.getByRole('link', { name: /Sample Show/i }).first();
   }
   await show.click();
-  await expect(page).toHaveURL(/\/shows\/\d+$/);
-  await page.locator('.season-card').first().click();
-  await expect(page).toHaveURL(/\/seasons\/\d+/);
-  await page.locator('a.episode-still[href^="/play/episode/"]').first().click();
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await page.locator('#items a.file-card').filter({ hasText: /Season/i }).first().click();
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await page.locator('a.file-card[href^="/play/file/"]').first().click();
   await expect(page.locator('.video-js')).toBeVisible({ timeout: 30000 });
   await expect(page.locator('#status')).toContainText(/Direct play|Playing|Converting|Loading/, { timeout: 30000 });
   await forceControlBar(page);
@@ -233,11 +235,11 @@ test('next episode advances from the control bar', async ({ page }) => {
   await page.locator('#items a.card').filter({
     has: page.locator('.t', { hasText: /^Pack Show/ }),
   }).first().click();
-  await expect(page).toHaveURL(/\/shows\/\d+/);
-  await page.locator('a.season-card').first().click();
-  await expect(page.locator('.episode-card')).toHaveCount(2, { timeout: 30000 });
-  await page.locator('a.episode-still[href^="/play/episode/"]').first().click();
-  await expect(page).toHaveURL(/\/play\/episode\/\d+/);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await page.locator('#items a.file-card').filter({ hasText: /Season/i }).first().click();
+  await expect(page.locator('a.file-card[href^="/play/file/"]')).toHaveCount(2, { timeout: 30000 });
+  await page.locator('a.file-card[href^="/play/file/"]').first().click();
+  await expect(page).toHaveURL(/\/play\/file\/\d+/);
   await expect(page.locator('.video-js')).toBeVisible({ timeout: 30000 });
   await expect(page.locator('#status')).toContainText(/Direct play|Playing|Converting|Loading/, { timeout: 30000 });
   await forceControlBar(page);
@@ -252,7 +254,7 @@ test('next episode advances from the control bar', async ({ page }) => {
   const before = page.url();
   await next.click();
   await expect.poll(() => page.url(), { timeout: 20000 }).not.toBe(before);
-  await expect(page).toHaveURL(/\/play\/episode\/\d+/);
+  await expect(page).toHaveURL(/\/play\/(file|episode)\/\d+/);
 });
 
 test('status sits below the player stage', async ({ page }) => {

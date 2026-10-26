@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { ensureAdmin, ensureRegularUser } = require('./helpers');
+const { ensureAdmin, ensureRegularUser, openSettings, openSettingsTab } = require('./helpers');
 
 const STUB = process.env.WEBHOOK_STUB_URL || 'http://webhook-stub:9090';
 
@@ -23,8 +23,9 @@ test.describe.configure({ mode: 'serial' });
 
 test('integrations page shows webhook settings', async ({ page }) => {
   await ensureAdmin(page);
-  await page.goto('/settings/integrations');
-  await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+  await page.goto('/');
+  await openSettingsTab(page, 'Webhooks');
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { name: 'Webhooks' })).toBeVisible();
   await expect(page.locator('#tab-metadata')).toHaveCount(0);
   await expect(page.locator('#webhook-api-key')).not.toHaveValue('');
@@ -34,21 +35,26 @@ test('regular user can access integrations', async ({ page }) => {
   await ensureRegularUser(page);
   const res = await page.goto('/settings/integrations');
   expect(res.status()).toBe(200);
-  await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await openSettings(page);
+  await expect(page.getByRole('heading', { name: 'Webhooks' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'FFmpeg' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Accounts' })).toHaveCount(0);
 });
 
 test('test webhook delivers ServeMedia webhook payload', async ({ page, request }) => {
   await ensureAdmin(page);
   await clearStubEvents(request);
 
-  await page.goto('/settings/integrations');
+  await page.goto('/');
+  await openSettingsTab(page, 'Webhooks');
   await page.locator('input[name="webhook_enabled"]').check();
   await page.fill('input[name="dest_0_name"]', 'Smoke');
   await page.fill('input[name="dest_0_url"]', `${STUB}/hook`);
   await page.locator('input[name="dest_0_enabled"]').check();
   await page.locator('input[name="dest_0_types"][value="Generic"]').check();
   await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page).toHaveURL(/\/settings\/integrations$/);
+  await expect(page).toHaveURL(/\/$/);
 
   await page.locator('#test-webhooks').click();
   await expect(page.locator('#webhook-test-result')).toContainText(/Sent to 1/, { timeout: 15000 });
@@ -69,13 +75,14 @@ test('user deleted fires UserDeleted webhook to that user', async ({ page, reque
   const password = 'userpass1';
 
   await ensureAdmin(page);
-  await page.goto('/settings/users');
+  await page.goto('/');
+  await openSettingsTab(page, 'Accounts');
   await page.locator('#add-user-open').click();
   await page.fill('#add-user-username', username);
   await page.fill('#add-user-password', password);
   await page.fill('#add-user-confirm', password);
   await page.locator('#add-user-submit').click();
-  await page.waitForURL(/\/settings\/users$/);
+  await expect(page.locator('#users-table-body')).toContainText(username);
 
   await page.locator('form.topbar-logout button').click();
   await page.waitForURL(/\/login$/);
@@ -85,14 +92,14 @@ test('user deleted fires UserDeleted webhook to that user', async ({ page, reque
   await page.waitForURL(/\/$/);
 
   await clearStubEvents(request);
-  await page.goto('/settings/integrations');
+  await openSettingsTab(page, 'Webhooks');
   await page.locator('input[name="webhook_enabled"]').check();
   await page.fill('input[name="dest_0_name"]', 'Smoke');
   await page.fill('input[name="dest_0_url"]', `${STUB}/hook`);
   await page.locator('input[name="dest_0_enabled"]').check();
   await page.locator('input[name="dest_0_types"][value="UserDeleted"]').check();
   await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page).toHaveURL(/\/settings\/integrations$/);
+  await expect(page).toHaveURL(/\/$/);
 
   await page.locator('form.topbar-logout button').click();
   await page.waitForURL(/\/login$/);
@@ -101,7 +108,7 @@ test('user deleted fires UserDeleted webhook to that user', async ({ page, reque
   await page.click('button[type="submit"]');
   await page.waitForURL(/\/$/);
 
-  await page.goto('/settings/users');
+  await openSettingsTab(page, 'Accounts');
   page.once('dialog', (dialog) => dialog.accept());
   await page.locator('tr', { hasText: username }).locator('button.user-action-delete').click();
 

@@ -10,13 +10,22 @@ import (
 type pickerSnapshot struct {
 	Match      *matchmedia.Candidate  `json:"match,omitempty"`
 	Candidates []matchmedia.Candidate `json:"candidates,omitempty"`
+	Title      string                 `json:"title,omitempty"`
+	Year       string                 `json:"year,omitempty"`
+	Parent     string                 `json:"parent,omitempty"`
+	Kind       string                 `json:"kind,omitempty"`
+	Path       string                 `json:"path,omitempty"`
+	Files      []matchmedia.JobFile   `json:"files,omitempty"`
 }
 
 func EncodePickerSnapshot(j matchmedia.Job) string {
 	if j.Match == nil && len(j.Candidates) == 0 {
 		return ""
 	}
-	b, err := json.Marshal(pickerSnapshot{Match: j.Match, Candidates: j.Candidates})
+	b, err := json.Marshal(pickerSnapshot{
+		Match: j.Match, Candidates: j.Candidates,
+		Title: j.Title, Year: j.Year, Parent: j.Parent, Kind: j.Kind, Path: j.Path, Files: j.Files,
+	})
 	if err != nil {
 		return ""
 	}
@@ -32,7 +41,10 @@ func DecodePickerSnapshot(raw string) matchmedia.Job {
 	if err := json.Unmarshal([]byte(raw), &snap); err != nil {
 		return matchmedia.Job{}
 	}
-	return matchmedia.Job{Match: snap.Match, Candidates: snap.Candidates}
+	return matchmedia.Job{
+		Match: snap.Match, Candidates: snap.Candidates,
+		Title: snap.Title, Year: snap.Year, Parent: snap.Parent, Kind: snap.Kind, Path: snap.Path, Files: snap.Files,
+	}
 }
 
 func JobHasPickerCandidates(j matchmedia.Job) bool {

@@ -1,6 +1,59 @@
 {{define "partials/items.html"}}
+{{if .Tree}}
+{{if not .Path}}
+{{range .Nodes}}
+<a class="card" href="{{.Href}}">
+  <div class="poster-wrap">
+    <img class="poster" src="{{posterURL .Node.PosterPath.String .Node.MetaID.String}}" alt="">
+    {{template "partials/node_scan.html" .}}
+    {{if and .Total (not $.Poll)}}<div class="poster-progress poster-progress-watch" aria-hidden="true"><span style="width:{{.WatchPct}}%"></span></div>{{end}}
+  </div>
+      <div class="t">{{.Title}}</div>
+</a>
+{{end}}
+{{end}}
+{{if or .Files (and .Path .Nodes)}}
+<div class="file-list">
+{{if .Path}}
+{{range .Nodes}}
+<a class="file-card" href="{{.Href}}">
+  <div class="poster-wrap file-card-still">
+    <img class="poster" src="{{posterURL .Node.PosterPath.String .Node.MetaID.String}}" alt="">
+    {{template "partials/node_scan.html" .}}
+    {{if and .Total (not $.Poll)}}<div class="poster-progress poster-progress-watch" aria-hidden="true"><span style="width:{{.WatchPct}}%"></span></div>{{end}}
+  </div>
+  <div class="file-card-body">
+    <div class="file-card-title">{{.Title}}</div>
+    {{template "partials/card_plot.html" .}}
+  </div>
+</a>
+{{end}}
+{{end}}
+{{range .Files}}
+<a class="file-card" href="{{.Href}}">
+  <div class="poster-wrap file-card-still"{{if .UploadURL}} data-upload-url="{{.UploadURL}}"{{if .GenerateURL}} data-generate-url="{{.GenerateURL}}"{{end}}{{end}}>
+    <img class="poster" src="{{posterURL .Still .Node.MetaID.String}}" alt="">
+    {{if .UploadURL}}<button type="button" class="field-icon field-icon-still" data-role="still" title="Choose still" aria-label="Choose still">{{template "partials/icon_image.html"}}</button>{{end}}
+    {{template "partials/node_scan.html" .}}
+    <div class="poster-progress" aria-hidden="true"><span style="width:{{.ProgressPct}}%"></span></div>
+  </div>
+  <div class="file-card-body">
+    <div class="file-card-title">{{.Title}}</div>
+    {{template "partials/card_plot.html" .}}
+    {{if .Facts}}
+    <dl class="file-facts">
+      {{range .Facts}}<div><dt>{{.Label}}</dt><dd>{{.Value}}</dd></div>{{end}}
+    </dl>
+    {{end}}
+  </div>
+</a>
+{{end}}
+</div>
+{{end}}
+{{if and (not .Nodes) (not .Files)}}<p class="muted">Empty folder.</p>{{end}}
+{{else}}
 {{range .Items}}
-<a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
+<a class="card" href="{{.Href}}">
   <div class="poster-wrap">
     <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
     {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID .Item.Title $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
@@ -9,4 +62,5 @@
   <div class="t">{{.Item.Title}}{{if .Item.Year.Valid}} ({{.Item.Year.Int64}}){{end}}</div>
 </a>
 {{else}}<p class="muted">No items.</p>{{end}}
+{{end}}
 {{end}}

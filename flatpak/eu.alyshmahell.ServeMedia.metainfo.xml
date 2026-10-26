@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>eu.alyshmahell.ServeMedia</id>
   <name>ServeMedia</name>
-  <summary>Self-hosted media server for Linux</summary>
+  <summary>The Self-hosted media center for Linux</summary>
   <metadata_license>FSFAP</metadata_license>
   <project_license>BSD-3-Clause</project_license>
   <developer id="eu.alyshmahell">
@@ -13,19 +13,27 @@
   <url type="vcs-browser">https://github.com/AlyShmahell/servemedia</url>
   <description>
     <p>
-      ServeMedia is The Self-Hosted Media-Server for Linux. 
-      It is built around a core application called MatchMedia which acts as a statistical engine responsible for directory hierarchy discovery of media libraries, title extraction and grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and ranking candidates and mapping them to the appropriate files. 
-      ServeMedia is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media server. 
-      ServeMedia provides a desktop entry which starts its services then opens the browser pointed to its webpage (port 7676), which is server-side-rendered and provides a home theater experience, complete with dri accelerated hls streamed video playback. 
+      ServeMedia is The Self-Hosted Media-Center for Linux. 
+      It is built around a core module called MatchMedia which acts as a statistical engine 
+      responsible for directory hierarchy discovery of media libraries, title extraction and 
+      grouping, metadata search-and-fetch from providers like TVMaze, statistically scoring and 
+      ranking candidates and mapping them to the appropriate files and folder hierarchies. 
+      ServeMedia is built to be lightweight, minimal and concise, yet feature-complete for a self hosted media center. 
+      ServeMedia can be both: a standalone desktop application with a desktop entry and a webkit wrapped gui on a single device, 
+      and a media server which can serve a server-side-rendered frontend over the local network. 
+      Compatible files play directly. Other files are transcoded to HLS, on the GPU when the driver check succeeds.
     </p>
   </description>
   <keywords>
-    <keyword>media</keyword>
-    <keyword>server</keyword>
-    <keyword>library</keyword>
-    <keyword>local</keyword>
-    <keyword>selfhosted</keyword>
-    <keyword>playback</keyword>
+    <keyword>media-server</keyword>
+    <keyword>media-center</keyword>
+    <keyword>home-theater</keyword>
+    <keyword>media-library</keyword>
+    <keyword>local-software</keyword>
+    <keyword>self-hosted</keyword>
+    <keyword>media-playback</keyword>
+    <keyword>media-organazzation</keyword>
+    <keyword>media-streaming</keyword>
   </keywords>
   <branding>
     <color type="primary" scheme_preference="dark">#0f1419</color>
@@ -72,6 +80,6 @@
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.1.0" date="2026-10-01"/>
+    <release version="0.2.0" date="2026-10-26"/>
   </releases>
 </component>

@@ -114,7 +114,7 @@ func TestRunLibraryScanMatchMediaSkipsMixedWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.runLibraryScan(lib, jobID, "matchmedia", false, true)
+	s.runLibraryScan(lib, "", jobID, "matchmedia", false, true)
 	if scanMode != "rescan" {
 		t.Fatalf("mode %q want rescan", scanMode)
 	}
@@ -186,7 +186,7 @@ func TestRunLibraryScanLocalSendsNFO(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.runLibraryScan(lib, jobID, "local", false, false)
+	s.runLibraryScan(lib, "", jobID, "local", false, false)
 	if gotMode != "nfo" {
 		t.Fatalf("mode %q want nfo", gotMode)
 	}
@@ -252,7 +252,7 @@ func TestRunLibraryScanChangesSendsMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.runLibraryScan(lib, jobID, "matchmedia-changes", true, true)
+	s.runLibraryScan(lib, "", jobID, "matchmedia-changes", true, true)
 	if gotMode != "changes" {
 		t.Fatalf("mode %q want changes", gotMode)
 	}

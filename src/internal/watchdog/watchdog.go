@@ -56,6 +56,15 @@ func (w *Watchdog) Run() {
 	}
 }
 
+func (w *Watchdog) SetTTL(ttl time.Duration) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.ttl = ttl
+	w.mu.Unlock()
+}
+
 func (w *Watchdog) Pulse(userID int64, tabID, path, title string) {
 	if w == nil || tabID == "" || userID == 0 {
 		return

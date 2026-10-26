@@ -20,14 +20,13 @@ func TestMustParseTemplates(t *testing.T) {
 	for _, name := range []string{
 		"home.html",
 		"library.html",
-		"movie.html",
-		"show.html",
 		"partials/match_dialog.html",
 		"partials/scan_modal.html",
 		"partials/card_actions.html",
 		"partials/items.html",
 		"partials/recent.html",
 		"partials/items_live.html",
+		"partials/folder_hero.html",
 		"partials/entry_scan_progress.html",
 		"partials/head_scripts.html",
 	} {
@@ -37,68 +36,41 @@ func TestMustParseTemplates(t *testing.T) {
 	}
 }
 
-func TestShowTemplateTitlesGrid(t *testing.T) {
+func TestRecentAndItemsCardsUseHref(t *testing.T) {
 	tplFS, err := fs.Sub(web.FS, "templates")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tpl := MustParseTemplates(tplFS)
-	var buf bytes.Buffer
-	data := map[string]any{
-		"Item": db.MediaItem{ID: 1, LibraryID: 2, Title: "KonoSuba", Kind: "show"},
-		"SeasonCards": []struct {
-			Season       db.Season
-			EpisodeCount int
-			ProgressPct  int
-		}{
-			{Season: db.Season{SeasonNumber: 1, Title: sql.NullString{String: "Season 1", Valid: true}}, EpisodeCount: 10},
-			{Season: db.Season{SeasonNumber: 0, Title: sql.NullString{String: "Ghost", Valid: true}}, EpisodeCount: 0},
-		},
-		"ChildItems": []itemCard{
-			{Item: db.MediaItem{ID: 9, Kind: "movie", Title: "Explosion", Plot: sql.NullString{String: "secret plot", Valid: true}}},
-		},
-		"MetaReady":          true,
-		"MetaDisabledReason": "",
-	}
-	if err := tpl.ExecuteTemplate(&buf, "show.html", data); err != nil {
+	cards := []itemCard{{
+		Item: db.MediaItem{ID: 7, Kind: "show", Title: "Fresh Title"},
+		Href: "/libraries/4/tree?path=Fresh%20Title",
+	}}
+	var recent bytes.Buffer
+	if err := tpl.ExecuteTemplate(&recent, "partials/recent.html", map[string]any{
+		"Recent": cards, "RecentTrigger": "every 30s", "MetaReady": true, "MetaDisabledReason": "",
+	}); err != nil {
 		t.Fatal(err)
 	}
-	html := buf.String()
-	if !strings.Contains(html, ">Titles<") {
-		t.Fatal("expected Titles heading")
+	html := recent.String()
+	if !strings.Contains(html, `href="/libraries/4/tree?path=Fresh%20Title"`) {
+		t.Fatalf("recent href %s", html)
 	}
-	if strings.Contains(html, "Related") {
-		t.Fatal("related section should be gone")
+	if strings.Contains(html, "/shows/") || strings.Contains(html, "/movies/") {
+		t.Fatalf("recent catalog url %s", html)
 	}
-	if strings.Contains(html, "Ghost") {
-		t.Fatal("empty season should be omitted")
+	var items bytes.Buffer
+	if err := tpl.ExecuteTemplate(&items, "partials/items.html", map[string]any{
+		"Items": cards, "MetaReady": true, "MetaDisabledReason": "",
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(html, "Season 1") {
-		t.Fatal("season with episodes")
+	got := items.String()
+	if !strings.Contains(got, `href="/libraries/4/tree?path=Fresh%20Title"`) {
+		t.Fatalf("items href %s", got)
 	}
-	if !strings.Contains(html, "Explosion") {
-		t.Fatal("child title")
-	}
-	if strings.Contains(html, "secret plot") {
-		t.Fatal("nested plot should be omitted")
-	}
-	if !strings.Contains(html, `data-edit-url="/hx/media/1/meta"`) {
-		t.Fatal("show title/plot edit")
-	}
-	if !strings.Contains(html, `data-upload-url="/hx/media/1/poster"`) {
-		t.Fatal("show poster upload")
-	}
-	if !strings.Contains(html, `id="poster-edit-dialog"`) {
-		t.Fatal("poster modal")
-	}
-	if !strings.Contains(html, `id="poster-edit-save"`) {
-		t.Fatal("poster save")
-	}
-	if !strings.Contains(html, `/hx/shows/1/seasons/1/meta`) {
-		t.Fatal("season card edit")
-	}
-	if strings.Contains(html, `/hx/media/9/meta`) {
-		t.Fatal("child movie cards stay click-through")
+	if strings.Contains(got, "/shows/") || strings.Contains(got, "/movies/") {
+		t.Fatalf("items catalog url %s", got)
 	}
 }
 
@@ -263,7 +235,7 @@ func TestCardActionsErrorBadgeNoMatchModal(t *testing.T) {
 		t.Fatal(err)
 	}
 	unmatched := buf.String()
-	if !strings.Contains(unmatched, `class="match-bang"`) || !strings.Contains(unmatched, "openMatchModal") {
+	if !strings.Contains(unmatched, `class="match-bang"`) || !strings.Contains(unmatched, `data-media-id="12"`) {
 		t.Fatalf("unmatched still needs pick: %s", unmatched)
 	}
 	if strings.Contains(unmatched, `class="match-fail"`) {
@@ -308,17 +280,150 @@ func TestScanModalMatchMediaModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := buf.String()
-	if !strings.Contains(html, "Scan with MatchMedia (Rescan)") {
+	if !strings.Contains(html, ">Rescan<") {
 		t.Fatal("rescan label")
 	}
-	if !strings.Contains(html, "Scan with MatchMedia (Changes)") {
-		t.Fatal("changes label")
+	if !strings.Contains(html, ">Changes<") || !strings.Contains(html, ">Missing<") {
+		t.Fatal("changes and missing labels")
 	}
-	if !strings.Contains(html, `value="matchmedia-changes" selected`) {
+	if !strings.Contains(html, `value="changes" selected`) {
 		t.Fatal("changes selected when ready")
 	}
-	if !strings.Contains(html, `id="scan-overwrite-wrap"`) {
-		t.Fatal("overwrite wrap")
+	if strings.Contains(html, `value="nfo"`) || strings.Contains(html, `name="persist"`) || strings.Contains(html, `name="overwrite"`) {
+		t.Fatal("library scan dialog still exposes nfo or sidecar checkboxes")
+	}
+}
+
+func TestParseScanProgress(t *testing.T) {
+	scan := parseScanProgress("scan 195/195 somali and the forest spirit")
+	if scan.Phase != "scan" || scan.Done != 195 || scan.Total != 195 || scan.Title != "somali and the forest spirit" || len(scan.Stats) != 0 {
+		t.Fatalf("scan %#v", scan)
+	}
+	match := parseScanProgress("match 230/230 matched:185 manual:40 unmatched:5 error:0 dark matter")
+	if match.Phase != "match" || match.Title != "dark matter" || len(match.Stats) != 4 || match.Stats[0].Value != 185 || match.Stats[3].Tone != "error" {
+		t.Fatalf("match %#v", match)
+	}
+	full := parseScanProgress("match 12/40 matched:9 manual:2 unmatched:1 error:0 sidecar:4 replay:3 folded:6 Cowboy Bebop")
+	if full.Title != "Cowboy Bebop" || len(full.Stats) != 7 || full.Stats[4].Label != "sidecar" || full.Stats[4].Value != 4 || full.Stats[5].Label != "replay" || full.Stats[6].Value != 6 || full.Stats[6].Tone != "folded" {
+		t.Fatalf("full match %#v", full)
+	}
+	fetch := parseScanProgress("fetch 185/185 nfo:2467 poster:183 somali and the forest spirit")
+	if fetch.Phase != "fetch" || len(fetch.Stats) != 2 || fetch.Stats[0].Label != "nfo" || fetch.Stats[0].Value != 2467 || fetch.Stats[1].Value != 183 {
+		t.Fatalf("fetch %#v", fetch)
+	}
+	withEp := parseScanProgress("fetch 3/10 nfo:1 episode:12 poster:2 Show")
+	if withEp.Title != "Show" || len(withEp.Stats) != 3 || withEp.Stats[0].Label != "nfo" || withEp.Stats[0].Value != 1 || withEp.Stats[1].Label != "episode" || withEp.Stats[1].Value != 12 || withEp.Stats[2].Label != "poster" || withEp.Stats[2].Value != 2 {
+		t.Fatalf("fetch with episode %#v", withEp)
+	}
+	open := parseScanProgress("fetch 40 nfo:510 poster:38 other title")
+	if open.Done != 40 || open.Total != 0 || open.Title != "other title" || open.Stats[0].Value != 510 {
+		t.Fatalf("open fetch %#v", open)
+	}
+	lines := parseScanLines("match 120/230 matched:80 manual:10 unmatched:2 error:0 title\nfetch 40 nfo:510 poster:38 other title")
+	if len(lines) != 2 || lines[0].Phase != "match" || lines[1].Phase != "fetch" || lines[1].Done != 40 {
+		t.Fatalf("lines %#v", lines)
+	}
+	stills := parseScanProgress("stills 4/20 Legend of Crimson")
+	if stills.Phase != "stills" || stills.Done != 4 || stills.Total != 20 || stills.Title != "Legend of Crimson" || len(stills.Stats) != 0 {
+		t.Fatalf("stills %#v", stills)
+	}
+	if parseScanProgress("Complete").Phase != "" {
+		t.Fatal("plain message parsed")
+	}
+}
+
+func TestScanProgressStacksBothLines(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	lines := parseScanLines("match 120/230 matched:80 manual:10 unmatched:2 error:0 title\nfetch 40 nfo:510 poster:38 other title")
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "partials/library_card.html", map[string]any{
+		"Library":     db.Library{ID: 1, Name: "Lib"},
+		"Lines":       lines,
+		"Poll":        true,
+		"Job":         &db.ScanJob{ID: 9, Status: "running", ProgressPct: 40},
+		"ProgressPct": 40,
+		"Total":       4439,
+		"WatchPct":    0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if strings.Count(html, "scan-grid") != 2 {
+		t.Fatalf("grids: %s", html)
+	}
+	if !strings.Contains(html, "match 120/230") || !strings.Contains(html, "fetch 40") {
+		t.Fatalf("steps: %s", html)
+	}
+	if strings.Contains(html, "fetch 40/") {
+		t.Fatalf("fetch denominator: %s", html)
+	}
+	if strings.Contains(html, "has-watch") || strings.Contains(html, "watched ") {
+		t.Fatalf("watch during scan: %s", html)
+	}
+	statusAt := strings.Index(html, `id="library-1-status"`)
+	collageAt := strings.Index(html, "library-collage")
+	if statusAt < 0 || collageAt < 0 || collageAt > statusAt || !strings.Contains(html, `hx-swap="innerHTML"`) || !strings.Contains(html, `hx-get="/hx/scan/9/status"`) {
+		t.Fatalf("poll not on status: %s", html)
+	}
+
+	buf.Reset()
+	lines = parseScanLines("match 120/230 matched:80 manual:10 unmatched:2 error:0 title\nfetch 40 nfo:510 poster:38 other title\nstills 0/3 Legend of Crimson")
+	if err := tpl.ExecuteTemplate(&buf, "partials/library_card.html", map[string]any{
+		"Library":     db.Library{ID: 1, Name: "Lib"},
+		"Lines":       lines,
+		"Poll":        true,
+		"Job":         &db.ScanJob{ID: 9, Status: "running", ProgressPct: 80},
+		"ProgressPct": 80,
+		"Total":       4439,
+		"WatchPct":    0,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	html = buf.String()
+	if strings.Count(html, "scan-grid") != 3 {
+		t.Fatalf("stills grids: %s", html)
+	}
+	if !strings.Contains(html, "stills 0/3") {
+		t.Fatalf("stills step: %s", html)
+	}
+
+	buf.Reset()
+	if err := tpl.ExecuteTemplate(&buf, "partials/library_card.html", map[string]any{
+		"Library":  db.Library{ID: 1, Name: "Lib"},
+		"Total":    4439,
+		"WatchPct": 12,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	idle := buf.String()
+	if !strings.Contains(idle, "has-watch") || !strings.Contains(idle, "--watch-pct: 12%") {
+		t.Fatalf("watch after scan: %s", idle)
+	}
+	if strings.Contains(idle, "watched ") {
+		t.Fatalf("watch chip: %s", idle)
+	}
+
+	buf.Reset()
+	if err := tpl.ExecuteTemplate(&buf, "partials/library_card_status_poll.html", map[string]any{
+		"Library": db.Library{ID: 1, Name: "Lib"},
+		"Posters": []string{"posters/a.jpg", "posters/b.jpg", "posters/c.jpg"},
+		"Poll":    true,
+		"Job":     &db.ScanJob{ID: 9, Status: "running", ProgressPct: 40},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	poll := buf.String()
+	if !strings.Contains(poll, "library-collage-next") {
+		t.Fatalf("poll missing collage marker: %s", poll)
+	}
+	for _, name := range []string{"posters/a.jpg", "posters/b.jpg", "posters/c.jpg"} {
+		if !strings.Contains(poll, name) {
+			t.Fatalf("poll missing %s: %s", name, poll)
+		}
 	}
 }
 
@@ -342,14 +447,22 @@ func TestHomeAddLibraryScanModes(t *testing.T) {
 	if !strings.Contains(html, `id="add-library-scan-mode"`) {
 		t.Fatal("add-library mode")
 	}
-	if !strings.Contains(html, `value="local"`) || !strings.Contains(html, `value="matchmedia"`) || !strings.Contains(html, `value="matchmedia-changes"`) {
+	if strings.Contains(html, `value="nfo"`) || strings.Contains(html, `name="persist"`) || strings.Contains(html, `name="overwrite"`) {
+		t.Fatal("add-library still exposes nfo or sidecar checkboxes")
+	}
+	if !strings.Contains(html, `value="rescan"`) || !strings.Contains(html, `value="changes"`) || !strings.Contains(html, `value="missing"`) {
 		t.Fatal("add-library mode values")
 	}
-	if !strings.Contains(html, `id="add-library-overwrite-wrap"`) {
-		t.Fatal("add-library overwrite")
-	}
-	if !strings.Contains(html, `value="matchmedia-changes" selected`) {
+	if !strings.Contains(html, `value="changes" selected`) {
 		t.Fatal("changes selected when ready")
+	}
+	i := strings.Index(html, `id="add-library-dialog"`)
+	j := strings.Index(html, `id="media-browser"`)
+	if i < 0 || j < 0 || j < i {
+		t.Fatal("folder browser must live inside add-library dialog")
+	}
+	if !strings.Contains(html, `hx-target="#media-browser"`) && !strings.Contains(html, `target: '#media-browser'`) {
+		t.Fatal("media browser htmx target")
 	}
 }
 
@@ -362,7 +475,7 @@ func TestHomeRecentPollMarkup(t *testing.T) {
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "home.html", map[string]any{
 		"Recent": []itemCard{
-			{Item: db.MediaItem{ID: 7, Kind: "movie", Title: "Fresh Title"}},
+			{Item: db.MediaItem{ID: 7, Kind: "movie", Title: "Fresh Title"}, Href: "/libraries/1"},
 		},
 		"RecentTrigger":      "load, every 2s",
 		"LibraryCards":       []libraryCard{},
@@ -384,6 +497,33 @@ func TestHomeRecentPollMarkup(t *testing.T) {
 	if !strings.Contains(html, "Fresh Title") {
 		t.Fatalf("recent card: %s", html)
 	}
+	if strings.Contains(html, "/movies/") || strings.Contains(html, "/shows/") {
+		t.Fatalf("recent catalog url: %s", html)
+	}
+}
+
+func TestLibraryTemplatePosterDialog(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	if err := tpl.ExecuteTemplate(&buf, "library.html", map[string]any{
+		"Library":   db.Library{ID: 1, Name: "Lib"},
+		"ItemCount": 0,
+		"Q":         "",
+		"Sort":      "name",
+		"Path":      "",
+		"Poll":      false,
+		"Tree":      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	html := buf.String()
+	if !strings.Contains(html, `id="poster-edit-dialog"`) || !strings.Contains(html, `id="poster-edit-generate"`) {
+		t.Fatalf("poster dialog: %s", html)
+	}
 }
 
 func TestItemsLivePollsOnlyWhenFlagged(t *testing.T) {
@@ -394,7 +534,7 @@ func TestItemsLivePollsOnlyWhenFlagged(t *testing.T) {
 	tpl := MustParseTemplates(tplFS)
 	data := map[string]any{
 		"Library":            db.Library{ID: 3, Name: "Anime"},
-		"Items":              []itemCard{{Item: db.MediaItem{ID: 9, Kind: "show", Title: "New Show"}}},
+		"Items":              []itemCard{{Item: db.MediaItem{ID: 9, Kind: "show", Title: "New Show"}, Href: "/libraries/3/tree?path=New%20Show"}},
 		"ItemCount":          1,
 		"Poll":               false,
 		"MetaReady":          true,
@@ -434,82 +574,5 @@ func TestItemsLivePollsOnlyWhenFlagged(t *testing.T) {
 	}
 	if !strings.Contains(liveHTML, "2 titles") {
 		t.Fatalf("count copy: %s", liveHTML)
-	}
-}
-
-func TestMovieTemplateEditControls(t *testing.T) {
-	tplFS, err := fs.Sub(web.FS, "templates")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tpl := MustParseTemplates(tplFS)
-	var buf bytes.Buffer
-	data := map[string]any{
-		"Item":               db.MediaItem{ID: 4, Kind: "movie", Title: "Film Title"},
-		"MetaReady":          true,
-		"MetaDisabledReason": "",
-	}
-	if err := tpl.ExecuteTemplate(&buf, "movie.html", data); err != nil {
-		t.Fatal(err)
-	}
-	html := buf.String()
-	if !strings.Contains(html, `data-edit-url="/hx/media/4/meta"`) {
-		t.Fatal("movie meta edit")
-	}
-	if !strings.Contains(html, `data-upload-url="/hx/media/4/poster"`) {
-		t.Fatal("movie poster upload")
-	}
-	if !strings.Contains(html, `data-role="edit"`) {
-		t.Fatal("edit icon")
-	}
-	if !strings.Contains(html, `id="poster-edit-dialog"`) {
-		t.Fatal("poster modal")
-	}
-	if !strings.Contains(html, `id="poster-edit-save"`) {
-		t.Fatal("poster save")
-	}
-}
-
-func TestSeasonTemplateEditControls(t *testing.T) {
-	tplFS, err := fs.Sub(web.FS, "templates")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tpl := MustParseTemplates(tplFS)
-	var buf bytes.Buffer
-	data := map[string]any{
-		"Item": db.MediaItem{ID: 2, Kind: "show", Title: "Sample Show"},
-		"Season": db.Season{
-			SeasonNumber: 1,
-			Title:        sql.NullString{String: "Season 1", Valid: true},
-			Plot:         sql.NullString{String: "Season plot", Valid: true},
-		},
-		"Episodes": []episodeCard{
-			{Episode: db.Episode{ID: 8, EpisodeNumber: 1, Title: sql.NullString{String: "Pilot", Valid: true}}},
-		},
-	}
-	if err := tpl.ExecuteTemplate(&buf, "season.html", data); err != nil {
-		t.Fatal(err)
-	}
-	html := buf.String()
-	if !strings.Contains(html, `data-edit-url="/hx/shows/2/seasons/1/meta"`) {
-		t.Fatal("season header edit")
-	}
-	if !strings.Contains(html, `data-upload-url="/hx/shows/2/seasons/1/poster"`) {
-		t.Fatal("season header poster")
-	}
-	if !strings.Contains(html, `data-edit-url="/hx/episodes/8/meta"`) {
-		t.Fatal("episode edit")
-	}
-	if !strings.Contains(html, `data-upload-url="/hx/episodes/8/poster"`) {
-		t.Fatal("episode still upload")
-	}
-	if !strings.Contains(html, `id="poster-edit-dialog"`) {
-		t.Fatal("poster modal")
-	}
-	if !strings.Contains(html, `class="muted">E1`) && !strings.Contains(html, `>E1<`) {
-		if !strings.Contains(html, "E1") {
-			t.Fatal("episode number prefix")
-		}
 	}
 }

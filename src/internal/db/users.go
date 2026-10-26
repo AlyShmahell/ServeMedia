@@ -23,9 +23,37 @@ type User struct {
 }
 
 const (
-	RoleAdmin = "admin"
-	RoleUser  = "user"
+	RoleAdmin        = "admin"
+	RoleUser         = "user"
+	OverlordUsername = "overlord"
 )
+
+func IsOverlord(username string) bool {
+	return strings.EqualFold(strings.TrimSpace(username), OverlordUsername)
+}
+
+// EnsureOverlord creates the admin named overlord when the row is missing.
+// The password is random and is not returned.
+func (d *DB) EnsureOverlord(ctx context.Context) (*User, error) {
+	u, err := d.GetUserByUsername(ctx, OverlordUsername)
+	if err != nil {
+		return nil, err
+	}
+	if u != nil {
+		if u.Role != RoleAdmin {
+			if _, err := d.SQL.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, RoleAdmin, u.ID); err != nil {
+				return nil, err
+			}
+			u.Role = RoleAdmin
+		}
+		return u, nil
+	}
+	pass, err := NewSessionToken()
+	if err != nil {
+		return nil, err
+	}
+	return d.CreateUser(ctx, OverlordUsername, pass, RoleAdmin)
+}
 
 func (d *DB) UserCount(ctx context.Context) (int, error) {
 	var n int

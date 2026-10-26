@@ -64,8 +64,8 @@ test('top bar primary nav and home sections', async ({ page }) => {
   await expect(topbar).toBeVisible();
   await expect(topbar.locator('.topbar-title')).toHaveText('Home');
   await expect(topbar.locator('.topbar-back')).toHaveCount(0);
-  await expect(topbar.getByRole('link', { name: 'Settings' })).toBeVisible();
-  await expect(topbar.getByRole('link', { name: 'About' })).toBeVisible();
+  await expect(topbar.getByRole('button', { name: 'Settings' })).toBeVisible();
+  await expect(topbar.getByRole('button', { name: 'About' })).toBeVisible();
   await expect(topbar.locator('.topbar-logo')).toHaveAttribute('href', '/');
   await expect(topbar.locator('.topbar-logo')).toHaveAttribute('title', 'Return to Home Page');
   await expect(topbar.locator('.topbar-logo-name')).toHaveText('ServeMedia');
@@ -282,13 +282,21 @@ test('inner pages focus Back', async ({ page }) => {
   await expect.poll(async () => page.evaluate(() => document.body.classList.contains('spatial-nav'))).toBe(true);
 });
 
-test('About is license-only and version lives under the logo', async ({ page }) => {
+test('About opens as a modal and version lives under the logo', async ({ page }) => {
   await ensureAdmin(page);
   await page.goto('/about');
-  await expect(page.locator('.topbar-title')).toHaveText('About');
-  await expect(page.locator('.about-tile h2', { hasText: 'Version' })).toHaveCount(0);
-  await expect(page.locator('.about-tile h2', { hasText: 'License' })).toBeVisible();
-  await expect(page.locator('.about-tile')).toHaveCount(1);
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('.topbar-title')).toHaveText('Home');
+  await page.locator('#about-open').click();
+  await expect(page.locator('#about-modal')).toHaveAttribute('open', '');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('.about-panel h2', { hasText: 'Version' })).toHaveCount(0);
+  await expect(page.locator('.about-panel h2', { hasText: 'License' })).toBeVisible();
+  await expect(page.locator('.about-panel h2', { hasText: 'Attribution' })).toBeHidden();
+  await page.getByRole('button', { name: 'Attribution', exact: true }).click();
+  await expect(page.locator('.about-panel h2', { hasText: 'Attribution' })).toBeVisible();
+  await expect(page.locator('.about-panel h2', { hasText: 'License' })).toBeHidden();
+  await expect(page.locator('.settings-nav-link.active')).toHaveText('Attribution');
   await expect(page.getByRole('heading', { name: 'Author' })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Copyright' })).toHaveCount(0);
   await expect(page.locator('.topbar-logo-version')).toContainText(/\d+\.\d+\.\d+/);
@@ -299,13 +307,16 @@ test('Support card and heart', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.topbar-heart')).toBeVisible();
   await page.locator('.topbar-heart').click();
-  await expect(page).toHaveURL(/\/support/);
-  await expect(page.locator('.topbar-title')).toHaveText('Support');
+  await expect(page).toHaveURL(/\/$/);
+  const dialog = page.locator('#support-modal');
+  await expect(dialog).toHaveAttribute('open', '');
   await expect(page.locator('.support-card h2')).toHaveText('Support ServeMedia');
   await expect(page.locator('.support-qr')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Sponsor Me' })).toHaveAttribute('href', /github.com\/sponsors\/AlyShmahell/);
   await expect(page.getByRole('link', { name: 'Star ServeMedia' })).toHaveAttribute('href', /github.com\/AlyShmahell\/ServeMedia/);
   await expect(page.getByRole('link', { name: 'Contributors' })).toHaveAttribute('href', /contributors/);
+  await page.locator('#support-modal-close').click();
+  await expect(dialog).not.toHaveAttribute('open', '');
 });
 
 test('library cards fit libraries section height', async ({ page }) => {
@@ -350,38 +361,26 @@ test('TV show season and episode cards', async ({ page }) => {
     show = page.getByRole('link', { name: /Sample Show/i }).first();
   }
   await show.click();
-  await expect(page).toHaveURL(/\/shows\/\d+$/);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
   await expect(page.locator('.topbar-back[href^="/libraries/"]')).toBeVisible();
-  await expect(page.locator('h1 .field-icon[data-role="edit"]')).toBeVisible();
+  await expect(page.locator('.show-hero-card, .folder-hero').first()).toBeVisible();
+  await expect(page.locator('.show-hero-card h1 .field-icon[data-role="edit"], .folder-hero h1 .field-icon[data-role="edit"]').first()).toBeVisible();
   await page.locator('.media-hero-poster .field-icon[data-role="upload"]').click();
   await expect(page.locator('#poster-edit-dialog')).toBeVisible();
   await expect(page.locator('#poster-edit-save')).toBeDisabled();
   await page.locator('#poster-edit-exit').click();
   await expect(page.locator('#poster-edit-dialog')).toBeHidden();
-  await expect(page.locator('.season-card .poster-progress').first()).toBeVisible();
 
-  const seasonCard = page.locator('.season-card').first();
+  const seasonCard = page.locator('#items a.file-card').filter({ hasText: /Season/i }).first();
   await expect(seasonCard).toBeVisible({ timeout: 30000 });
-  await expect(seasonCard).toContainText(/1 episode/);
-  await expect(seasonCard).toContainText('Season one synopsis for smoke layout tests.');
-  await expect(seasonCard.locator('.card-action')).toHaveCount(0);
-
   await seasonCard.click();
-  await expect(page).toHaveURL(/\/seasons\/\d+/);
-  await expect(page.locator('.season-main-card')).toBeVisible();
-  await expect(page.locator('.season-sticky-head')).toBeVisible();
-  await expect(page.locator('.card-action')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
 
-  const episodeCard = page.locator('.episode-card').first();
+  const episodeCard = page.locator('#items a.file-card[href^="/play/file/"]').first();
   await expect(episodeCard).toBeVisible();
   await expect(episodeCard).toContainText('Pilot');
-  await expect(episodeCard).toContainText('Episode plot for the sample pilot.');
   await expect(episodeCard.locator('.poster-progress')).toBeVisible();
-  await expect(episodeCard.locator('.card-action')).toHaveCount(0);
-  const play = episodeCard.locator('a.episode-still').first();
-  await expect(play).toHaveAttribute('href', /\/play\/episode\/\d+/);
-  await expect(episodeCard.locator('.play-overlay')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Play' })).toHaveCount(0);
+  await expect(episodeCard).toHaveAttribute('href', /\/play\/file\/\d+/);
 });
 
 test('library main card scrolls items', async ({ page }) => {

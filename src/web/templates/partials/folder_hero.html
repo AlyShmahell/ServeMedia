@@ -1,0 +1,24 @@
+{{define "partials/folder_hero.html"}}
+<div class="media-hero show-hero-card folder-hero" data-scroll-key="folder-hero">
+  <div class="poster-wrap media-hero-poster"{{if .UploadURL}} data-upload-url="{{.UploadURL}}"{{end}}>
+    <div class="poster-play static">
+      <img class="poster" src="{{posterURL .Node.PosterPath.String .Node.MetaID.String}}" alt="">
+    </div>
+    {{if .UploadURL}}<button type="button" class="field-icon field-icon-upload" data-role="upload" title="Upload poster" aria-label="Upload poster">{{template "partials/icon_upload.html"}}</button>{{end}}
+    {{template "partials/node_scan.html" .}}
+  </div>
+  <div class="media-meta">
+    <h1>{{if .EditURL}}<span class="editable" data-edit-url="{{.EditURL}}" data-edit-field="title"><span class="editable-text">{{.Title}}</span><button type="button" class="field-icon" data-role="edit" title="Edit title" aria-label="Edit title">{{template "partials/icon_edit.html"}}</button></span>{{else}}{{.Title}}{{end}}</h1>
+    {{if .Chips}}
+    <div class="hero-facts">
+      {{range .Chips}}<span class="hero-chip hero-chip-{{.Kind}}" title="{{.Title}}">{{if .Label}}<span class="hero-chip-k">{{.Label}}</span>{{end}}{{.Value}}</span>{{end}}
+    </div>
+    {{end}}
+    {{if .EditURL}}
+    <p class="plot editable{{if eq .Plot ""}} is-empty{{end}}" data-edit-url="{{.EditURL}}" data-edit-field="plot" data-edit-multiline="1" data-empty-label="No synopsis"><span class="editable-text">{{if .Plot}}{{.Plot}}{{else}}No synopsis{{end}}</span><button type="button" class="field-icon" data-role="edit" title="Edit synopsis" aria-label="Edit synopsis">{{template "partials/icon_edit.html"}}</button></p>
+    {{else if .Plot}}
+    <p class="plot">{{.Plot}}</p>
+    {{end}}
+  </div>
+</div>
+{{end}}

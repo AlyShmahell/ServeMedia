@@ -1,0 +1,17 @@
+{{define "partials/node_scan.html"}}
+{{if and .MediaID (or (eq .MatchStatus "manual") (eq .MatchStatus "unmatched"))}}
+<button type="button" class="match-bang" title="Choose a match" aria-label="Choose a match"
+  data-media-id="{{.MediaID}}">!</button>
+{{else if and .MediaID (eq .MatchStatus "error")}}
+<span class="match-fail" title="{{if .MatchError}}{{.MatchError}}{{else}}Match failed{{end}}" role="img" aria-label="Match failed">×</span>
+{{end}}
+{{if .MediaID}}
+<div class="card-actions" onclick="event.preventDefault(); event.stopPropagation();">
+  <button type="button" class="card-action card-action-scan" title="Scan" aria-label="Scan"
+    onclick="openEntryScanModal({{.MediaID}}, {{js .Title}})">
+    <span class="card-action-icon" aria-hidden="true">{{template "partials/icon_scan.html"}}</span>
+    <span class="card-action-label">Scan</span>
+  </button>
+</div>
+{{end}}
+{{end}}

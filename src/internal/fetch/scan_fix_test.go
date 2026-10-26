@@ -37,7 +37,7 @@ func scanFixLib(t *testing.T) (context.Context, *db.DB, *db.Library, string, str
 	return ctx, d, lib, store, media
 }
 
-func TestLibraryScanRetriesUnmatchedShowOnce(t *testing.T) {
+func TestLibraryScanDoesNotRetryUnmatchedShow(t *testing.T) {
 	ctx, d, lib, store, mediaRoot := scanFixLib(t)
 	showDir := filepath.Join(mediaRoot, "Cool Show")
 	epPath := filepath.Join(showDir, "Season 1", "S01E01.mkv")
@@ -105,22 +105,90 @@ func TestLibraryScanRetriesUnmatchedShowOnce(t *testing.T) {
 	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true, ScanMode: "rescan"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(scanPaths) != 2 {
+	if len(scanPaths) != 1 || scanPaths[0] != mediaRoot {
 		t.Fatalf("scans %#v", scanPaths)
 	}
-	if scanPaths[0] != mediaRoot || scanPaths[1] != showDir {
-		t.Fatalf("scan paths %#v", scanPaths)
-	}
 	show, err := d.GetMediaItemByPath(ctx, lib.ID, showDir)
-	if err != nil || show == nil || show.MatchStatus.String != "matched" {
+	if err != nil || show == nil || show.MatchStatus.String != "unmatched" {
 		t.Fatalf("show %#v %v", show, err)
-	}
-	if show.Title != "Cool Show" {
-		t.Fatalf("title %q", show.Title)
 	}
 }
 
-func TestLibraryScanRetryStaysUnmatched(t *testing.T) {
+func TestDirectoryNodeKeepsJobPoster(t *testing.T) {
+	ctx, d, lib, store, mediaRoot := scanFixLib(t)
+	showDir := filepath.Join(mediaRoot, "Cool Show")
+	epPath := filepath.Join(showDir, "Season 1", "S01E01.mkv")
+	if err := os.MkdirAll(filepath.Dir(epPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(epPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	posterPath := filepath.Join(showDir, "poster.jpg")
+	if err := os.WriteFile(posterPath, []byte("poster"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/v1/scan", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"session":"sess-poster","files":1}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"files":1,"done":1,"running":false}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-show", "status": "matched", "kind": "show", "path": showDir, "source": "scan",
+			"title": "Cool Show", "year": "2020", "poster_path": posterPath,
+			"files": []map[string]any{{"path": epPath, "season": "1", "episode": "1"}},
+			"match": map[string]any{
+				"provider": "tvmaze", "id": "22", "title": "Cool Show", "year": "2020",
+				"poster": "/v1/catalog/tvmaze/22/poster.jpg",
+			},
+		}})
+	})
+	mux.HandleFunc("/v1/catalog/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".jpg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = io.WriteString(w, "fakejpeg")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"provider": "tvmaze", "id": "22", "title": "Cool Show", "year": "2020", "type": "show",
+			"synopsis": "plot", "poster": "/v1/catalog/tvmaze/22/poster.jpg",
+			"seasons": []any{map[string]any{
+				"number": "1", "title": "Cool Show",
+				"episodes": []any{map[string]any{"number": "1", "title": "Pilot"}},
+			}},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	w := &Worker{DB: d, Store: store, Meta: &matchmedia.Client{Base: srv.URL, HTTP: srv.Client()}}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true, ScanMode: "rescan"}); err != nil {
+		t.Fatal(err)
+	}
+	var title, year, poster string
+	err := d.SQL.QueryRowContext(ctx, `SELECT COALESCE(mm_title,''), COALESCE(mm_year,''), COALESCE(poster_path,'') FROM library_nodes WHERE library_id=? AND rel_path=?`, lib.ID, "Cool Show").Scan(&title, &year, &poster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title != "Cool Show" || year != "2020" {
+		t.Fatalf("card meta %q %q", title, year)
+	}
+	if poster != posterPath {
+		t.Fatalf("poster %q", poster)
+	}
+	if _, err := os.Stat(poster); err != nil {
+		t.Fatalf("poster file %q: %v", poster, err)
+	}
+}
+
+func TestLibraryScanUnmatchedStaysUnmatched(t *testing.T) {
 	ctx, d, lib, store, mediaRoot := scanFixLib(t)
 	showDir := filepath.Join(mediaRoot, "Lost Show")
 	epPath := filepath.Join(showDir, "Season 1", "S01E01.mkv")
@@ -156,7 +224,7 @@ func TestLibraryScanRetryStaysUnmatched(t *testing.T) {
 	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: true}); err != nil {
 		t.Fatal(err)
 	}
-	if scans != 2 {
+	if scans != 1 {
 		t.Fatalf("scans %d", scans)
 	}
 	show, err := d.GetMediaItemByPath(ctx, lib.ID, showDir)
@@ -291,8 +359,8 @@ func TestExtractMissingStillsFillsEmptyLeavesExisting(t *testing.T) {
 		t.Fatalf("grabbed %#v", grabbed)
 	}
 	film, err := d.GetMediaItem(ctx, filmID)
-	if err != nil || film == nil || !film.PosterPath.Valid || film.PosterPath.String == "" {
-		t.Fatalf("movie poster %#v %v", film, err)
+	if err != nil || film == nil || (film.PosterPath.Valid && film.PosterPath.String != "") {
+		t.Fatalf("extracted frame stored as title poster %#v %v", film, err)
 	}
 	empty, err := d.GetEpisode(ctx, emptyID)
 	if err != nil || empty == nil || !empty.StillPath.Valid || empty.StillPath.String == "" {
@@ -403,6 +471,41 @@ func TestNestedShowCatalogForDoesNotOverwriteParent(t *testing.T) {
 	film, err := d.GetMediaItemByPath(ctx, lib.ID, moviePath)
 	if err != nil || film == nil || film.Kind != "movie" || film.Title != "Arrow of the Orion" {
 		t.Fatalf("movie %#v %v", film, err)
+	}
+}
+
+func TestRecordTreeMovieDropsEpisode(t *testing.T) {
+	ctx, d, lib, _, media := scanFixLib(t)
+	dir := filepath.Join(media, "Film 2")
+	path := filepath.Join(dir, "Film 2.mkv")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: d}
+	j := matchmedia.Job{
+		Kind: "movie", Path: dir, Title: "Film 2", Status: "matched",
+		Files: []matchmedia.JobFile{{Path: path, Season: "1", Episode: "2"}},
+		Match: &matchmedia.Candidate{Title: "Film 2", Year: "2016"},
+	}
+	if err := w.recordTree(ctx, lib, j, Opts{Overwrite: true}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.NodeIDByRel(ctx, lib.ID, "Film 2/Film 2.mkv")
+	if err != nil || id == 0 {
+		t.Fatalf("file node %d %v", id, err)
+	}
+	n, err := d.GetLibraryNode(ctx, id)
+	if err != nil || n == nil {
+		t.Fatal(err)
+	}
+	if n.SeasonNum.Valid && n.SeasonNum.String != "" {
+		t.Fatalf("season %q", n.SeasonNum.String)
+	}
+	if n.EpisodeNum.Valid && n.EpisodeNum.String != "" {
+		t.Fatalf("episode %q", n.EpisodeNum.String)
 	}
 }
 

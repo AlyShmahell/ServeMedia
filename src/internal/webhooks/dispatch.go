@@ -15,7 +15,7 @@ func (s *Service) Dispatch(ctx context.Context, wh *config.WebhooksConfig, serve
 	if s == nil || wh == nil || !wh.Enabled {
 		return
 	}
-	base := BasePayload(serverID, wh.ServerURL, notificationType, s.serverVersion())
+	base := BasePayload(serverID, s.serverURL(wh.ServerURL), notificationType, s.serverVersion())
 	payload := MergePayload(base, extra)
 	itemType, _ := payload["ItemType"].(string)
 	go func() {
@@ -30,7 +30,7 @@ func (s *Service) DispatchTest(ctx context.Context, wh *config.WebhooksConfig, s
 	if wh == nil || !wh.Enabled {
 		return 0, []string{"webhooks disabled"}
 	}
-	payload := MergePayload(BasePayload(serverID, wh.ServerURL, NotificationGeneric, s.serverVersion()), map[string]any{
+	payload := MergePayload(BasePayload(serverID, s.serverURL(wh.ServerURL), NotificationGeneric, s.serverVersion()), map[string]any{
 		"Message":  "ServeMedia webhook test",
 		"Username": username,
 	})

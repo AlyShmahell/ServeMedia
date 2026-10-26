@@ -1,0 +1,14 @@
+{{define "partials/settings_nav.html"}}
+<nav class="settings-sidenav" aria-label="Settings">
+  {{if and .User (eq .User.Role "admin")}}
+  <a class="settings-nav-link{{if eq .SettingsTab "general"}} active{{end}}" href="/settings" hx-get="/settings" hx-target="#settings-panel" hx-swap="innerHTML" hx-push-url="false"{{if eq .SettingsTab "general"}} aria-current="page"{{end}}>General</a>
+  <a class="settings-nav-link{{if eq .SettingsTab "ffmpeg"}} active{{end}}" href="/settings/engines?tab=ffmpeg" hx-get="/settings/engines?tab=ffmpeg" hx-target="#settings-panel" hx-swap="innerHTML" hx-push-url="false"{{if eq .SettingsTab "ffmpeg"}} aria-current="page"{{end}}>FFmpeg</a>
+  <a class="settings-nav-link{{if eq .SettingsTab "matchmedia"}} active{{end}}" href="/settings/engines" hx-get="/settings/engines" hx-target="#settings-panel" hx-swap="innerHTML" hx-push-url="false"{{if eq .SettingsTab "matchmedia"}} aria-current="page"{{end}}>MatchMedia</a>
+  {{end}}
+  <a class="settings-nav-link{{if eq .SettingsTab "webhooks"}} active{{end}}" href="/settings/integrations" hx-get="/settings/integrations" hx-target="#settings-panel" hx-swap="innerHTML" hx-push-url="false"{{if eq .SettingsTab "webhooks"}} aria-current="page"{{end}}>Webhooks</a>
+  {{if and .User (eq .User.Role "admin")}}
+  <a class="settings-nav-link{{if eq .SettingsTab "backup"}} active{{end}}" href="/settings/backup" hx-get="/settings/backup" hx-target="#settings-panel" hx-swap="innerHTML" hx-push-url="false"{{if eq .SettingsTab "backup"}} aria-current="page"{{end}}>Backup</a>
+  <a class="settings-nav-link{{if eq .SettingsTab "accounts"}} active{{end}}" href="/settings/users" hx-get="/settings/users" hx-target="#settings-panel" hx-swap="innerHTML" hx-push-url="false"{{if eq .SettingsTab "accounts"}} aria-current="page"{{end}}>Accounts</a>
+  {{end}}
+</nav>
+{{end}}

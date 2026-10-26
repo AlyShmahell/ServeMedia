@@ -7,3 +7,15 @@ services:
       - ./dist:/out:z
       - ./cache:/cache:z
       - ./package:/package:z
+  ffmpeg-musl:
+    build:
+      context: ..
+      dockerfile: build/Containerfile.musl
+    volumes:
+      - ./cache:/cache:z
+  servemedia-musl:
+    build:
+      context: ..
+      dockerfile: build/Containerfile.servemedia-musl
+    volumes:
+      - ./cache:/cache:z

@@ -113,6 +113,9 @@
 
   function ensureFocus() {
     var active = document.activeElement;
+    if (typingTarget(active)) return active;
+    if (active && active.closest && active.closest('.editable.is-editing')) return active;
+    if (document.querySelector('dialog[open]') && active && active !== document.body) return active;
     if (isCandidate(active) && !isCloseControl(active)) return active;
     return applyLanding();
   }
@@ -381,6 +384,11 @@
       applyLanding();
       return;
     }
+    var active = document.activeElement;
+    if (typingTarget(active) || (active && active.closest && active.closest('.editable.is-editing'))) {
+      return;
+    }
+    if (isCandidate(active) && !isCloseControl(active)) return;
     ensureFocus();
   }
 

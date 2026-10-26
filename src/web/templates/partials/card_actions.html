@@ -2,7 +2,7 @@
 {{$needPick := or (eq .MatchStatus "manual") (eq .MatchStatus "unmatched")}}
 {{if $needPick}}
 <button type="button" class="match-bang" title="Choose match" aria-label="Choose match"
-  onclick="event.preventDefault(); event.stopPropagation(); openMatchModal({{.ID}})">!</button>
+  data-media-id="{{.ID}}">!</button>
 {{else if eq .MatchStatus "error"}}
 {{$err := .MatchError}}{{if not $err}}{{$err = "Match failed"}}{{end}}
 <span class="match-fail" title="{{$err}}" aria-label="{{$err}}"

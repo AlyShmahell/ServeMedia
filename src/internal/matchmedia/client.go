@@ -8,113 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
 
-type Status struct {
-	Ready          bool
-	Version        string
-	DisabledReason string
-	Hint           string
-}
-
 type Client struct {
-	Base string
-	HTTP *http.Client
-}
-
-type ScanResult struct {
-	Session string `json:"session"`
-	Files   int    `json:"files"`
-	Jobs    int    `json:"jobs"`
-}
-
-func decodeScanResult(b []byte) (ScanResult, error) {
-	var raw ScanResult
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return ScanResult{}, err
-	}
-	return raw, nil
-}
-
-type IngestRow struct {
-	Title string `json:"title"`
-	Year  string `json:"year,omitempty"`
-	Type  string `json:"type,omitempty"`
-}
-
-type ScanProgress struct {
-	Files   int  `json:"files"`
-	Done    int  `json:"done"`
-	Chunks  int  `json:"chunks"`
-	Chunk   int  `json:"chunk"`
-	Running bool `json:"running"`
-}
-
-type JobFile struct {
-	Path    string `json:"path"`
-	Season  string `json:"season,omitempty"`
-	Episode string `json:"episode,omitempty"`
-}
-
-type Job struct {
-	ID         string      `json:"id"`
-	Source     string      `json:"source"`
-	Title      string      `json:"title"`
-	Year       string      `json:"year,omitempty"`
-	Path       string      `json:"path,omitempty"`
-	Kind       string      `json:"kind,omitempty"`
-	Role       string      `json:"role,omitempty"`
-	CatalogFor string      `json:"catalog_for,omitempty"`
-	Files      []JobFile   `json:"files,omitempty"`
-	Status     string      `json:"status"`
-	Error      string      `json:"error,omitempty"`
-	Match      *Candidate  `json:"match,omitempty"`
-	Candidates []Candidate `json:"candidates,omitempty"`
-	Catalog    []Season    `json:"catalog,omitempty"`
-	Ranker     string      `json:"ranker,omitempty"`
-}
-
-type Candidate struct {
-	Provider string  `json:"provider"`
-	ID       string  `json:"id"`
-	Title    string  `json:"title"`
-	Year     string  `json:"year,omitempty"`
-	Score    float64 `json:"score,omitempty"`
-	Synopsis string  `json:"synopsis,omitempty"`
-	Poster   string  `json:"poster,omitempty"`
-}
-
-type Catalog struct {
-	Provider string   `json:"provider"`
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Year     string   `json:"year,omitempty"`
-	Type     string   `json:"type"`
-	Synopsis string   `json:"synopsis,omitempty"`
-	Poster   string   `json:"poster,omitempty"`
-	Seasons  []Season `json:"seasons,omitempty"`
-}
-
-type Season struct {
-	Number   string    `json:"number,omitempty"`
-	Title    string    `json:"title"`
-	Synopsis string    `json:"synopsis,omitempty"`
-	Poster   string    `json:"poster,omitempty"`
-	Year     string    `json:"year,omitempty"`
-	Episodes []Episode `json:"episodes,omitempty"`
-}
-
-type Episode struct {
-	Number   string   `json:"number,omitempty"`
-	Title    string   `json:"title"`
-	Synopsis string   `json:"synopsis,omitempty"`
-	Poster   string   `json:"poster,omitempty"`
-	Year     string   `json:"year,omitempty"`
-	Path     string   `json:"path,omitempty"`
-	Paths    []string `json:"paths,omitempty"`
+	Base    string
+	HTTP    *http.Client
+	session string
 }
 
 func withSession(path, session string) string {
@@ -203,7 +104,7 @@ func (c *Client) SetConfig(patch map[string]any) error {
 	return waitHealth(c.httpc(), c.Base, 60*time.Second)
 }
 
-func (c *Client) Scan(path, mode string, requireEpisodeNFO *bool) (ScanResult, error) {
+func (c *Client) postScan(path, mode string, requireEpisodeNFO *bool) (ScanResult, error) {
 	payload := map[string]any{"path": path}
 	if m := strings.TrimSpace(mode); m != "" {
 		payload["mode"] = m
@@ -229,8 +130,8 @@ func (c *Client) Scan(path, mode string, requireEpisodeNFO *bool) (ScanResult, e
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return ScanResult{}, fmt.Errorf("scan: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	out, err := decodeScanResult(b)
-	if err != nil {
+	var out ScanResult
+	if err := json.Unmarshal(b, &out); err != nil {
 		return ScanResult{}, err
 	}
 	if strings.TrimSpace(out.Session) == "" {
@@ -258,8 +159,8 @@ func (c *Client) Ingest(rows []IngestRow) (ScanResult, error) {
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return ScanResult{}, fmt.Errorf("ingest: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	out, err := decodeScanResult(b)
-	if err != nil {
+	var out ScanResult
+	if err := json.Unmarshal(b, &out); err != nil {
 		return ScanResult{}, err
 	}
 	if strings.TrimSpace(out.Session) == "" {
@@ -321,7 +222,18 @@ func (c *Client) Select(session, jobID, provider, id string) (Job, error) {
 	return j, nil
 }
 
+func (c *Client) sessionOr(session string) string {
+	if strings.TrimSpace(session) != "" {
+		return strings.TrimSpace(session)
+	}
+	if c == nil {
+		return ""
+	}
+	return c.session
+}
+
 func (c *Client) Catalog(session, provider, id string) (Catalog, error) {
+	session = c.sessionOr(session)
 	var t Catalog
 	path := withSession("/v1/catalog/"+url.PathEscape(provider)+"/"+url.PathEscape(id), session)
 	if err := c.getJSON(path, &t); err != nil {
@@ -335,6 +247,7 @@ func (c *Client) ResolveURL(u, session string) string {
 	if u == "" || c == nil {
 		return u
 	}
+	session = c.sessionOr(session)
 	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
 		return u
 	}
@@ -424,37 +337,88 @@ func (c *Client) getJSON(path string, dest any) error {
 	return json.NewDecoder(resp.Body).Decode(dest)
 }
 
-func (t Catalog) FindSeason(n int) *Season {
-	for i := range t.Seasons {
-		if atoi(t.Seasons[i].Number) == n {
-			return &t.Seasons[i]
-		}
+func (c *Client) Run(ctx context.Context, path, mode string, report func(done, total int, name string)) ([]Job, string, error) {
+	jobs, err := c.Scan(ctx, path, mode, report)
+	if err != nil {
+		return nil, c.session, err
 	}
-	return nil
+	return jobs, c.session, nil
 }
 
-func (t Catalog) FindEpisode(season, episode int) *Episode {
-	s := t.FindSeason(season)
-	if s == nil {
+// Scan posts a library walk and waits until the stub returns finished jobs.
+func (c *Client) Scan(ctx context.Context, path, mode string, report func(done, total int, name string)) ([]Job, error) {
+	scanned, err := c.postScan(path, mode, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.session = scanned.Session
+	return c.waitJobs(ctx, scanned.Session, report)
+}
+
+// Match returns the jobs Scan already finished. Stub servers do not match again.
+func (c *Client) Match(ctx context.Context, jobs []Job, report func(done, total int, name string), onJob func(Job)) ([]Job, error) {
+	return jobs, nil
+}
+
+// SelectStored posts the last scan session. Engine ignores that session.
+func (c *Client) SelectStored(ctx context.Context, hint Job, provider, id string) (Job, error) {
+	return c.Select(c.sessionOr(""), hint.ID, provider, id)
+}
+
+func (c *Client) RunIngest(ctx context.Context, rows []IngestRow, report func(done, total int, name string)) ([]Job, string, error) {
+	scanned, err := c.Ingest(rows)
+	if err != nil {
+		return nil, "", err
+	}
+	c.session = scanned.Session
+	jobs, err := c.waitJobs(ctx, scanned.Session, report)
+	if err != nil {
+		return nil, scanned.Session, err
+	}
+	return jobs, scanned.Session, nil
+}
+
+func (c *Client) Reload() error {
+	if c == nil || strings.TrimSpace(c.Base) == "" {
 		return nil
 	}
-	for i := range s.Episodes {
-		if atoi(s.Episodes[i].Number) == episode {
-			return &s.Episodes[i]
-		}
-	}
-	return nil
+	return waitHealth(c.httpc(), c.Base, 5*time.Second)
 }
 
-func atoi(s string) int {
-	s = strings.TrimSpace(s)
-	if len(s) >= 4 {
-		if n, err := strconv.Atoi(s[:4]); err == nil {
-			return n
+func (c *Client) waitJobs(ctx context.Context, session string, report func(done, total int, name string)) ([]Job, error) {
+	deadline := time.Now().Add(75 * time.Minute)
+	var last ScanProgress
+	var lastJobs []Job
+	for {
+		if ctx.Err() != nil {
+			return lastJobs, ctx.Err()
 		}
+		if time.Now().After(deadline) {
+			return lastJobs, fmt.Errorf("matchmedia timed out")
+		}
+		p, err := c.ScanStatus(session)
+		if err == nil {
+			last = p
+		}
+		jobs, err := c.Jobs(session)
+		if err != nil {
+			return lastJobs, err
+		}
+		lastJobs = jobs
+		pending := 0
+		for _, j := range jobs {
+			if j.Status == "pending" || j.Status == "" {
+				pending++
+			}
+		}
+		if report != nil {
+			report(last.Done, last.Files, "")
+		}
+		if pending == 0 && !last.Running {
+			return lastJobs, nil
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	n, _ := strconv.Atoi(s)
-	return n
 }
 
 func waitHealth(hc *http.Client, base string, timeout time.Duration) error {

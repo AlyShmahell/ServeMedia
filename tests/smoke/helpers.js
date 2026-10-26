@@ -56,6 +56,21 @@ async function loginAs(page, username, password) {
   await page.waitForURL(/\/$/);
 }
 
+async function openSettings(page) {
+  await page.locator('#settings-open').click();
+  await expect(page.locator('#settings-modal')).toHaveAttribute('open', '');
+  await expect(page.locator('.settings-sidenav')).toBeVisible({ timeout: 15000 });
+}
+
+async function openSettingsTab(page, name) {
+  if ((await page.locator('#settings-modal[open]').count()) === 0) {
+    await openSettings(page);
+  }
+  const link = page.getByRole('link', { name, exact: true });
+  await link.click();
+  await expect(link).toHaveClass(/active/);
+}
+
 async function ensureRegularUser(page, username = 'trackeruser', password = 'userpass1') {
   await page.goto('/login');
   await page.fill('input[name="username"]', username);
@@ -69,15 +84,15 @@ async function ensureRegularUser(page, username = 'trackeruser', password = 'use
   }
 
   await ensureAdmin(page);
-  await page.goto('/settings/users');
-  const row = page.locator('tbody tr', { hasText: username });
+  await openSettingsTab(page, 'Accounts');
+  const row = page.locator('#users-table-body tr', { hasText: username });
   if ((await row.count()) === 0) {
     await page.locator('#add-user-open').click();
     await page.fill('#add-user-username', username);
     await page.fill('#add-user-password', password);
     await page.fill('#add-user-confirm', password);
     await page.locator('#add-user-submit').click();
-    await page.waitForURL(/\/settings\/users$/, { timeout: 15000 });
+    await expect(page.locator('#users-table-body')).toContainText(username, { timeout: 15000 });
   }
 
   await page.locator('form.topbar-logout button').click();
@@ -88,6 +103,8 @@ async function ensureRegularUser(page, username = 'trackeruser', password = 'use
 module.exports = {
   ensureAdmin,
   ensureRegularUser,
+  openSettings,
+  openSettingsTab,
   loginAs,
   libraryCard,
   waitForLibraryIdle,

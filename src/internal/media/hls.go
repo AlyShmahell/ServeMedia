@@ -80,6 +80,26 @@ func NewManager(cfg config.Config) *Manager {
 	return m
 }
 
+// UseConfig applies settings saved while the process is running.
+// A hardware-acceleration change probes render nodes again.
+func (m *Manager) UseConfig(cfg config.Config) {
+	if m == nil {
+		return
+	}
+	prev := strings.ToLower(strings.TrimSpace(m.Cfg.Transcode.HWAccel))
+	next := strings.ToLower(strings.TrimSpace(cfg.Transcode.HWAccel))
+	m.Cfg = cfg
+	if prev == next {
+		return
+	}
+	m.useVAAPI = false
+	m.vaapiDev = ""
+	m.vaapiCodec = ""
+	m.vaapiAV110 = false
+	m.vaapiFullHW = false
+	m.probeVAAPI()
+}
+
 func (m *Manager) probeVAAPI() {
 	mode := strings.ToLower(strings.TrimSpace(m.Cfg.Transcode.HWAccel))
 	if mode == "" {
@@ -96,7 +116,7 @@ func (m *Manager) probeVAAPI() {
 
 	ensureLibVADriversPath()
 
-	out, err := exec.Command(ffmpeg(), "-hide_banner", "-encoders").CombinedOutput()
+	out, err := ffmpegCommand(nil, "-hide_banner", "-encoders").CombinedOutput()
 	hasH264 := err == nil && bytes.Contains(out, []byte("h264_vaapi"))
 	hasAV1 := err == nil && bytes.Contains(out, []byte("av1_vaapi"))
 	if err != nil || (!hasH264 && !hasAV1) {
@@ -105,9 +125,6 @@ func (m *Manager) probeVAAPI() {
 	}
 
 	devs := listRenderNodes()
-	if dev := strings.TrimSpace(m.Cfg.Transcode.VAAPIDevice); dev != "" {
-		devs = []string{dev}
-	}
 	if len(devs) == 0 {
 		if mode == "vaapi" {
 			log.Printf("transcode hwaccel=vaapi requested but no render node found; using software")
@@ -352,7 +369,7 @@ func EnsureVAAPIProbeClip() error {
 	path := filepath.Join(dir, "vaapi-probe.mkv")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, ffmpeg(),
+	cmd := ffmpegCommand(ctx,
 		"-hide_banner", "-loglevel", "error",
 		"-f", "lavfi", "-i", "color=c=black:s=320x240:d=1",
 		"-c:v", "libx264", "-pix_fmt", "yuv420p", "-an",
@@ -383,14 +400,14 @@ func vaapiRealFileSmoke(dev, source string) error {
 	args = append(args, "-frames:v", "30", "-f", "null", "-")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, ffmpeg(), args...)
+	cmd := ffmpegCommand(ctx, args...)
 	return runFFmpegSmoke(cmd)
 }
 
 func vaapiSmokeTestFull(dev string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, ffmpeg(),
+	smoke := ffmpegCommand(ctx,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -405,7 +422,7 @@ func vaapiSmokeTestFull(dev string) error {
 func vaapiSmokeTest10BitDirect(dev, source string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, ffmpeg(),
+	smoke := ffmpegCommand(ctx,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -426,7 +443,7 @@ func vaapiSmokeTestFullHW(dev string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, ffmpeg(),
+	smoke := ffmpegCommand(ctx,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -443,7 +460,7 @@ func vaapiSmokeTestFullHW(dev string) error {
 func vaapiSmokeTestMinimal(dev string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, ffmpeg(),
+	smoke := ffmpegCommand(ctx,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.2",
@@ -457,7 +474,7 @@ func vaapiSmokeTestMinimal(dev string) error {
 func vaapiSmokeTestAV1(dev string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, ffmpeg(),
+	smoke := ffmpegCommand(ctx,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -472,7 +489,7 @@ func vaapiSmokeTestAV1(dev string) error {
 func vaapiSmokeTestAV110(dev string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	smoke := exec.CommandContext(ctx, ffmpeg(),
+	smoke := ffmpegCommand(ctx,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -672,7 +689,7 @@ func (m *Manager) startJob(source string, audioIndex, height, startSec int, owne
 	args := m.ffmpegArgs(source, out, pipeline, audioIndex, height, startSec)
 	log.Printf("transcode pipeline=%s job=%s", pipeline, id)
 	log.Printf("ffmpeg %s: %s", id, strings.Join(args, " "))
-	cmd := exec.CommandContext(jobCtx, ffmpeg(), args...)
+	cmd := ffmpegCommand(jobCtx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	j.cmd = cmd

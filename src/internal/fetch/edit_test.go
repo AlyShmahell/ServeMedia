@@ -40,7 +40,7 @@ func testWorker(t *testing.T) (ctx context.Context, store, media string, d *db.D
 }
 
 func TestEditMovieMetaWritesStoreAndBeside(t *testing.T) {
-	ctx, store, media, d, lib, w := testWorker(t)
+	ctx, _, media, d, lib, w := testWorker(t)
 	filmDir := filepath.Join(media, "Film Title")
 	filmPath := filepath.Join(filmDir, "Film Title.mkv")
 	if err := os.MkdirAll(filmDir, 0o755); err != nil {
@@ -84,7 +84,7 @@ func TestEditMovieMetaWritesStoreAndBeside(t *testing.T) {
 	if !it.NFOPath.Valid {
 		t.Fatal("nfo_path")
 	}
-	storeNFO, err := metadata.ReadMovieNFO(filepath.Join(store, it.NFOPath.String))
+	storeNFO, err := metadata.ReadMovieNFO(it.NFOPath.String)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestEditMovieMetaWritesStoreAndBeside(t *testing.T) {
 }
 
 func TestEditMoviePosterWritesStoreAndBeside(t *testing.T) {
-	ctx, store, media, d, lib, w := testWorker(t)
+	ctx, _, media, d, lib, w := testWorker(t)
 	filmDir := filepath.Join(media, "Film Title")
 	filmPath := filepath.Join(filmDir, "Film Title.mkv")
 	if err := os.MkdirAll(filmDir, 0o755); err != nil {
@@ -146,7 +146,7 @@ func TestEditMoviePosterWritesStoreAndBeside(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(filepath.Join(store, rel))
+	got, err := os.ReadFile(rel)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestEditMoviePosterWritesStoreAndBeside(t *testing.T) {
 }
 
 func TestEditShowSeasonEpisodeMetaAndArt(t *testing.T) {
-	ctx, store, media, d, lib, w := testWorker(t)
+	ctx, _, media, d, lib, w := testWorker(t)
 	showDir := filepath.Join(media, "Sample Show")
 	epPath := filepath.Join(showDir, "Season 1", "S01E01.mkv")
 	if err := os.MkdirAll(filepath.Dir(epPath), 0o755); err != nil {
@@ -262,7 +262,7 @@ func TestEditShowSeasonEpisodeMetaAndArt(t *testing.T) {
 		t.Fatalf("episode plot %q", ep.Plot.String)
 	}
 
-	storeShow, err := metadata.ReadTVShowNFO(filepath.Join(store, show.NFOPath.String))
+	storeShow, err := metadata.ReadTVShowNFO(show.NFOPath.String)
 	if err != nil {
 		t.Fatal(err)
 	}

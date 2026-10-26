@@ -1,0 +1,17 @@
+{{define "partials/library_card_live.html"}}
+{{if .Poll}}<span class="is-scanning" hidden></span>{{end}}
+<span class="library-poll-flag" data-poll="{{if .Poll}}1{{else}}0{{end}}" hidden></span>
+<span class="library-collage-next" hidden>{{range .Posters}}<span data-poster="{{posterURL .}}"></span>{{end}}</span>
+{{range .Lines}}{{template "partials/scan_progress.html" .}}{{end}}
+{{if and (or .Poll .Message) (not .Lines)}}
+<p class="library-scan-msg muted">
+  {{if .Job}}{{if eq .Job.Status "done"}}Scan complete{{else if eq .Job.Status "error"}}Scan failed{{else if .Poll}}{{if .Enriching}}Matching{{else}}Scanning{{end}}{{end}}{{else if .Poll}}Scanning{{end}}
+  {{if .ProgressPct}} — {{.ProgressPct}}%{{end}}{{if .Message}} · {{.Message}}{{end}}
+</p>
+{{end}}
+{{end}}
+
+{{define "partials/library_card_status_poll.html"}}
+{{template "partials/library_card_live.html" .}}
+<div class="library-card-progress" id="library-{{.Library.ID}}-progress" style="--scan-pct: {{.ProgressPct}}%; --watch-pct: {{.WatchPct}}%"{{if and (not .Poll) .Total}} data-watch="1"{{end}} hx-swap-oob="outerHTML"></div>
+{{end}}

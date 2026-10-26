@@ -48,10 +48,8 @@ services:
       - ./fixtures/media:/media:ro,z
       - ./matchmedia-overlay.yaml:/overlay/matchmedia.yaml:ro,z
     working_dir: /app
-    expose:
-      - "7676"
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7676/healthz"]
+      test: ["CMD-SHELL", "port=$$(cat /xdg/.local/state/servemedia/port) && curl -sf http://127.0.0.1:$$port/healthz"]
       interval: 5s
       timeout: 3s
       retries: 24
@@ -64,8 +62,10 @@ services:
     depends_on:
       servemedia:
         condition: service_healthy
+    volumes:
+      - servemedia-test-data:/xdg:ro,z
+    command: ["bash", "-lc", "port=$$(cat /xdg/.local/state/servemedia/port); export SERVEMEDIA_BASE_URL=http://servemedia:$$port; exec npx playwright test"]
     environment:
-      SERVEMEDIA_BASE_URL: http://servemedia:7676
       WEBHOOK_STUB_URL: http://webhook-stub:9090
 
 volumes:

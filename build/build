@@ -6,34 +6,78 @@ SHARE="${SHARE:-$DIST/.local/share/servemedia}"
 CACHE="${CACHE:-/cache/ffmpeg}"
 OUT="${OUT:-/out}"
 UA="${UA:-servemedia-builder}"
+VENDOR_YAML="${VENDOR_YAML:-/build/vendor.yaml}"
 
 retry() { curl -fsSL -A "$UA" --retry 5 --retry-delay 2 "$@"; }
 
-yaml_url() {
-  awk -v k="$1" '
-    $1 == k ":" {
-      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
-      gsub(/^"/, "")
-      gsub(/"[[:space:]]*$/, "")
-      print
-      exit
-    }
-  ' "$SHARE/config/default.yaml"
+# read_vendor assets
+# read_vendor source <name>
+read_vendor() {
+  python3 - "$VENDOR_YAML" "$@" <<'PY'
+import sys
+path, mode = sys.argv[1], sys.argv[2]
+want_name = sys.argv[3] if len(sys.argv) > 3 else ""
+section = ""
+cur = None
+items = []
+
+def flush():
+    global cur
+    if cur and cur.get("url"):
+        items.append(cur)
+    cur = None
+
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        raw = line.rstrip("\n")
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw[0] not in " \t":
+            flush()
+            section = raw.split(":", 1)[0].strip()
+            continue
+        if section != ("assets" if mode == "assets" else "sources"):
+            continue
+        s = raw.strip()
+        if s.startswith("- "):
+            flush()
+            cur = {}
+            s = s[2:].strip()
+            if not s:
+                continue
+        if cur is None or ":" not in s:
+            continue
+        k, _, v = s.partition(":")
+        cur[k.strip()] = v.strip().strip('"').strip("'")
+flush()
+
+def truthy(v):
+    return v in ("true", "True", "yes")
+
+def notice_for(dest):
+    if dest.endswith(".LICENSE"):
+        return dest[: -len(".LICENSE")] + ".NOTICE"
+    return dest + ".NOTICE"
+
+if mode == "assets":
+    for it in items:
+        dest = it.get("dest", "")
+        if not dest:
+            sys.exit("error: vendor asset missing dest")
+        notice = notice_for(dest) if truthy(it.get("notice", "")) else ""
+        print(f"{it['url']}\t{dest}\t{notice}")
+elif mode == "source":
+    for it in items:
+        if it.get("name") == want_name:
+            print(it["url"])
+            raise SystemExit
+    sys.exit(f"error: vendor source {want_name} missing")
+else:
+    sys.exit(f"error: unknown vendor mode {mode}")
+PY
 }
 
-yaml_section_key() {
-  awk -v sec="$1" -v k="$2" '
-    $1 == sec ":" { insec=1; next }
-    insec && /^[^[:space:]#]/ { insec=0 }
-    insec && $1 == k ":" {
-      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
-      gsub(/^"/, "")
-      gsub(/"[[:space:]]*$/, "")
-      print
-      exit
-    }
-  ' "$SHARE/config/default.yaml"
-}
+source_url() { read_vendor source "$1"; }
 
 yaml_version_from_text() {
   awk '
@@ -47,171 +91,18 @@ yaml_version_from_text() {
   '
 }
 
-is_semver() {
-  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
-}
-
-matchmedia_pin() {
-  local v
-  v="$(yaml_section_key matchmedia version)"
-  if ! is_semver "$v"; then
-    echo "error: matchmedia.version must be X.Y.Z (got ${v:-empty})" >&2
-    return 1
-  fi
-  printf '%s\n' "$v"
-}
-
-matchmedia_archive_name() {
-  printf 'matchmedia-%s-linux-amd64.tar.gz\n' "$1"
-}
-
-tarball_inner_version() {
-  local tarball="$1" yaml=""
-  yaml="$(tar -xOf "$tarball" matchmedia/.local/share/matchmedia/config/default.yaml 2>/dev/null || true)"
-  if [[ -z "$yaml" ]]; then
-    yaml="$(tar -xOf "$tarball" matchmedia/config/default.yaml 2>/dev/null || true)"
-  fi
-  if [[ -z "$yaml" ]]; then
-    yaml="$(tar -xOf "$tarball" config/default.yaml 2>/dev/null || true)"
-  fi
-  printf '%s\n' "$yaml" | yaml_version_from_text
-}
-
-verify_matchmedia_archive_name() {
-  local tarball="$1" pin="$2" base want
-  base="$(basename "$tarball")"
-  want="$(matchmedia_archive_name "$pin")"
-  if [[ "$base" != "$want" ]]; then
-    echo "error: cache archive $base does not match pin $want" >&2
-    return 1
-  fi
-}
-
-verify_matchmedia_payload() {
-  local tarball="$1" pin="$2" inner
-  inner="$(tarball_inner_version "$tarball")"
-  if ! is_semver "$inner"; then
-    echo "error: $tarball has no valid inner version (got ${inner:-empty})" >&2
-    return 1
-  fi
-  if [[ "$inner" != "$pin" ]]; then
-    echo "error: $tarball version $inner does not match matchmedia.version $pin" >&2
-    return 1
-  fi
-}
-
-install_matchmedia_tarball() {
-  local tarball="$1"
-  local tmp root bin_dest share_dest
-  tmp="$(mktemp -d)"
-  mkdir -p "$tmp/matchmedia-extract"
-  tar -xzf "$tarball" -C "$tmp/matchmedia-extract"
-  root="$tmp/matchmedia-extract/matchmedia"
-  bin_dest="$DIST/.local/bin/matchmedia"
-  share_dest="$DIST/.local/share/matchmedia"
-  rm -rf "$share_dest" "$DIST/.local/share/servemedia/tools/matchmedia"
-  mkdir -p "$(dirname "$bin_dest")" "$share_dest"
-  if [[ -x "$root/.local/bin/matchmedia" ]]; then
-    cp -a "$root/.local/bin/matchmedia" "$bin_dest"
-    if [[ -d "$root/.local/share/matchmedia" ]]; then
-      cp -a "$root/.local/share/matchmedia"/. "$share_dest/"
-    fi
-    if [[ -f "$root/LICENSE" ]]; then
-      cp -a "$root/LICENSE" "$share_dest/LICENSE"
-    fi
-  elif [[ -x "$root/matchmedia" ]]; then
-    cp -a "$root/matchmedia" "$bin_dest"
-    for item in config public LICENSE; do
-      if [[ -e "$root/$item" ]]; then
-        cp -a "$root/$item" "$share_dest/"
-      fi
-    done
-  elif [[ -x "$tmp/matchmedia-extract/matchmedia" ]]; then
-    cp -a "$tmp/matchmedia-extract/matchmedia" "$bin_dest"
-    for item in config public LICENSE; do
-      if [[ -e "$tmp/matchmedia-extract/$item" ]]; then
-        cp -a "$tmp/matchmedia-extract/$item" "$share_dest/"
-      fi
-    done
-  else
-    echo "error: matchmedia binary missing from tarball $tarball" >&2
-    rm -rf "$tmp"
-    return 1
-  fi
-  chmod a+x "$bin_dest"
-  rm -rf "$tmp"
-}
-
-overlay_matchmedia() {
-  local cache="${MATCHMEDIA_CACHE:-/cache}" pin want matchmedia_url tmp
-  local -a extras
-  pin="$(matchmedia_pin)"
-  want="$cache/$(matchmedia_archive_name "$pin")"
-  if [[ -f "$want" ]]; then
-    verify_matchmedia_archive_name "$want" "$pin"
-    verify_matchmedia_payload "$want" "$pin"
-    echo "using cached matchmedia $pin from $want"
-    install_matchmedia_tarball "$want"
-    return 0
-  fi
-  extras=()
-  while IFS= read -r -d '' f; do
-    extras+=("$f")
-  done < <(find "$cache" -maxdepth 1 -type f -name 'matchmedia-*.tar.gz' -print0 2>/dev/null || true)
-  if ((${#extras[@]})); then
-    echo "error: matchmedia.version $pin needs $(matchmedia_archive_name "$pin"); cache has:" >&2
-    printf '  %s\n' "${extras[@]}" >&2
-    return 1
-  fi
-  matchmedia_url="$(yaml_url url)"
-  if [[ "$(basename "$matchmedia_url")" != "$(matchmedia_archive_name "$pin")" ]]; then
-    echo "error: matchmedia.url must end with $(matchmedia_archive_name "$pin") (got $matchmedia_url)" >&2
-    return 1
-  fi
-  echo "fetching matchmedia $pin from $matchmedia_url"
-  tmp="$(mktemp -d)"
-  if retry -o "$tmp/$(matchmedia_archive_name "$pin")" "$matchmedia_url"; then
-    verify_matchmedia_archive_name "$tmp/$(matchmedia_archive_name "$pin")" "$pin"
-    verify_matchmedia_payload "$tmp/$(matchmedia_archive_name "$pin")" "$pin"
-    install_matchmedia_tarball "$tmp/$(matchmedia_archive_name "$pin")"
-    rm -rf "$tmp"
-    return 0
-  fi
-  rm -rf "$tmp"
-  echo "error: matchmedia $pin missing (place $(matchmedia_archive_name "$pin") in build/cache or set a reachable matchmedia.url)" >&2
-  return 1
-}
-
 vendor() {
-  local htmx_url htmx_lic videojs_js videojs_css videojs_lic hls_url hls_lic
-  local cm_js cm_css cm_yaml cm_lic
-  htmx_url="$(yaml_url htmx_url)"
-  htmx_lic="$(yaml_url htmx_license_url)"
-  videojs_js="$(yaml_url videojs_js_url)"
-  videojs_css="$(yaml_url videojs_css_url)"
-  videojs_lic="$(yaml_url videojs_license_url)"
-  hls_url="$(yaml_url hls_url)"
-  hls_lic="$(yaml_url hls_license_url)"
-  cm_js="$(yaml_url codemirror_js_url)"
-  cm_css="$(yaml_url codemirror_css_url)"
-  cm_yaml="$(yaml_url codemirror_yaml_url)"
-  cm_lic="$(yaml_url codemirror_license_url)"
-  mkdir -p "$SHARE/vendor/video.js" "$SHARE/vendor/ffmpeg" "$SHARE/vendor/codemirror"
-  retry -o "$SHARE/vendor/htmx.min.js" "$htmx_url"
-  retry -o "$SHARE/vendor/htmx.min.js.LICENSE" "$htmx_lic"
-  printf '%s\n' "$htmx_lic" >"$SHARE/vendor/htmx.min.js.NOTICE"
-  retry -o "$SHARE/vendor/video.js/video.min.js" "$videojs_js"
-  retry -o "$SHARE/vendor/video.js/video-js.min.css" "$videojs_css"
-  retry -o "$SHARE/vendor/video.js/LICENSE" "$videojs_lic"
-  printf '%s\n' "$videojs_lic" >"$SHARE/vendor/video.js/LICENSE.NOTICE"
-  retry -o "$SHARE/vendor/hls.min.js" "$hls_url"
-  retry -o "$SHARE/vendor/hls.min.js.LICENSE" "$hls_lic"
-  printf '%s\n' "$hls_lic" >"$SHARE/vendor/hls.min.js.NOTICE"
-  retry -o "$SHARE/vendor/codemirror/codemirror.min.js" "$cm_js"
-  retry -o "$SHARE/vendor/codemirror/codemirror.min.css" "$cm_css"
-  retry -o "$SHARE/vendor/codemirror/yaml.min.js" "$cm_yaml"
-  retry -o "$SHARE/vendor/codemirror/LICENSE" "$cm_lic"
-  printf '%s\n' "$cm_lic" >"$SHARE/vendor/codemirror/LICENSE.NOTICE"
+  local url dest notice out
+  mkdir -p "$SHARE/vendor"
+  while IFS=$'\t' read -r url dest notice; do
+    [[ -n "$url" && -n "$dest" ]] || continue
+    out="$SHARE/vendor/$dest"
+    mkdir -p "$(dirname "$out")"
+    retry -o "$out" "$url"
+    if [[ -n "$notice" ]]; then
+      printf '%s\n' "$url" >"$SHARE/vendor/$notice"
+    fi
+  done < <(read_vendor assets)
 }
 
 fetch_src() {
@@ -250,10 +141,10 @@ compile_ffmpeg() {
   tmp="$(mktemp -d)"
   cd "$tmp"
 
-  fetch_src nv-codec-headers "$(yaml_url nv_codec_headers_src_url)"
+  fetch_src nv-codec-headers "$(source_url nv-codec-headers)"
   make -C nv-codec-headers PREFIX="$prefix" install
 
-  fetch_src x264 "$(yaml_url x264_src_url)"
+  fetch_src x264 "$(source_url x264)"
   (
     cd x264
     bash ./configure --prefix="$prefix" --enable-static --enable-pic --disable-cli --disable-opencl --disable-shared
@@ -261,7 +152,7 @@ compile_ffmpeg() {
     make install
   )
 
-  fetch_src x265 "$(yaml_url x265_src_url)"
+  fetch_src x265 "$(source_url x265)"
   cmake -S x265/source -B x265/build \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_BUILD_TYPE=Release \
@@ -272,7 +163,7 @@ compile_ffmpeg() {
   cmake --build x265/build -j"$(nproc)"
   cmake --install x265/build
 
-  fetch_src opus "$(yaml_url opus_src_url)"
+  fetch_src opus "$(source_url opus)"
   (
     cd opus
     ./configure --prefix="$prefix" --disable-shared --enable-static --disable-doc --disable-extra-programs
@@ -280,13 +171,13 @@ compile_ffmpeg() {
     make install
   )
 
-  fetch_src dav1d "$(yaml_url dav1d_src_url)"
+  fetch_src dav1d "$(source_url dav1d)"
   meson setup dav1d/build dav1d \
     --prefix="$prefix" --buildtype=release --default-library=static \
     -Denable_tools=false -Denable_tests=false
   ninja -C dav1d/build install
 
-  fetch_src svtav1 "$(yaml_url svtav1_src_url)"
+  fetch_src svtav1 "$(source_url svtav1)"
   cmake -S svtav1 -B svtav1/build \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_BUILD_TYPE=Release \
@@ -296,7 +187,7 @@ compile_ffmpeg() {
   cmake --build svtav1/build -j"$(nproc)"
   cmake --install svtav1/build
 
-  fetch_src libvpx "$(yaml_url libvpx_src_url)"
+  fetch_src libvpx "$(source_url libvpx)"
   (
     cd libvpx
     ./configure --prefix="$prefix" --disable-shared --enable-static --enable-pic \
@@ -306,7 +197,7 @@ compile_ffmpeg() {
     make install
   )
 
-  fetch_src lame "$(yaml_url lame_src_url)"
+  fetch_src lame "$(source_url lame)"
   (
     cd lame
     ./configure --prefix="$prefix" --disable-shared --enable-static --disable-frontend --disable-gtktest
@@ -314,7 +205,7 @@ compile_ffmpeg() {
     make install
   )
 
-  fetch_src libvpl "$(yaml_url libvpl_src_url)"
+  fetch_src libvpl "$(source_url libvpl)"
   cmake -S libvpl -B libvpl/build \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_BUILD_TYPE=Release \
@@ -325,7 +216,7 @@ compile_ffmpeg() {
   cmake --build libvpl/build -j"$(nproc)"
   cmake --install libvpl/build
 
-  fetch_src ffmpeg "$(yaml_url ffmpeg_src_url)"
+  fetch_src ffmpeg "$(source_url ffmpeg)"
   (
     cd ffmpeg
     if [[ -f "$prefix/lib/pkgconfig/vpl.pc" ]]; then
@@ -375,11 +266,31 @@ compile_ffmpeg() {
   strip "$CACHE/ffmpeg" "$CACHE/ffprobe"
   assert_host_linked_ffmpeg "$CACHE/ffmpeg"
   assert_host_linked_ffmpeg "$CACHE/ffprobe"
-  ffmpeg_lic="$(yaml_url ffmpeg_license_url)"
+  ffmpeg_lic="$(source_url ffmpeg-license)"
   retry -o "$CACHE/LICENSE" "$ffmpeg_lic"
   printf '%s\n' "$ffmpeg_lic" >"$CACHE/LICENSE.NOTICE"
   cd /
   rm -rf "$tmp"
+}
+
+# Alpine build of the same recipe. CACHE is forced so this cannot replace the glibc cache.
+ffmpeg_musl() {
+  local saved="${CACHE:-}"
+  CACHE="${MUSL_CACHE:-/cache/ffmpeg-musl}"
+  export CACHE
+  mkdir -p "$CACHE"
+  if [[ -f "$CACHE/ffmpeg" && -f "$CACHE/ffprobe" && -s "$CACHE/LICENSE" ]]; then
+    echo "using cached musl ffmpeg from $CACHE"
+  else
+    echo "compiling musl ffmpeg into $CACHE"
+    compile_ffmpeg
+  fi
+  chmod a+x "$CACHE/ffmpeg" "$CACHE/ffprobe"
+  chmod -R a+rwX "$CACHE"
+  if [[ -n "$saved" ]]; then
+    CACHE="$saved"
+    export CACHE
+  fi
 }
 
 stage() {
@@ -397,67 +308,40 @@ stage() {
   mkdir -p "$SHARE/vendor/ffmpeg"
   cp -a "$CACHE"/. "$SHARE/vendor/ffmpeg/"
   chmod a+x "$SHARE/vendor/ffmpeg/ffmpeg" "$SHARE/vendor/ffmpeg/ffprobe"
-  overlay_matchmedia
   cp -a "$DIST"/. "$OUT/"
   chmod -R a+rwX "$OUT"
   chmod a+x "$OUT/.local/bin/servemedia"
-  chmod a+x "$OUT/.local/bin/matchmedia"
   find "$OUT/.local/share/servemedia/vendor/ffmpeg" -type f \( -name ffmpeg -o -name ffprobe \) -exec chmod a+x {} +
 }
 
-appimage() {
-  local tarball="${1:-}"
-  if [[ -z "$tarball" || ! -f "$tarball" ]]; then
-    echo "error: appimage requires the package tarball" >&2
+elf_interp() {
+  readelf -l "$1" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p'
+}
+
+require_interp() {
+  local bin="$1" want="$2" interp
+  interp="$(elf_interp "$bin")"
+  case "$interp" in
+    *"$want"*)
+      echo "$bin interpreter: $interp"
+      ;;
+    *)
+      echo "error: $bin interpreter is ${interp:-unset}; expected $want" >&2
+      exit 1
+      ;;
+  esac
+}
+
+reject_glibc_needed() {
+  local bin="$1"
+  if readelf -d "$bin" | grep -q 'libc\.so\.6'; then
+    echo "error: $bin needs libc.so.6" >&2
     exit 1
   fi
-  local work root share qs appdir name
-  work="$(mktemp -d)"
-  tar -C "$work" -xzf "$tarball"
-  root="$work/servemedia"
-  share="$root/.local/share/servemedia"
-  for b in \
-    "$root/.local/bin/servemedia" \
-    "$root/.local/bin/matchmedia" \
-    "$share/vendor/ffmpeg/ffmpeg" \
-    "$share/vendor/ffmpeg/ffprobe" \
-    "$root/.local/share/matchmedia/config/default.yaml"
-  do
-    if [[ ! -f "$b" ]]; then
-      echo "error: missing $b in $tarball" >&2
-      exit 1
-    fi
-  done
-  name="servemedia-linux-amd64.AppImage"
-  local version
-  version="$(yaml_version_from_text < "$share/config/default.yaml")"
-  version="${version:-0.0.0}"
-  qs="$work/quick-sharun"
-  retry -o "$qs" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh"
-  chmod +x "$qs"
-  appdir="$work/AppDir"
-  export STRACE_MODE=0 ANYLINUX_LIB=1
-  export ARCH="$(uname -m)"
-  export APPDIR="$appdir"
-  export OUTPATH="$(dirname "$tarball")"
-  export OUTNAME="$name"
-  export DESKTOP="$root/.local/share/applications/servemedia.desktop"
-  export ICON="$share/public/logo.svg"
-  export VERSION="$version"
-  export STARTUPWMCLASS=eu.alyshmahell.ServeMedia
-  export UPINFO="gh-releases-zsync|AlyShmahell|servemedia|latest|servemedia-linux-amd64.AppImage.zsync"
-  "$qs" \
-    "$root/.local/bin/servemedia" \
-    "$root/.local/bin/matchmedia"
-  mkdir -p "$appdir/servemedia"
-  cp -a "$root"/. "$appdir/servemedia/"
-  mkdir -p "$appdir/shared/share"
-  cp -a "$root/.local/share/matchmedia" "$appdir/shared/share/matchmedia"
-  find "$appdir" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
-  cat >"$appdir/bin/00-servemedia-root.hook" <<'EOF'
-export SERVEMEDIA_ROOT="${APPDIR}/servemedia/.local/share/servemedia"
-EOF
-  chmod +x "$appdir/bin/00-servemedia-root.hook"
+}
+
+finish_appimage() {
+  local qs="$1" name="$2"
   "$qs" --make-appimage
   if [[ ! -f "$OUTPATH/$name" ]]; then
     local produced
@@ -470,15 +354,106 @@ EOF
   fi
   chmod a+rwx "$OUTPATH/$name"
   echo "wrote $OUTPATH/$name"
-  rm -rf "$work"
+}
+
+prepare_appimage() {
+  local tarball="${1:-}"
+  if [[ -z "$tarball" || ! -f "$tarball" ]]; then
+    echo "error: appimage requires the package tarball" >&2
+    exit 1
+  fi
+  APP_WORK="$(mktemp -d)"
+  tar -C "$APP_WORK" -xzf "$tarball"
+  APP_ROOT="$APP_WORK/servemedia"
+  APP_SHARE="$APP_ROOT/.local/share/servemedia"
+  local b
+  for b in \
+    "$APP_ROOT/.local/bin/servemedia" \
+    "$APP_SHARE/vendor/ffmpeg/ffmpeg" \
+    "$APP_SHARE/vendor/ffmpeg/ffprobe"
+  do
+    if [[ ! -f "$b" ]]; then
+      echo "error: missing $b in $tarball" >&2
+      exit 1
+    fi
+  done
+  APP_NAME="$(basename "$tarball" .tar.gz).AppImage"
+  APP_VERSION="$(yaml_version_from_text < "$APP_SHARE/config/default.yaml")"
+  APP_VERSION="${APP_VERSION:-0.0.0}"
+  APP_QS="$APP_WORK/quick-sharun"
+  retry -o "$APP_QS" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh"
+  chmod +x "$APP_QS"
+  APP_DIR="$APP_WORK/AppDir"
+  export ARCH="$(uname -m)"
+  export APPDIR="$APP_DIR"
+  export OUTPATH="$(dirname "$tarball")"
+  export OUTNAME="$APP_NAME"
+  export DESKTOP="$APP_ROOT/.local/share/applications/servemedia.desktop"
+  export ICON="$APP_SHARE/public/logo.svg"
+  export VERSION="$APP_VERSION"
+  export STARTUPWMCLASS=eu.alyshmahell.ServeMedia
+  export UPINFO="gh-releases-zsync|AlyShmahell|servemedia|latest|$APP_NAME.zsync"
+}
+
+appimage() {
+  prepare_appimage "${1:-}"
+  export STRACE_MODE=0 ANYLINUX_LIB=1
+  "$APP_QS" \
+    "$APP_ROOT/.local/bin/servemedia"
+  mkdir -p "$APP_DIR/servemedia"
+  cp -a "$APP_ROOT"/. "$APP_DIR/servemedia/"
+  find "$APP_DIR" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
+  cat >"$APP_DIR/bin/00-servemedia-root.hook" <<'EOF'
+export SERVEMEDIA_ROOT="${APPDIR}/servemedia/.local/share/servemedia"
+if [ -z "${SERVEMEDIA_LAUNCHED:-}" ]; then
+  export SERVEMEDIA_LAUNCHED=1
+  exec "${APPDIR}/servemedia/.local/bin/servemedia" --webkit "$@"
+fi
+EOF
+  chmod +x "$APP_DIR/bin/00-servemedia-root.hook"
+  # quick-sharun deploys only the servemedia binary it was given. The copy under
+  # servemedia/ is the archive ELF and must stay glibc.
+  require_interp "$APP_DIR/servemedia/.local/bin/servemedia" ld-linux
+  require_interp "$APP_DIR/servemedia/.local/share/servemedia/vendor/ffmpeg/ffmpeg" ld-linux
+  finish_appimage "$APP_QS" "$APP_NAME"
+  rm -rf "$APP_WORK"
+}
+
+# The musl ELF is not passed to quick-sharun's deploy step. That step patchelfs
+# its argument and bundles glibc. AppRun is a static musl program that execs
+# the untouched servemedia binary.
+appimage_musl() {
+  local apprun="${APPRUN:-/cache/servemedia-apprun}"
+  prepare_appimage "${1:-}"
+  if [[ ! -x "$apprun" ]]; then
+    echo "error: musl AppRun missing at $apprun" >&2
+    exit 1
+  fi
+  unset ANYLINUX_LIB
+  export STRACE_MODE=0
+  mkdir -p "$APP_DIR/servemedia"
+  cp -a "$apprun" "$APP_DIR/AppRun"
+  chmod a+x "$APP_DIR/AppRun"
+  cp -a "$APP_ROOT"/. "$APP_DIR/servemedia/"
+  find "$APP_DIR" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
+  local bin="$APP_DIR/servemedia/.local/bin/servemedia"
+  local ff="$APP_DIR/servemedia/.local/share/servemedia/vendor/ffmpeg/ffmpeg"
+  require_interp "$bin" ld-musl
+  reject_glibc_needed "$bin"
+  require_interp "$ff" ld-musl
+  reject_glibc_needed "$ff"
+  finish_appimage "$APP_QS" "$APP_NAME"
+  rm -rf "$APP_WORK"
 }
 
 case "${1:-}" in
   vendor) vendor ;;
   stage) stage ;;
+  ffmpeg-musl) ffmpeg_musl ;;
   appimage) appimage "${2:-}" ;;
+  appimage-musl) appimage_musl "${2:-}" ;;
   *)
-    echo "usage: $0 vendor|stage|appimage" >&2
+    echo "usage: $0 vendor|stage|ffmpeg-musl|appimage|appimage-musl" >&2
     exit 1
     ;;
 esac

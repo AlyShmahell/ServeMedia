@@ -1,7 +1,7 @@
 id: eu.alyshmahell.ServeMedia
-runtime: org.freedesktop.Platform
-runtime-version: "26.08"
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: "51"
+sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.golang
 command: servemedia
@@ -23,36 +23,6 @@ finish-args:
   - --filesystem=xdg-videos
   - --filesystem=xdg-music
 modules:
-  - name: matchmedia
-    buildsystem: simple
-    build-options:
-      append-path: /usr/lib/sdk/golang/bin
-      env:
-        CGO_ENABLED: "0"
-        GOFLAGS: "-buildvcs=false"
-        GOPROXY: "off"
-        GOSUMDB: "off"
-    build-commands:
-      - |
-        . /usr/lib/sdk/golang/enable.sh
-        ( cd src && go build -mod=vendor -ldflags="-s -w" -o matchmedia ./cmd )
-      - install -Dm755 src/matchmedia /app/tools/matchmedia/matchmedia
-      - cp -a src/share/config /app/tools/matchmedia/config
-      - install -Dm644 src/webui/index.html /app/tools/matchmedia/public/index.html
-      - install -Dm644 src/webui/style.css /app/tools/matchmedia/public/style.css
-      - install -Dm644 src/webui/app.js /app/tools/matchmedia/public/app.js
-      - install -Dm644 LICENSE /app/tools/matchmedia/LICENSE
-      - install -Dm644 LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/MatchMedia.LICENSE
-    sources:
-      - type: git
-        url: https://github.com/AlyShmahell/MatchMedia.git
-        tag: v0.1.0
-        commit: edc2cf76f6309cdcb65f553674f7ed5fdb024ebc
-        x-checker-data:
-          type: git
-          tag-pattern: ^v([\d.]+)$
-      - pins/matchmedia-go-sources.yml
-
   - name: servemedia
     buildsystem: simple
     build-options:
@@ -65,6 +35,7 @@ modules:
     build-commands:
       - |
         . /usr/lib/sdk/golang/enable.sh
+        export CGO_ENABLED=0
         ( cd src && go build -mod=vendor -ldflags="-s -w" -o servemedia ./cmd )
       - install -Dm755 src/servemedia /app/servemedia
       - cp -a src/share/config /app/config
@@ -72,6 +43,7 @@ modules:
       - install -m644 src/web/static/app.css src/web/static/app.js src/web/static/controls.js src/web/static/logo.svg src/web/static/placeholder.svg /app/public/
       - install -Dm644 LICENSE /app/LICENSE
       - install -Dm644 LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/LICENSE
+      - install -Dm644 src/vendor/github.com/alyshmahell/matchmedia/src/LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/MatchMedia.LICENSE
       - install -Dm644 src/share/applications/servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - sed -i 's|^Icon=.*|Icon=eu.alyshmahell.ServeMedia|' /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - install -Dm644 src/web/static/logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
@@ -92,7 +64,7 @@ modules:
       - install -Dm644 yaml.min.js /app/vendor/codemirror/yaml.min.js
       - install -Dm644 codemirror.LICENSE /app/vendor/codemirror/LICENSE
       - printf '%s\n' 'https://raw.githubusercontent.com/codemirror/codemirror5/5.65.18/LICENSE' >/app/vendor/codemirror/LICENSE.NOTICE
-      - chmod a+x /app/servemedia /app/bin/servemedia /app/tools/matchmedia/matchmedia
+      - chmod a+x /app/servemedia /app/bin/servemedia
     sources:
       - type: git
         url: https://github.com/AlyShmahell/ServeMedia.git

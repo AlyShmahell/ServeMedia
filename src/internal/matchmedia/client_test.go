@@ -74,7 +74,7 @@ func TestScanJSONPath(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	got, err := c.Scan("/media/tv", "", nil)
+	got, err := c.postScan("/media/tv", "", nil)
 	if err != nil || got.Files != 3 || got.Session != "20260829T122800Z-a1b2c3d4e5f6g7h8" || gotPath != "/media/tv" {
 		t.Fatalf("got=%+v path=%q err=%v", got, gotPath, err)
 	}
@@ -91,7 +91,7 @@ func TestScanJSONMode(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	out, err := c.Scan("/media/tv", "changes", nil)
+	out, err := c.postScan("/media/tv", "changes", nil)
 	if err != nil || out.Session == "" {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestScanJSONRequireEpisodeNFO(t *testing.T) {
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
 	flag := true
-	if _, err := c.Scan("/media/tv", "changes", &flag); err != nil {
+	if _, err := c.postScan("/media/tv", "changes", &flag); err != nil {
 		t.Fatal(err)
 	}
 	if got["path"] != "/media/tv" || got["mode"] != "changes" || got["require_episode_nfo"] != true {
@@ -127,7 +127,7 @@ func TestScanMissingSession(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	if _, err := c.Scan("/media/tv", "", nil); err == nil {
+	if _, err := c.postScan("/media/tv", "", nil); err == nil {
 		t.Fatal("expected missing session")
 	}
 }
@@ -223,12 +223,12 @@ func TestIngestJSON(t *testing.T) {
 }
 
 func TestScanResultJobsCount(t *testing.T) {
-	got, err := decodeScanResult([]byte(`{"session":"s1","files":2,"jobs":3}`))
-	if err != nil || got.Session != "s1" || got.Files != 2 || got.Jobs != 3 {
+	var got ScanResult
+	if err := json.Unmarshal([]byte(`{"session":"s1","files":2,"jobs":3}`), &got); err != nil || got.Session != "s1" || got.Files != 2 || got.Jobs != 3 {
 		t.Fatalf("count: %+v %v", got, err)
 	}
-	got, err = decodeScanResult([]byte(`{"session":"s1","files":2}`))
-	if err != nil || got.Jobs != 0 {
+	got = ScanResult{}
+	if err := json.Unmarshal([]byte(`{"session":"s1","files":2}`), &got); err != nil || got.Jobs != 0 {
 		t.Fatalf("omitted: %+v %v", got, err)
 	}
 }
@@ -277,295 +277,275 @@ func TestWithinFilesystemRoot(t *testing.T) {
 func TestOverlayDest(t *testing.T) {
 	data := t.TempDir()
 	got := overlayDest(data)
-	want := filepath.Join(data, "config", "overlay.yaml")
+	want := filepath.Join(data, "overlay.yaml")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
 
-func TestSeedXDGSkipsExisting(t *testing.T) {
-	src := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(src, "config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "config", "default.yaml"), []byte("seed"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(src, "public"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "public", "index.html"), []byte("pub"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	data := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(data, "config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(data, "config", "default.yaml"), []byte("keep"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := seedXDG(src, data); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(filepath.Join(data, "config", "default.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "keep" {
-		t.Fatalf("seed overwrote existing: %q", got)
-	}
-	if _, err := os.Stat(filepath.Join(data, "public", "index.html")); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestWriteOverlayFromSeed(t *testing.T) {
-	seed := filepath.Join(t.TempDir(), "default.yaml")
-	if err := os.WriteFile(seed, []byte("http:\n  addr: 127.0.0.1:7680\nbrowse_roots:\n  - /mnt\n  - $XDG_VIDEOS_DIR\nmatch:\n  min_score: 0.72\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	data := t.TempDir()
-	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
-	if err := writeOverlay(data, seed); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(data, "config", "overlay.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		BrowseRoots []string `yaml:"browse_roots"`
-		HTTP        struct {
-			Addr string `yaml:"addr"`
-		} `yaml:"http"`
-		Match struct {
-			MinScore float64 `yaml:"min_score"`
-		} `yaml:"match"`
-	}
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.HTTP.Addr != "127.0.0.1:7680" {
-		t.Fatalf("http.addr=%q", cfg.HTTP.Addr)
-	}
-	if len(cfg.BrowseRoots) != 2 || cfg.BrowseRoots[0] != "/mnt" || cfg.BrowseRoots[1] != "$XDG_VIDEOS_DIR" {
-		t.Fatalf("browse_roots=%#v", cfg.BrowseRoots)
-	}
-	if cfg.Match.MinScore != 0.72 {
-		t.Fatalf("min_score=%v", cfg.Match.MinScore)
-	}
-}
-
-func TestWriteOverlayExistingWins(t *testing.T) {
-	seed := filepath.Join(t.TempDir(), "default.yaml")
-	if err := os.WriteFile(seed, []byte("match:\n  min_score: 0.72\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	data := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(data, "config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(data, "config", "overlay.yaml"), []byte("match:\n  min_score: 0.8\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
-	if err := writeOverlay(data, seed); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(data, "config", "overlay.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		Match struct {
-			MinScore float64 `yaml:"min_score"`
-		} `yaml:"match"`
-	}
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Match.MinScore != 0.8 {
-		t.Fatalf("min_score=%v", cfg.Match.MinScore)
-	}
-}
-
-func TestWriteOverlaySeedWinsGroupKinds(t *testing.T) {
-	seed := filepath.Join(t.TempDir(), "default.yaml")
-	if err := os.WriteFile(seed, []byte("group:\n  kinds: [ova, specials]\nmatch:\n  min_score: 0.72\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	data := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(data, "config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(data, "config", "overlay.yaml"), []byte("group:\n  kinds: [ova, specials, movie, movies, film]\nmatch:\n  min_score: 0.8\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
-	if err := writeOverlay(data, seed); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(data, "config", "overlay.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		Group struct {
-			Kinds []string `yaml:"kinds"`
-		} `yaml:"group"`
-		Match struct {
-			MinScore float64 `yaml:"min_score"`
-		} `yaml:"match"`
-	}
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Match.MinScore != 0.8 {
-		t.Fatalf("min_score=%v", cfg.Match.MinScore)
-	}
-	if len(cfg.Group.Kinds) != 2 || cfg.Group.Kinds[0] != "ova" || cfg.Group.Kinds[1] != "specials" {
-		t.Fatalf("kinds=%#v", cfg.Group.Kinds)
-	}
-}
-
-func TestWriteOverlayServeMediaKeysLast(t *testing.T) {
-	seed := filepath.Join(t.TempDir(), "default.yaml")
-	if err := os.WriteFile(seed, []byte("http:\n  addr: 127.0.0.1:7680\nbrowse_roots:\n  - /mnt\n  - $XDG_VIDEOS_DIR\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	extra := filepath.Join(t.TempDir(), "extra.yaml")
-	if err := os.WriteFile(extra, []byte("browse_roots: [/media]\nbrowse_root: /media\ndata_dir: /old\nproviders:\n  omdb:\n    base: http://omdb-stub:8080\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", extra)
-	data := t.TempDir()
-	if err := writeOverlay(data, seed); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(data, "config", "overlay.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		BrowseRoot  string   `yaml:"browse_root"`
-		BrowseRoots []string `yaml:"browse_roots"`
-		DataDir     string   `yaml:"data_dir"`
-		HTTP        struct {
-			Addr string `yaml:"addr"`
-		} `yaml:"http"`
-		Providers struct {
-			OMDb struct {
-				Base string `yaml:"base"`
-			} `yaml:"omdb"`
-		} `yaml:"providers"`
-	}
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.BrowseRoot != "" {
-		t.Fatalf("browse_root should be dropped, got %q", cfg.BrowseRoot)
-	}
-	if cfg.DataDir != "" {
-		t.Fatalf("data_dir should be dropped, got %q", cfg.DataDir)
-	}
-	if len(cfg.BrowseRoots) != 1 || cfg.BrowseRoots[0] != "/media" {
-		t.Fatalf("browse_roots=%#v (extra overlay must merge, ServeMedia must not stomp)", cfg.BrowseRoots)
-	}
-	if cfg.Providers.OMDb.Base != "http://omdb-stub:8080" {
-		t.Fatalf("omdb.base=%q", cfg.Providers.OMDb.Base)
-	}
-	if cfg.HTTP.Addr != "127.0.0.1:7680" {
-		t.Fatalf("http.addr=%q (seed, not ServeMedia overwrite)", cfg.HTTP.Addr)
-	}
-}
-
-func TestWriteOverlayNewSeedKeysAppear(t *testing.T) {
-	seed := filepath.Join(t.TempDir(), "default.yaml")
-	if err := os.WriteFile(seed, []byte("match:\n  min_score: 0.72\n  timeout_ms: 4000\nproviders:\n  omdb:\n    enabled: true\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	data := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(data, "config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(data, "config", "overlay.yaml"), []byte("match:\n  min_score: 0.8\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
-	if err := writeOverlay(data, seed); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(data, "config", "overlay.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cfg struct {
-		Match struct {
-			MinScore  float64 `yaml:"min_score"`
-			TimeoutMS int     `yaml:"timeout_ms"`
-		} `yaml:"match"`
-		Providers struct {
-			OMDb struct {
-				Enabled bool `yaml:"enabled"`
-			} `yaml:"omdb"`
-		} `yaml:"providers"`
-	}
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Match.MinScore != 0.8 {
-		t.Fatalf("min_score=%v", cfg.Match.MinScore)
-	}
-	if cfg.Match.TimeoutMS != 4000 {
-		t.Fatalf("timeout_ms=%v (new seed key must appear)", cfg.Match.TimeoutMS)
-	}
-	if !cfg.Providers.OMDb.Enabled {
-		t.Fatal("providers.omdb.enabled missing from seed")
-	}
-}
-
-func TestRemoveOverlayThenSeed(t *testing.T) {
+func testEngine(t *testing.T) *Engine {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	xdg := filepath.Join(home, "share")
-	t.Setenv("XDG_DATA_HOME", xdg)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "share"))
+	t.Setenv("SERVEMEDIA_HOME", "")
 	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
-	dataDir, err := config.MatchMediaXDGDataDir()
+	e, err := Open()
 	if err != nil {
 		t.Fatal(err)
 	}
-	seed := filepath.Join(t.TempDir(), "default.yaml")
-	if err := os.WriteFile(seed, []byte("http:\n  addr: 127.0.0.1:7680\nbrowse_roots:\n  - /mnt\nmatch:\n  min_score: 0.72\n"), 0o644); err != nil {
-		t.Fatal(err)
+	return e
+}
+
+func numIs(v any, want float64) bool {
+	switch n := v.(type) {
+	case int:
+		return float64(n) == want
+	case int64:
+		return float64(n) == want
+	case uint64:
+		return float64(n) == want
+	case float64:
+		return n == want
+	case float32:
+		return float64(n) == want
+	default:
+		return false
 	}
-	if err := os.MkdirAll(filepath.Join(dataDir, "config"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dataDir, "config", "overlay.yaml"), []byte("match:\n  min_score: 0.8\nextra: keep-me\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := RemoveOverlay(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "config", "overlay.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("overlay still present: %v", err)
-	}
-	if err := writeOverlay(dataDir, seed); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(dataDir, "config", "overlay.yaml"))
+}
+
+func yamlRoundTrip(t *testing.T, doc map[string]any) map[string]any {
+	t.Helper()
+	b, err := yaml.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg map[string]any
-	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+	var out map[string]any
+	if err := yaml.Unmarshal(b, &out); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cfg["extra"]; ok {
-		t.Fatalf("extra key survived restore: %#v", cfg)
+	return out
+}
+
+func TestOpenUsesMatchMediaDefault(t *testing.T) {
+	e := testEngine(t)
+	dataDir, err := config.MatchMediaDir()
+	if err != nil {
+		t.Fatal(err)
 	}
-	match, _ := cfg["match"].(map[string]any)
-	if match["min_score"] != 0.72 {
-		t.Fatalf("min_score=%v", match["min_score"])
+	if _, err := os.Stat(filepath.Join(dataDir, "overlay.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("overlay created: %v", err)
+	}
+	doc, err := e.Config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc["version"] != "0.2.0" {
+		t.Fatalf("version %#v", doc["version"])
+	}
+	if _, ok := doc["data_dir"]; ok {
+		t.Fatalf("data_dir leaked into config %#v", doc["data_dir"])
+	}
+	providers, _ := doc["providers"].(map[string]any)
+	tmdb, _ := providers["tmdb"].(map[string]any)
+	movie, _ := tmdb["movie"].(map[string]any)
+	search, _ := movie["search"].(map[string]any)
+	if search["url"] != "{base}/search/movie" {
+		t.Fatalf("movie search %#v", search)
+	}
+	tvmaze, _ := providers["tvmaze"].(map[string]any)
+	tvSearch, _ := tvmaze["search"].(map[string]any)
+	if !numIs(tvSearch["min_interval_ms"], 501) {
+		t.Fatalf("tvmaze interval %#v", tvSearch["min_interval_ms"])
+	}
+}
+
+func TestOpenKeepsOverlayDelta(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "share"))
+	t.Setenv("SERVEMEDIA_HOME", "")
+	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
+	dataDir, err := config.MatchMediaDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("match:\n  min_score: 0.81\nproviders:\n  tmdb:\n    api_key: secret\n")
+	path := filepath.Join(dataDir, "overlay.yaml")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(body) {
+		t.Fatalf("overlay rewritten:\n%s", raw)
+	}
+	doc, err := e.Config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	match, _ := doc["match"].(map[string]any)
+	if !numIs(match["min_score"], 0.81) {
+		t.Fatalf("min_score %#v", match["min_score"])
+	}
+	if doc["version"] != "0.2.0" {
+		t.Fatalf("default version missing %#v", doc["version"])
+	}
+	providers, _ := doc["providers"].(map[string]any)
+	tmdb, _ := providers["tmdb"].(map[string]any)
+	if tmdb["api_key"] != "secret" {
+		t.Fatalf("api_key %#v", tmdb["api_key"])
+	}
+	movie, _ := tmdb["movie"].(map[string]any)
+	search, _ := movie["search"].(map[string]any)
+	if search["url"] != "{base}/search/movie" {
+		t.Fatalf("default search lost %#v", search)
+	}
+}
+
+func TestSetConfigWritesOnlyDelta(t *testing.T) {
+	e := testEngine(t)
+	doc, err := e.Config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetConfig(yamlRoundTrip(t, doc)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(e.overlay); !os.IsNotExist(err) {
+		t.Fatalf("unchanged save wrote overlay: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(e.overlay)); !os.IsNotExist(err) {
+		t.Fatalf("empty matchmedia dir: %v", err)
+	}
+	edited := yamlRoundTrip(t, doc)
+	match, _ := edited["match"].(map[string]any)
+	match["min_score"] = 0.81
+	providers, _ := edited["providers"].(map[string]any)
+	tmdb, _ := providers["tmdb"].(map[string]any)
+	tmdb["api_key"] = "secret"
+	if err := e.SetConfig(edited); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := loadYAMLMap(e.overlay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := saved["version"]; ok {
+		t.Fatalf("default copied into overlay %#v", saved)
+	}
+	if _, ok := saved["http"]; ok {
+		t.Fatalf("default copied into overlay %#v", saved)
+	}
+	gotMatch, _ := saved["match"].(map[string]any)
+	if len(gotMatch) != 1 || !numIs(gotMatch["min_score"], 0.81) {
+		t.Fatalf("match delta %#v", gotMatch)
+	}
+	gotProviders, _ := saved["providers"].(map[string]any)
+	gotTMDB, _ := gotProviders["tmdb"].(map[string]any)
+	if len(gotTMDB) != 1 || gotTMDB["api_key"] != "secret" {
+		t.Fatalf("provider delta %#v", gotProviders)
+	}
+	again, err := e.Config()
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown, _ := again["match"].(map[string]any)
+	if !numIs(shown["min_score"], 0.81) {
+		t.Fatalf("resolved min_score %#v", shown["min_score"])
+	}
+	shownProviders, _ := again["providers"].(map[string]any)
+	shownTMDB, _ := shownProviders["tmdb"].(map[string]any)
+	if shownTMDB["api_key"] != "secret" {
+		t.Fatalf("resolved api_key %#v", shownTMDB["api_key"])
+	}
+}
+
+func TestOpenMergesExtraOverlay(t *testing.T) {
+	extra := filepath.Join(t.TempDir(), "extra.yaml")
+	if err := os.WriteFile(extra, []byte("browse_roots: [/media]\nproviders:\n  omdb:\n    base: http://omdb-stub:8080\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "share"))
+	t.Setenv("SERVEMEDIA_HOME", "")
+	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", extra)
+	e, err := Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := e.config()
+	if cfg == nil || cfg.Providers["omdb"].Base != "http://omdb-stub:8080" {
+		t.Fatalf("omdb base %#v", cfg)
+	}
+	raw, err := os.ReadFile(e.overlay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := loadYAMLMap(e.overlay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := saved["data_dir"]; ok {
+		t.Fatalf("data_dir invented %#v", saved)
+	}
+	if _, ok := saved["http"]; ok {
+		t.Fatalf("http invented %#v", saved)
+	}
+	providers, _ := saved["providers"].(map[string]any)
+	omdb, _ := providers["omdb"].(map[string]any)
+	if omdb["base"] != "http://omdb-stub:8080" {
+		t.Fatalf("overlay %#v\n%s", saved, raw)
+	}
+}
+
+func TestScrubSidecarOverlayKeepsAPIKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "overlay.yaml")
+	body := []byte("version: \"0.1.0\"\nbrowse_roots:\n  - /mnt\nhttp:\n  addr: 127.0.0.1:7680\ngroup:\n  extras:\n    - trailers\nproviders:\n  tmdb:\n    api_key: tmdb-key\n    url: https://example.test\n  omdb:\n    api_key: omdb-key\n")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := scrubSidecarFile(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadYAMLMap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["browse_roots"]; ok {
+		t.Fatalf("sidecar keys survived %#v", got)
+	}
+	if _, ok := got["http"]; ok {
+		t.Fatalf("http survived %#v", got)
+	}
+	providers, _ := got["providers"].(map[string]any)
+	tmdb, _ := providers["tmdb"].(map[string]any)
+	omdb, _ := providers["omdb"].(map[string]any)
+	if tmdb["api_key"] != "tmdb-key" || omdb["api_key"] != "omdb-key" {
+		t.Fatalf("keys %#v", got)
+	}
+	if _, ok := tmdb["url"]; ok {
+		t.Fatalf("provider url survived %#v", tmdb)
+	}
+	if err := scrubSidecarFile(path); err != nil {
+		t.Fatal(err)
+	}
+	again, err := loadYAMLMap(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again["providers"] == nil {
+		t.Fatalf("second scrub dropped keys %#v", again)
 	}
 }

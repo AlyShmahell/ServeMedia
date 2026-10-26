@@ -11,23 +11,16 @@
     </header>
     <label for="scan-mode">What do you want to do?</label>
     <select name="mode" id="scan-mode">
-      <option value="local" {{if not .MetaReady}}disabled{{end}}>Scan local NFO/posters</option>
-      <option value="matchmedia" {{if not .MetaReady}}disabled{{end}}>Scan with MatchMedia (Rescan)</option>
-      <option value="matchmedia-changes" {{if .MetaReady}}selected{{end}} {{if not .MetaReady}}disabled{{end}}>Scan with MatchMedia (Changes)</option>
+      <option value="rescan" {{if not .MetaReady}}disabled{{end}}>Rescan</option>
+      <option value="changes" {{if .MetaReady}}selected{{end}} {{if not .MetaReady}}disabled{{end}}>Changes</option>
+      <option value="missing" {{if not .MetaReady}}disabled{{end}}>Missing</option>
     </select>
     {{if not .MetaReady}}
     <p class="muted scan-modal-hint">{{if .MetaDisabledReason}}{{.MetaDisabledReason}}{{else}}Metadata service unavailable{{end}}</p>
     {{else if .MetaHint}}
     <p class="muted scan-modal-hint">{{.MetaHint}}</p>
     {{end}}
-    <label class="scan-persist" id="scan-overwrite-wrap">
-      <input type="checkbox" name="overwrite" value="1">
-      Overwrite existing metadata
-    </label>
-    <label class="scan-persist">
-      <input type="checkbox" name="persist" value="1" checked>
-      Save NFO/posters next to media files
-    </label>
+    <input type="hidden" name="path" id="scan-node-path" value="">
     <footer class="modal-foot">
       <button type="button" class="secondary" id="scan-modal-cancel">Cancel</button>
       <button type="submit" {{if not .MetaReady}}disabled{{end}}>Start</button>
@@ -39,26 +32,21 @@
   var dlg = document.getElementById('scan-modal');
   if (!dlg) return;
   var form = document.getElementById('scan-modal-form');
-  var mode = document.getElementById('scan-mode');
-  var overwriteWrap = document.getElementById('scan-overwrite-wrap');
   function closeDlg() { dlg.close(); }
-  function syncModeFields() {
-    var changes = mode && mode.value === 'matchmedia-changes';
-    if (overwriteWrap) overwriteWrap.hidden = !!changes;
-  }
   var closeBtn = document.getElementById('scan-modal-close');
   var cancelBtn = document.getElementById('scan-modal-cancel');
   if (closeBtn) closeBtn.addEventListener('click', closeDlg);
   if (cancelBtn) cancelBtn.addEventListener('click', closeDlg);
-  if (mode) mode.addEventListener('change', syncModeFields);
   dlg.addEventListener('click', function (e) {
     if (e.target === dlg) closeDlg();
   });
-  window.openScanModal = function (libraryId) {
+  window.openScanModal = function (libraryId, rel) {
     if (!form) return;
     form.setAttribute('hx-post', '/hx/libraries/' + libraryId + '/scan');
-    form.setAttribute('hx-target', '#library-' + libraryId);
-    syncModeFields();
+    var onLibrary = document.getElementById('library-scan-host');
+    form.setAttribute('hx-target', onLibrary ? '#library-scan-host' : ('#library-' + libraryId));
+    var path = document.getElementById('scan-node-path');
+    if (path) path.value = rel || '';
     if (window.htmx) htmx.process(form);
     dlg.showModal();
   };

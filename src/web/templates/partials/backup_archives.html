@@ -3,7 +3,7 @@
 <tr>
   <td><code>{{.}}</code></td>
   <td class="row">
-    <form method="post" action="/hx/backup/restore" onsubmit="return confirm('Restore this backup? Server will reload store.')">
+    <form method="post" action="/hx/backup/restore" hx-post="/hx/backup/restore" hx-target="#settings-panel" hx-swap="innerHTML" hx-confirm="Restore this backup? Server will reload store.">
       <input type="hidden" name="name" value="{{.}}">
       <button type="submit">Restore</button>
     </form>

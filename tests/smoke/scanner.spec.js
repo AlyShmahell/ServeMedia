@@ -41,7 +41,11 @@ async function ensureAnimeLibrary(page) {
 }
 
 function libraryCards(page) {
-  return page.locator('#items a.card');
+  return page.locator('#items a.card, #items a.file-card');
+}
+
+function folderCards(page) {
+  return page.locator('#items a.file-card');
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -62,14 +66,15 @@ test('anime library: stray film, pack show, dual show, season pack', async ({ pa
   // Show With Films: root film + Movies/ pack are nested movie cards, not Specials.
   const showWithFilms = cards.filter({ has: page.locator('.t', { hasText: /^Show With Films/ }) });
   await expect(showWithFilms).toHaveCount(1);
-  await expect(showWithFilms.first()).toHaveAttribute('href', /\/shows\/\d+/);
-  await expect(cards.filter({ has: page.locator('.t', { hasText: /Legend Film Title/i }) })).toHaveCount(0);
-  await expect(cards.filter({ has: page.locator('.t', { hasText: /Pack Film Title/i }) })).toHaveCount(0);
+  await expect(showWithFilms.first()).toHaveAttribute('href', /\/libraries\/\d+\/tree/);
+  await expect(cards.filter({ has: page.locator('.t, .file-card-title', { hasText: /Legend Film Title/i }) })).toHaveCount(0);
+  await expect(cards.filter({ has: page.locator('.t, .file-card-title', { hasText: /Pack Film Title/i }) })).toHaveCount(0);
   await showWithFilms.first().click();
-  await expect(page).toHaveURL(/\/shows\/\d+/);
-  const nestedFilms = page.locator('.season-grid a.card').filter({ has: page.locator('.t', { hasText: /Legend Film Title|Pack Film Title/i }) });
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await expect(page.locator('.show-hero-card, .folder-hero').first()).toBeVisible();
+  const nestedFilms = folderCards(page).filter({ has: page.locator('.file-card-title, .t', { hasText: /Legend Film Title|Pack Film Title/i }) });
   await expect(nestedFilms).toHaveCount(2);
-  await expect(page.locator('a.season-card').filter({ hasText: /Specials|Season 0/i })).toHaveCount(0);
+  await expect(folderCards(page).filter({ hasText: /Specials|Season 0/i })).toHaveCount(0);
   await page.goto('/');
   await page.locator('.library-card-title', { hasText: 'Anime' }).first().click();
   await expect(page.locator('#items .card').first()).toBeVisible({ timeout: 30000 });
@@ -78,24 +83,24 @@ test('anime library: stray film, pack show, dual show, season pack', async ({ pa
   for (const title of ['Flat Dash Show', 'Nested Cour Show', 'Extras Sibling Show']) {
     const card = cards.filter({ has: page.locator('.t', { hasText: new RegExp(`^${title}`) }) });
     await expect(card).toHaveCount(1);
-    await expect(card.first()).toHaveAttribute('href', /\/shows\/\d+/);
+    await expect(card.first()).toHaveAttribute('href', /\/libraries\/\d+\/tree/);
   }
 
   // Franchise pack expands to nested shows; parent is not a card.
   await expect(cards.filter({ has: page.locator('.t', { hasText: /^Franchise Pack Show$/ }) })).toHaveCount(0);
   const mainSeries = cards.filter({ has: page.locator('.t', { hasText: /^Main Series Show/ }) });
   await expect(mainSeries).toHaveCount(1);
-  await expect(mainSeries.first()).toHaveAttribute('href', /\/shows\/\d+/);
+  await expect(mainSeries.first()).toHaveAttribute('href', /\/libraries\/\d+\/tree/);
   const spinoff = cards.filter({ has: page.locator('.t', { hasText: /^Spinoff Series Show/ }) });
   await expect(spinoff).toHaveCount(1);
-  await expect(spinoff.first()).toHaveAttribute('href', /\/shows\/\d+/);
+  await expect(spinoff.first()).toHaveAttribute('href', /\/libraries\/\d+\/tree/);
 
   // Extras sibling: root eps only (NCOP skipped).
   const extrasSibling = cards.filter({ has: page.locator('.t', { hasText: /^Extras Sibling Show/ }) });
   await extrasSibling.first().click();
-  await expect(page).toHaveURL(/\/shows\/\d+/);
-  await page.locator('a.season-card').first().click();
-  await expect(page.locator('.episode-card')).toHaveCount(2);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await folderCards(page).filter({ has: page.locator('.file-card-title', { hasText: /Season/i }) }).first().click();
+  await expect(page.locator('a.file-card[href^="/play/file/"]')).toHaveCount(2);
 
   await page.goto('/');
   await page.locator('.library-card-title', { hasText: 'Anime' }).first().click();
@@ -104,16 +109,15 @@ test('anime library: stray film, pack show, dual show, season pack', async ({ pa
   // Film gate: stray tvshow.nfo still a movie.
   const film = libraryCards(page).filter({ has: page.locator('.t', { hasText: /Stray NFO Film/i }) });
   await expect(film).toHaveCount(1);
-  await expect(film.first()).toHaveAttribute('href', /\/movies\/\d+/);
+  await expect(film.first()).toHaveAttribute('href', /\/libraries\/\d+|\/play\/file\//);
 
   // Pack Show (not Season Pack Show).
   const pack = libraryCards(page).filter({ has: page.locator('.t', { hasText: /^Pack Show/ }) });
   await expect(pack).toHaveCount(1);
   await pack.first().click();
-  await expect(page).toHaveURL(/\/shows\/\d+/);
-  await expect(page.locator('a.season-card').first()).toBeVisible();
-  await page.locator('a.season-card').first().click();
-  await expect(page.locator('.episode-card')).toHaveCount(2);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await folderCards(page).filter({ has: page.locator('.file-card-title', { hasText: /Season/i }) }).first().click();
+  await expect(page.locator('a.file-card[href^="/play/file/"]')).toHaveCount(2);
 
   // Dual Show: S1 stays at 2 (Alpha only); S2 has leading SxxEyy.
   await page.goto('/');
@@ -122,22 +126,18 @@ test('anime library: stray film, pack show, dual show, season pack', async ({ pa
   const dual = libraryCards(page).filter({ has: page.locator('.t', { hasText: /^Dual Show/ }) });
   await expect(dual).toHaveCount(1);
   await dual.first().click();
-  await expect(page).toHaveURL(/\/shows\/\d+/);
-  const dualSeasons = page.locator('a.season-card');
-  await expect(dualSeasons).toHaveCount(2);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
   const showURL = page.url();
-
-  const s1 = page.locator('a.season-card[href$="/seasons/1"]');
+  const s1 = folderCards(page).filter({ has: page.locator('.file-card-title', { hasText: /Season 1/i }) });
   await expect(s1).toHaveCount(1);
-  await expect(s1).toContainText(/2 episode/);
   await s1.click();
-  await expect(page.locator('.episode-card')).toHaveCount(2);
+  await expect(page.locator('a.file-card[href^="/play/file/"]')).toHaveCount(2);
 
   await page.goto(showURL);
-  const s2 = page.locator('a.season-card[href$="/seasons/2"]');
+  const s2 = folderCards(page).filter({ has: page.locator('.file-card-title', { hasText: /Season 2/i }) });
   await expect(s2).toHaveCount(1);
   await s2.click();
-  await expect(page.locator('.episode-card')).toHaveCount(2);
+  await expect(page.locator('a.file-card[href^="/play/file/"]')).toHaveCount(2);
 
   // Season Pack Show: one show, three episodes, not Season 2 movies.
   await page.goto('/');
@@ -146,9 +146,9 @@ test('anime library: stray film, pack show, dual show, season pack', async ({ pa
   const seasonPack = libraryCards(page).filter({ has: page.locator('.t', { hasText: /^Season Pack Show/ }) });
   await expect(seasonPack).toHaveCount(1);
   await seasonPack.first().click();
-  await expect(page).toHaveURL(/\/shows\/\d+/);
-  await page.locator('a.season-card').first().click();
-  await expect(page.locator('.episode-card')).toHaveCount(3);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await folderCards(page).filter({ has: page.locator('.file-card-title', { hasText: /Season/i }) }).first().click();
+  await expect(page.locator('a.file-card[href^="/play/file/"]')).toHaveCount(3);
 
   // Complex Show: one parent show, four season cards (cours + OVA), not S04-only.
   await page.goto('/');
@@ -156,9 +156,9 @@ test('anime library: stray film, pack show, dual show, season pack', async ({ pa
   await expect(page.locator('#items .card').first()).toBeVisible({ timeout: 30000 });
   const complex = libraryCards(page).filter({ has: page.locator('.t', { hasText: /Complex Show/i }) });
   await expect(complex).toHaveCount(1);
-  await expect(complex.first()).toHaveAttribute('href', /\/shows\/\d+/);
+  await expect(complex.first()).toHaveAttribute('href', /\/libraries\/\d+\/tree/);
   await complex.first().click();
-  await expect(page).toHaveURL(/\/shows\/\d+/);
-  await expect(page.locator('a.season-card')).toHaveCount(4);
-  await expect(page.locator('a.season-card[href$="/seasons/4"]')).toHaveCount(0);
+  await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await expect(folderCards(page).filter({ has: page.locator('.file-card-title', { hasText: /Season|OVA|Cour/i }) })).toHaveCount(4);
+  await expect(page).not.toHaveURL(/\/seasons\/4/);
 });

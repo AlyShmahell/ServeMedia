@@ -1,0 +1,47 @@
+{{define "partials/settings_ffmpeg.html"}}
+<div class="settings-tab-card" id="tab-ffmpeg">
+  <div class="settings-tab-scroll">
+    <div class="engine-power-row">
+      <span class="engine-power {{if .TranscodeHWOn}}on{{else}}off{{end}}">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2v10"></path>
+          <path d="M18.4 6.6a9 9 0 1 1-12.8 0"></path>
+        </svg>
+        <span>{{if .TranscodeHWOn}}On{{else}}Off{{end}}</span>
+      </span>
+    </div>
+    <table class="table">
+      <tbody>
+        <tr><th>Hardware acceleration</th><td>{{if .TranscodeHW}}{{.TranscodeHW}}{{else}}software{{end}}</td></tr>
+        {{if .ActiveTranscode}}
+        <tr><th>Pipeline</th><td>{{.ActiveTranscode}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    <form method="post" action="/settings/engines" id="engines-ffmpeg-form" hx-post="/settings/engines" hx-target="#settings-panel" hx-swap="innerHTML">
+      <input type="hidden" name="ffmpeg_settings" value="1">
+      <label>H.264 CRF</label>
+      <input name="crf" type="number" min="1" value="{{.Config.Transcode.CRF}}">
+      <label>Max height</label>
+      <input name="max_height" type="number" min="1" value="{{.Config.Transcode.MaxHeight}}">
+      <label>Segment seconds</label>
+      <input name="segment_seconds" type="number" min="1" value="{{.Config.Transcode.SegmentSeconds}}">
+      <label>Cleanup hours</label>
+      <input name="cleanup_hours" type="number" min="1" value="{{.Config.Transcode.CleanupHours}}">
+      <label>Hardware mode</label>
+      <select name="hwaccel">
+        <option value="auto" {{if eq .Config.Transcode.HWAccel "auto"}}selected{{end}}>auto</option>
+        <option value="vaapi" {{if eq .Config.Transcode.HWAccel "vaapi"}}selected{{end}}>vaapi</option>
+        <option value="none" {{if eq .Config.Transcode.HWAccel "none"}}selected{{end}}>none</option>
+      </select>
+      <p class="muted">ffmpeg picks the VAAPI device.</p>
+    </form>
+  </div>
+  <div class="settings-tab-actions">
+    <button type="submit" form="engines-ffmpeg-form" class="btn-with-icon">
+      {{template "partials/icon_save.html" .}}
+      Save
+    </button>
+  </div>
+</div>
+{{end}}

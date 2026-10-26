@@ -16,3 +16,17 @@ func TestStillSeekTimes(t *testing.T) {
 		t.Fatalf("clamped %#v", got)
 	}
 }
+
+func TestStillOffsetRangeSkipsStartOnLongVideos(t *testing.T) {
+	lo, hi := StillOffsetRange(120)
+	if lo <= 0 || hi >= 120 || hi <= lo {
+		t.Fatalf("range %v %v", lo, hi)
+	}
+	at := RandomStillOffset(120)
+	if at < lo || at > hi {
+		t.Fatalf("random %v outside [%v,%v]", at, lo, hi)
+	}
+	if at == 0 {
+		t.Fatal("random zero")
+	}
+}

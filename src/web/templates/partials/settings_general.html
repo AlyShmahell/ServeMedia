@@ -1,0 +1,16 @@
+{{define "partials/settings_general.html"}}
+<form method="post" action="/settings" id="settings-general-form" class="settings-tab-card" hx-post="/settings" hx-target="#settings-panel" hx-swap="innerHTML">
+  <div class="settings-tab-scroll">
+    <label><input type="checkbox" name="scan_on_startup" {{if .Config.Scan.OnStartup}}checked{{end}}> Scan libraries on startup</label>
+    <label>Watchdog TTL seconds</label>
+    <input name="watchdog_ttl" id="watchdog-ttl" type="number" min="0" value="{{.Config.Watchdog.TTLSeconds}}">
+    <p class="muted">0 keeps the process running after every tab closes.</p>
+  </div>
+  <div class="settings-tab-actions">
+    <button type="submit" class="btn-with-icon">
+      {{template "partials/icon_save.html" .}}
+      Save
+    </button>
+  </div>
+</form>
+{{end}}

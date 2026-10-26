@@ -58,7 +58,6 @@ async function entryScanRefetch(page) {
   const titleInput = page.locator('#entry-scan-title');
   await expect(titleInput).toBeVisible();
   await expect(titleInput).toHaveValue(/Film Title/i);
-  await page.locator('#entry-scan-modal-form input[name="overwrite"]').check();
   await page.locator('#entry-scan-modal-form button[type="submit"]').click();
   await waitEntryScanSettled(page);
   await pickMatchCandidate(page, 2016);
@@ -71,12 +70,12 @@ test('Film Title entry Scan refetch matches 2016 anime', async ({ page }) => {
   await ensureAdmin(page);
   await ensureAnimeLibrary(page);
 
-  const card = page.locator('#items a.card').filter({
-    has: page.locator('.t', { hasText: /Film Title/i }),
+  const card = page.locator('#items a.card, #items a.file-card').filter({
+    hasText: /Film Title/i,
   }).first();
   await expect(card).toBeVisible({ timeout: 30000 });
   await card.click();
-  await expect(page).toHaveURL(/\/movies\/\d+/);
+  await expect(page).toHaveURL(/\/libraries\/\d+/);
 
   await entryScanRefetch(page);
 
@@ -113,7 +112,6 @@ test('MatchMedia rescan sends an edited title', async ({ page }) => {
   await expect(titleInput).toBeVisible();
   await expect(titleInput).toHaveValue(/Stray NFO Film/i);
   await titleInput.fill('Custom Query Title');
-  await page.locator('#entry-scan-modal-form input[name="overwrite"]').check();
   await page.locator('#entry-scan-modal-form button[type="submit"]').click();
   await waitEntryScanSettled(page);
 

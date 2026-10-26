@@ -51,7 +51,74 @@
     );
   }
 
+  function stopFinishedPolls() {
+    var flags = document.querySelectorAll('.library-card-status [data-poll="0"]');
+    for (var i = 0; i < flags.length; i++) {
+      var status = flags[i].closest('.library-card-status');
+      if (!status) continue;
+      status.setAttribute('data-poll', '0');
+      status.removeAttribute('hx-get');
+      status.removeAttribute('hx-trigger');
+    }
+  }
+
+  function posterSrc(img) {
+    return img.getAttribute('src') || '';
+  }
+
+  function patchCollage(collage, wanted) {
+    var imgs = collage.querySelectorAll('img');
+    var same = imgs.length === wanted.length;
+    for (var i = 0; same && i < imgs.length; i++) {
+      if (posterSrc(imgs[i]) !== wanted[i]) same = false;
+    }
+    if (same) return;
+    var pool = {};
+    for (var k = 0; k < imgs.length; k++) {
+      var src = posterSrc(imgs[k]);
+      if (src && !pool[src]) pool[src] = imgs[k];
+    }
+    while (collage.firstChild) collage.removeChild(collage.firstChild);
+    if (wanted.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'library-collage-empty muted';
+      empty.textContent = 'No posters yet';
+      collage.appendChild(empty);
+      return;
+    }
+    for (var n = 0; n < wanted.length; n++) {
+      var next = wanted[n];
+      var img = pool[next];
+      if (img) delete pool[next];
+      else {
+        img = document.createElement('img');
+        img.alt = '';
+        img.setAttribute('src', next);
+      }
+      collage.appendChild(img);
+    }
+  }
+
+  function syncCollages() {
+    var markers = document.querySelectorAll('.library-collage-next');
+    for (var i = 0; i < markers.length; i++) {
+      var card = markers[i].closest('article');
+      if (!card) continue;
+      var collage = card.querySelector('.library-collage');
+      if (!collage) continue;
+      var wanted = [];
+      var nodes = markers[i].querySelectorAll('[data-poster]');
+      for (var j = 0; j < nodes.length; j++) {
+        var src = nodes[j].getAttribute('data-poster') || '';
+        if (src) wanted.push(src);
+      }
+      patchCollage(collage, wanted);
+    }
+  }
+
   function scan() {
+    stopFinishedPolls();
+    syncCollages();
     var nodes = document.querySelectorAll('[data-scroll-key]');
     for (var i = 0; i < nodes.length; i++) {
       bind(nodes[i]);
@@ -219,6 +286,15 @@
     return host;
   }
 
+  document.addEventListener('click', function (e) {
+    var bang = e.target.closest('.match-bang');
+    if (!bang) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var id = bang.getAttribute('data-media-id');
+    if (id && window.openMatchModal) openMatchModal(id);
+  }, true);
+
   window.openMatchModal = function (id) {
     fetch('/hx/media/' + id + '/match', { credentials: 'same-origin' })
       .then(function (r) {
@@ -284,6 +360,16 @@
     })
       .then(function (r) {
         if (r.ok) {
+          var dlg = document.getElementById('match-pick-dialog');
+          if (dlg && dlg.close) dlg.close();
+          var live = document.getElementById('items-live');
+          if (live && window.htmx) {
+            var url = live.getAttribute('hx-get');
+            if (url) {
+              htmx.ajax('GET', url, {target: live, swap: 'outerHTML', source: document.querySelector('.library-toolbar') || live});
+              return;
+            }
+          }
           location.reload();
           return;
         }
@@ -317,9 +403,44 @@
     }
   }
 
+  function fitMiddle(el) {
+    var full = el.getAttribute('data-mid') || '';
+    el.textContent = full;
+    if (!full || el.clientWidth <= 0 || el.scrollWidth <= el.clientWidth + 1) return;
+    var ell = '\u2026';
+    var lo = 1;
+    var hi = full.length;
+    var best = ell;
+    while (lo <= hi) {
+      var n = (lo + hi) >> 1;
+      var left = Math.ceil(n / 2);
+      var right = n - left;
+      var text = full.slice(0, left) + ell + (right ? full.slice(full.length - right) : '');
+      el.textContent = text;
+      if (el.scrollWidth <= el.clientWidth + 1) {
+        best = text;
+        lo = n + 1;
+      } else {
+        hi = n - 1;
+      }
+    }
+    el.textContent = best;
+  }
+
+  function fitMiddleTitles(root) {
+    var sel = '.scan-title';
+    var scope = root && root.querySelectorAll ? root : document;
+    if (scope.matches && scope.matches(sel)) fitMiddle(scope);
+    var nodes = scope.querySelectorAll(sel);
+    for (var i = 0; i < nodes.length; i++) fitMiddle(nodes[i]);
+  }
+
   document.addEventListener('htmx:afterSwap', function (e) {
     afterEntryScanPanel(e.detail && e.detail.elt);
+    fitMiddleTitles(e.detail && e.detail.elt);
   });
+  document.addEventListener('DOMContentLoaded', function () { fitMiddleTitles(document); });
+  window.addEventListener('resize', function () { fitMiddleTitles(document); });
 })();
 
 (function () {
@@ -441,6 +562,10 @@
     var btn = e.target.closest('[data-role="edit"]');
     if (!btn) return;
     var el = btn.closest('.editable');
+    if (!el) {
+      var id = btn.getAttribute('data-edit-target');
+      if (id) el = document.getElementById(id);
+    }
     if (!el) return;
     e.preventDefault();
     e.stopPropagation();
@@ -450,6 +575,7 @@
   var PLACEHOLDER = '/static/placeholder.svg';
   var posterState = {
     url: '',
+    generateUrl: '',
     pageImg: null,
     originalSrc: '',
     hasOriginal: false,
@@ -504,28 +630,34 @@
     if (dlg && dlg.close) dlg.close();
   }
 
-  window.openPosterModal = function (wrap) {
+  window.openPosterModal = function (wrap, role) {
     if (!wrap) return;
     var dlg = posterDlg();
     if (!dlg) return;
     resetPosterStaging();
+    var isStill = role === 'still';
     posterState.url = wrap.getAttribute('data-upload-url') || '';
+    posterState.generateUrl = isStill ? (wrap.getAttribute('data-generate-url') || '') : '';
     posterState.pageImg = wrap.querySelector('img.poster') || wrap.querySelector('img');
     posterState.originalSrc = posterState.pageImg ? posterState.pageImg.getAttribute('src') : '';
     posterState.hasOriginal = !isPlaceholder(posterState.originalSrc);
+    var title = document.getElementById('poster-edit-title');
+    if (title) title.textContent = isStill ? 'Still' : 'Poster';
+    var gen = document.getElementById('poster-edit-generate');
+    if (gen) gen.hidden = !posterState.generateUrl;
     setPosterPreview(posterState.hasOriginal ? posterState.originalSrc : PLACEHOLDER);
     syncPosterButtons();
     if (dlg.showModal) dlg.showModal();
   };
 
   document.addEventListener('click', function (e) {
-    var btn = e.target.closest('[data-role="upload"]');
+    var btn = e.target.closest('[data-role="upload"], [data-role="still"]');
     if (!btn) return;
     e.preventDefault();
     e.stopPropagation();
     var wrap = btn.closest('[data-upload-url]');
     if (!wrap) return;
-    openPosterModal(wrap);
+    openPosterModal(wrap, btn.getAttribute('data-role'));
   }, true);
 
   document.addEventListener('DOMContentLoaded', function () {
@@ -533,6 +665,7 @@
     if (!dlg) return;
     var file = document.getElementById('poster-edit-file');
     var upload = document.getElementById('poster-edit-upload');
+    var generate = document.getElementById('poster-edit-generate');
     var discard = document.getElementById('poster-edit-discard');
     var save = document.getElementById('poster-edit-save');
     var remove = document.getElementById('poster-edit-remove');
@@ -541,6 +674,35 @@
     if (upload) {
       upload.addEventListener('click', function () {
         if (file) file.click();
+      });
+    }
+    if (generate) {
+      generate.addEventListener('click', function () {
+        if (!posterState.generateUrl || generate.disabled) return;
+        generate.disabled = true;
+        fetch(posterState.generateUrl, { method: 'POST', credentials: 'same-origin' })
+          .then(function (r) {
+            if (!r.ok) {
+              return r.text().then(function (t) {
+                throw new Error(t || r.statusText);
+              });
+            }
+            return r.blob();
+          })
+          .then(function (blob) {
+            revokePosterObject();
+            posterState.file = new File([blob], 'still.jpg', { type: blob.type || 'image/jpeg' });
+            posterState.removing = false;
+            posterState.objectUrl = URL.createObjectURL(posterState.file);
+            setPosterPreview(posterState.objectUrl);
+            syncPosterButtons();
+          })
+          .catch(function (err) {
+            alert(err.message || String(err));
+          })
+          .then(function () {
+            generate.disabled = false;
+          });
       });
     }
     if (file) {
@@ -616,5 +778,378 @@
       e.preventDefault();
       closePosterModal();
     });
+  });
+})();
+
+(function () {
+  var restoreFocus = null;
+
+  function isField(el) {
+    if (!el || !el.tagName) return false;
+    var tag = el.tagName.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || tag === 'select';
+  }
+
+  function selectionIn(target) {
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount < 1) return false;
+    var node = sel.anchorNode;
+    if (node && node.nodeType === 3) node = node.parentElement;
+    return !!(target && node && target.contains && target.contains(node));
+  }
+
+  function openDialog() {
+    return document.querySelector('dialog[open]');
+  }
+
+  function focusKey(el) {
+    if (!el || !el.getAttribute) return '';
+    if (el.id) return '#' + el.id;
+    var href = el.getAttribute('href');
+    if (href) return 'a[href="' + href.replace(/"/g, '') + '"]';
+    var mid = el.getAttribute('data-media-id');
+    if (mid) return '[data-media-id="' + mid + '"]';
+    var sk = el.getAttribute('data-scroll-key');
+    if (sk) return '[data-scroll-key="' + sk.replace(/"/g, '') + '"]';
+    var al = el.getAttribute('aria-label');
+    if (al) return '[aria-label="' + al.replace(/"/g, '') + '"]';
+    return '';
+  }
+
+  var confirmRequest = null;
+  var confirmDialog = document.getElementById('confirm-dialog');
+  if (confirmDialog) {
+    confirmDialog.addEventListener('close', function () {
+      var go = confirmRequest;
+      confirmRequest = null;
+      if (confirmDialog.returnValue === 'ok' && typeof go === 'function') go(true);
+    });
+  }
+  document.addEventListener('htmx:confirm', function (e) {
+    var q = e.detail && e.detail.question;
+    var text = document.getElementById('confirm-dialog-text');
+    if (!q || !confirmDialog || !text || !e.detail || typeof e.detail.issueRequest !== 'function') return;
+    e.preventDefault();
+    text.textContent = q;
+    confirmRequest = e.detail.issueRequest;
+    confirmDialog.returnValue = '';
+    if (confirmDialog.open) return;
+    try {
+      confirmDialog.showModal();
+    } catch (err) {
+      confirmDialog.show();
+    }
+  });
+
+  // htmx fires beforeSwap on the swap target. Remember the element that sent
+  // the request so a scan dialog can update the library card behind it.
+  var requestSource = new WeakMap();
+  document.addEventListener('htmx:beforeRequest', function (e) {
+    var xhr = e.detail && e.detail.xhr;
+    var src = e.detail && e.detail.elt;
+    if (xhr && src) requestSource.set(xhr, src);
+  });
+
+  function responseHTML(detail) {
+    if (!detail) return '';
+    if (typeof detail.serverResponse === 'string') return detail.serverResponse;
+    return (detail.xhr && detail.xhr.responseText) || '';
+  }
+
+  function reusePoster(cur, next) {
+    var a = cur.querySelector('img.poster');
+    var b = next.querySelector('img.poster');
+    if (!a || !b) return;
+    if (a.getAttribute('src') === b.getAttribute('src')) b.replaceWith(a);
+  }
+
+  function syncKeyed(parent, curNodes, nextNodes, before) {
+    var byKey = {};
+    for (var i = 0; i < curNodes.length; i++) {
+      var key = curNodes[i].getAttribute('href') || '';
+      if (key) byKey[key] = curNodes[i];
+    }
+    var used = {};
+    var ordered = [];
+    for (var j = 0; j < nextNodes.length; j++) {
+      var incoming = nextNodes[j];
+      var href = incoming.getAttribute('href') || '';
+      var existing = href && byKey[href];
+      if (existing && !used[href]) {
+        used[href] = true;
+        if (existing.outerHTML !== incoming.outerHTML) {
+          reusePoster(existing, incoming);
+          existing.replaceWith(incoming);
+          ordered.push(incoming);
+        } else {
+          ordered.push(existing);
+        }
+      } else {
+        ordered.push(incoming);
+      }
+    }
+    for (var name in byKey) {
+      if (!used[name]) byKey[name].remove();
+    }
+    for (var n = 0; n < ordered.length; n++) {
+      parent.insertBefore(ordered[n], before || null);
+    }
+  }
+
+  function directCards(root) {
+    var out = [];
+    if (!root) return out;
+    var kids = root.children;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i].classList && kids[i].classList.contains('card')) out.push(kids[i]);
+    }
+    return out;
+  }
+
+  // patchItemsLive updates the open library grid from a poll without replacing
+  // cards whose poster is already on screen. Returns false when the response
+  // is not a grid, so the caller can fall back to a full swap.
+  function patchItemsLive(current, html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    var next = doc.getElementById('items-live');
+    if (!next) return false;
+    var trig = next.getAttribute('hx-trigger');
+    var prev = current.getAttribute('hx-trigger');
+    if (trig) current.setAttribute('hx-trigger', trig);
+    else current.removeAttribute('hx-trigger');
+    if (trig !== prev && window.htmx && typeof htmx.process === 'function') htmx.process(current);
+
+    var count = doc.getElementById('library-count');
+    var liveCount = document.getElementById('library-count');
+    if (count && liveCount && liveCount.textContent !== count.textContent) {
+      liveCount.textContent = count.textContent;
+    }
+
+    var nextHero = next.querySelector('.folder-hero');
+    var curHero = current.querySelector('.folder-hero');
+    if (nextHero && curHero) {
+      if (curHero.outerHTML !== nextHero.outerHTML) {
+        reusePoster(curHero, nextHero);
+        curHero.replaceWith(nextHero);
+      }
+    } else if (nextHero && !curHero) {
+      current.insertBefore(nextHero, current.firstChild);
+    } else if (!nextHero && curHero) {
+      curHero.remove();
+    }
+
+    var curGrid = current.querySelector('#items');
+    var nextGrid = next.querySelector('#items');
+    if (!curGrid || !nextGrid) return true;
+    var curList = curGrid.querySelector('.file-list');
+    var nextList = nextGrid.querySelector('.file-list');
+    syncKeyed(curGrid, directCards(curGrid), directCards(nextGrid), curList || curGrid.querySelector('p.muted'));
+    curList = curGrid.querySelector('.file-list');
+    if (nextList) {
+      if (!curList) {
+        curGrid.appendChild(nextList);
+      } else {
+        syncKeyed(curList, curList.querySelectorAll('a.file-card'), nextList.querySelectorAll('a.file-card'), null);
+      }
+    } else if (curList) {
+      curList.remove();
+    }
+    var curEmpty = curGrid.querySelector(':scope > p.muted');
+    var nextEmpty = nextGrid.querySelector(':scope > p.muted');
+    if (nextEmpty) {
+      if (!curEmpty) curGrid.appendChild(nextEmpty);
+      else if (curEmpty.textContent !== nextEmpty.textContent) curEmpty.textContent = nextEmpty.textContent;
+    } else if (curEmpty) {
+      curEmpty.remove();
+    }
+    return true;
+  }
+
+  function pollSource(e) {
+    var xhr = e.detail && e.detail.xhr;
+    return xhr && requestSource.get(xhr);
+  }
+
+  // Skip background polls while a dialog is open. Allow a swap whose target is
+  // inside a dialog, or whose request came from the open dialog.
+  document.addEventListener('htmx:beforeSwap', function (e) {
+    var target = e.detail && e.detail.target;
+    if (!target || !target.contains) return;
+    var dlg = openDialog();
+    if (dlg && !dlg.contains(target) && !target.closest('dialog')) {
+      var src = pollSource(e);
+      if (!(src && dlg.contains(src))) {
+        e.detail.shouldSwap = false;
+        return;
+      }
+    }
+    var active = document.activeElement;
+    if (active && target.contains(active)) {
+      if ((active.closest && active.closest('.editable.is-editing')) || isField(active)) {
+        e.detail.shouldSwap = false;
+        return;
+      }
+    }
+    if (selectionIn(target)) {
+      e.detail.shouldSwap = false;
+      return;
+    }
+    var src = pollSource(e);
+    if (target.id === 'items-live' && src && src.id === 'items-live') {
+      if (patchItemsLive(target, responseHTML(e.detail))) {
+        e.detail.shouldSwap = false;
+        return;
+      }
+    }
+    restoreFocus = null;
+    if (active && target.contains(active)) {
+      restoreFocus = focusKey(active);
+    }
+  });
+
+  document.addEventListener('htmx:afterSwap', function (e) {
+    if (!restoreFocus) return;
+    var root = (e.detail && e.detail.target) || document;
+    var el = null;
+    try {
+      el = root.querySelector(restoreFocus);
+    } catch (err) {}
+    if (!el && restoreFocus.charAt(0) === '#') {
+      el = document.getElementById(restoreFocus.slice(1));
+    }
+    restoreFocus = null;
+    if (el && typeof el.focus === 'function') el.focus();
+  });
+})();
+
+(function () {
+  var cm = null;
+  var loading = null;
+
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      var existing = document.querySelector('script[src="' + src + '"]');
+      if (existing) {
+        if (existing.getAttribute('data-loaded') === '1' || (src.indexOf('codemirror.min.js') !== -1 && typeof CodeMirror !== 'undefined')) {
+          resolve();
+          return;
+        }
+        existing.addEventListener('load', function () { resolve(); });
+        existing.addEventListener('error', function () { reject(new Error(src)); });
+        return;
+      }
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = function () { s.setAttribute('data-loaded', '1'); resolve(); };
+      s.onerror = function () { reject(new Error(src)); };
+      document.head.appendChild(s);
+    });
+  }
+
+  function loadCSS(href) {
+    if (document.querySelector('link[href="' + href + '"]')) return;
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  function editorFor(ta) {
+    var sib = ta.previousElementSibling;
+    if (sib && sib.CodeMirror) return sib.CodeMirror;
+    sib = ta.nextElementSibling;
+    if (sib && sib.CodeMirror) return sib.CodeMirror;
+    return null;
+  }
+
+  function initCM() {
+    var ta = document.getElementById('overlay-yaml');
+    if (!ta || typeof CodeMirror === 'undefined') return;
+    var existing = editorFor(ta);
+    if (existing) {
+      cm = existing;
+      ta.setAttribute('data-cm-ready', '1');
+      cm.refresh();
+      return;
+    }
+    if (ta.getAttribute('data-cm-ready') === '1' && cm && cm.getTextArea && cm.getTextArea() === ta) {
+      cm.refresh();
+      return;
+    }
+    cm = CodeMirror.fromTextArea(ta, { mode: 'yaml', lineNumbers: true, lineWrapping: true, theme: 'servemedia' });
+    ta.setAttribute('data-cm-ready', '1');
+    cm.refresh();
+  }
+
+  function saveCM() {
+    if (cm && cm.save) cm.save();
+  }
+
+  function ensureCM() {
+    if (!document.getElementById('overlay-yaml')) return;
+    loadCSS('/static/vendor/codemirror/codemirror.min.css');
+    if (typeof CodeMirror !== 'undefined') {
+      initCM();
+      return;
+    }
+    if (!loading) {
+      loading = loadScript('/static/vendor/codemirror/codemirror.min.js').then(function () {
+        return loadScript('/static/vendor/codemirror/yaml.min.js');
+      });
+    }
+    loading.then(initCM).catch(function () {});
+  }
+
+  document.addEventListener('htmx:afterSwap', ensureCM);
+  document.addEventListener('htmx:configRequest', function (e) {
+    var elt = e.detail && e.detail.elt;
+    if (!elt || !elt.closest) return;
+    if (elt.id === 'engines-matchmedia-form' || elt.closest('#engines-matchmedia-form') || elt.id === 'engines-save' || elt.id === 'engines-restore') {
+      saveCM();
+    }
+  });
+  document.addEventListener('submit', function (e) {
+    if (e.target && e.target.id === 'engines-matchmedia-form') saveCM();
+  }, true);
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#webhook-copy-key')) {
+      var key = document.getElementById('webhook-api-key');
+      if (key && navigator.clipboard) navigator.clipboard.writeText(key.value || '').catch(function () {});
+      return;
+    }
+    if (t.closest('#test-webhooks')) {
+      var testResult = document.getElementById('webhook-test-result');
+      if (!testResult) return;
+      testResult.textContent = 'Sending test…';
+      fetch('/hx/integrations/webhooks/test', { method: 'POST', credentials: 'same-origin' })
+        .then(function (r) { return r.text(); })
+        .then(function (text) { testResult.textContent = text; })
+        .catch(function (err) { testResult.textContent = String(err); });
+      return;
+    }
+    if (!t.closest('#add-destination')) return;
+    var destWrap = document.getElementById('webhook-destinations');
+    var destCount = document.getElementById('dest-count');
+    if (!destWrap || !destCount) return;
+    var n = parseInt(destCount.value || '0', 10);
+    var first = destWrap.querySelector('.webhook-destination');
+    if (!first) return;
+    var clone = first.cloneNode(true);
+    clone.setAttribute('data-index', String(n));
+    var legend = clone.querySelector('legend');
+    if (legend) legend.textContent = 'Destination ' + (n + 1);
+    clone.querySelectorAll('[name]').forEach(function (el) {
+      el.name = el.name.replace(/^dest_\d+_/, 'dest_' + n + '_');
+      if (el.type === 'checkbox') el.checked = false;
+      else if (el.tagName === 'TEXTAREA') el.value = '';
+      else if (el.type !== 'hidden') el.value = '';
+    });
+    var hc = clone.querySelector('[name="dest_' + n + '_header_count"]');
+    if (hc) hc.value = '1';
+    destWrap.appendChild(clone);
+    destCount.value = String(n + 1);
   });
 })();

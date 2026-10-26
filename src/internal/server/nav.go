@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/alyshmahell/servemedia/src/internal/db"
 )
@@ -21,59 +22,54 @@ func navFor(name string, data map[string]any) (title, back string) {
 	case "home.html":
 		return "Home", ""
 	case "library.html":
-		return libraryName(data["Library"]), "/"
-	case "movie.html", "show.html":
-		if it := mediaItemFromData(data["Item"]); it != nil {
-			return it.Title, fmt.Sprintf("/libraries/%d", it.LibraryID)
-		}
-	case "season.html":
-		back = ""
-		if it := mediaItemFromData(data["Item"]); it != nil {
-			back = fmt.Sprintf("/shows/%d", it.ID)
-		}
-		return seasonTitle(data["Season"]), back
+		return libraryName(data["Library"]), libraryBack(data)
 	case "player.html":
 		title, _ = data["Title"].(string)
 		kind, _ := data["Kind"].(string)
-		id := int64FromData(data["ID"])
-		switch kind {
-		case "movie":
-			if id > 0 {
-				back = fmt.Sprintf("/movies/%d", id)
-			}
-		case "episode":
-			if showID := int64FromData(data["ShowID"]); showID > 0 {
-				back = fmt.Sprintf("/shows/%d", showID)
-			}
+		if kind == "file" {
+			back = libraryFolderBack(int64FromData(data["LibraryID"]), stringFromData(data["Folder"]))
 		}
 		return title, back
-	case "about.html":
-		return "About", "/"
-	case "support.html":
-		return "Support", "/"
-	case "settings.html":
-		return "Settings", "/"
-	case "settings_engines.html":
-		return "Engines", "/settings"
-	case "settings_integrations.html":
-		return "Integrations", "/settings"
-	case "settings_backup.html":
-		return "Backup", "/settings"
-	case "settings_users.html":
-		return "Users", "/settings"
 	}
 	return "", ""
 }
 
-func mediaItemFromData(v any) *db.MediaItem {
-	switch it := v.(type) {
-	case *db.MediaItem:
-		return it
-	case db.MediaItem:
-		return &it
-	default:
-		return nil
+func libraryBack(data map[string]any) string {
+	id := libraryID(data["Library"])
+	path, _ := data["Path"].(string)
+	path = strings.Trim(strings.ReplaceAll(path, "\\", "/"), "/")
+	if id == 0 || path == "" {
+		return "/"
 	}
+	return libraryFolderBack(id, parentRel(path))
+}
+
+func libraryFolderBack(id int64, folder string) string {
+	if id <= 0 {
+		return ""
+	}
+	folder = strings.Trim(strings.ReplaceAll(folder, "\\", "/"), "/")
+	if folder == "" {
+		return fmt.Sprintf("/libraries/%d", id)
+	}
+	return fmt.Sprintf("/libraries/%d/tree?path=%s", id, urlQueryEscape(folder))
+}
+
+func libraryID(v any) int64 {
+	switch lib := v.(type) {
+	case *db.Library:
+		if lib != nil {
+			return lib.ID
+		}
+	case db.Library:
+		return lib.ID
+	}
+	return 0
+}
+
+func stringFromData(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 func libraryName(v any) string {
@@ -86,23 +82,6 @@ func libraryName(v any) string {
 		return lib.Name
 	}
 	return ""
-}
-
-func seasonTitle(v any) string {
-	var se *db.Season
-	switch s := v.(type) {
-	case *db.Season:
-		se = s
-	case db.Season:
-		se = &s
-	}
-	if se == nil {
-		return ""
-	}
-	if se.Title.Valid && se.Title.String != "" {
-		return se.Title.String
-	}
-	return fmt.Sprintf("Season %d", se.SeasonNumber)
 }
 
 func int64FromData(v any) int64 {

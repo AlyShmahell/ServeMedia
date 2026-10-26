@@ -9,13 +9,14 @@ ROOT="$(cd "$DIR/.." && pwd)"
 BUILD="$ROOT/build"
 PINS="$DIR/pins"
 DEFAULT_YAML="$ROOT/src/share/config/default.yaml"
+VENDOR_YAML="$ROOT/src/share/vendor.yaml"
 APP_ID="eu.alyshmahell.ServeMedia"
 YML="$DIR/${APP_ID}.yml"
 META="$DIR/${APP_ID}.metainfo.xml"
 IMAGE="localhost/servemedia-flatpak-builder:latest"
 RUNTIME_VER="26.08"
+GNOME_VER="51"
 SM_REPO="${SERVEMEDIA_REPO:-AlyShmahell/ServeMedia}"
-MM_REPO="${MATCHMEDIA_REPO:-AlyShmahell/MatchMedia}"
 UA="servemedia-flatpak-sync"
 
 need_podman() {
@@ -80,49 +81,78 @@ print(m.group(1) if m else "")
 ' "$YML" "$1"
 }
 
-parse_default_yaml() {
+parse_version_yaml() {
   python3 -c '
 import sys
-mm = ""
 ver = ""
-urls = {}
-keys = (
-    "htmx_url", "htmx_license_url",
-    "videojs_js_url", "videojs_css_url", "videojs_license_url",
-    "hls_url", "hls_license_url",
-    "codemirror_js_url", "codemirror_css_url", "codemirror_yaml_url", "codemirror_license_url",
-)
-in_mm = in_vendor = False
-for line in open(sys.argv[1]):
+for line in open(sys.argv[1], encoding="utf-8"):
     raw = line.rstrip("\n")
     s = raw.strip()
-    if s.startswith("version:") and not in_mm and not in_vendor and (not raw or not raw[0].isspace()):
+    if s.startswith("version:") and raw[:1] not in (" ", "\t"):
         ver = s.split(":", 1)[1].strip().strip("\"")
-        continue
-    if s.startswith("matchmedia:"):
-        in_mm, in_vendor = True, False
-        continue
-    if s.startswith("vendor:"):
-        in_mm, in_vendor = False, True
-        continue
-    if raw and not raw[:1].isspace() and not s.startswith("#"):
-        in_mm = in_vendor = False
-    if ":" not in s:
-        continue
-    k, _, v = s.partition(":")
-    v = v.strip().strip("\"")
-    if in_mm and k == "version":
-        mm = v
-    if in_vendor and k in keys:
-        urls[k] = v
-need = list(keys)
-if not ver or not mm or any(k not in urls for k in need):
+        break
+if not ver:
     sys.exit(2)
 print("VER=" + repr(ver))
-print("MM_VER=" + repr(mm))
-for k in need:
-    print(k.upper() + "=" + repr(urls[k]))
 ' "$1"
+}
+
+parse_vendor_yaml() {
+  python3 - "$1" <<'PY'
+import sys
+path = sys.argv[1]
+dest_env = {
+    "htmx.min.js": "HTMX_URL",
+    "htmx.min.js.LICENSE": "HTMX_LICENSE_URL",
+    "video.js/video.min.js": "VIDEOJS_JS_URL",
+    "video.js/video-js.min.css": "VIDEOJS_CSS_URL",
+    "video.js/LICENSE": "VIDEOJS_LICENSE_URL",
+    "hls.min.js": "HLS_URL",
+    "hls.min.js.LICENSE": "HLS_LICENSE_URL",
+    "codemirror/codemirror.min.js": "CODEMIRROR_JS_URL",
+    "codemirror/codemirror.min.css": "CODEMIRROR_CSS_URL",
+    "codemirror/yaml.min.js": "CODEMIRROR_YAML_URL",
+    "codemirror/LICENSE": "CODEMIRROR_LICENSE_URL",
+}
+section = ""
+cur = None
+urls = {}
+
+def flush():
+    global cur
+    if cur and cur.get("dest") and cur.get("url"):
+        urls[cur["dest"]] = cur["url"]
+    cur = None
+
+with open(path, encoding="utf-8") as f:
+    for line in f:
+        raw = line.rstrip("\n")
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw[0] not in " \t":
+            flush()
+            section = raw.split(":", 1)[0].strip()
+            continue
+        if section != "assets":
+            continue
+        s = raw.strip()
+        if s.startswith("- "):
+            flush()
+            cur = {}
+            s = s[2:].strip()
+            if not s:
+                continue
+        if cur is None or ":" not in s:
+            continue
+        k, _, v = s.partition(":")
+        cur[k.strip()] = v.strip().strip('"').strip("'")
+flush()
+missing = [d for d in dest_env if d not in urls]
+if missing:
+    sys.exit(2)
+for dest, env in dest_env.items():
+    print(env + "=" + repr(urls[dest]))
+PY
 }
 
 rewrite_go_sources_path() {
@@ -211,12 +241,12 @@ ref_installed() {
 
 ensure_runtimes() {
   local offline="${1:-}"
-  local plat="org.freedesktop.Platform//${RUNTIME_VER}"
-  local sdk="org.freedesktop.Sdk//${RUNTIME_VER}"
+  local plat="org.gnome.Platform//${GNOME_VER}"
+  local sdk="org.gnome.Sdk//${GNOME_VER}"
   local golang="org.freedesktop.Sdk.Extension.golang//${RUNTIME_VER}"
   if [[ -n "$offline" ]]; then
     if ! ref_installed "$plat" || ! ref_installed "$sdk" || ! ref_installed "$golang"; then
-      echo "error: Freedesktop ${RUNTIME_VER} Platform/SDK/golang missing from cache" >&2
+      echo "error: GNOME ${GNOME_VER} Platform/SDK or Freedesktop ${RUNTIME_VER} golang extension missing from cache" >&2
       exit 1
     fi
     return 0
@@ -329,16 +359,11 @@ inner_lint() {
 inner_regen() {
   local src="${SRC:-/src}"
   local pin_mode="${PIN_MODE:-path}"
-  local work sm_src mm_src sm_tag mm_tag sm_commit
+  local work sm_src sm_tag sm_commit
   work="$(mktemp -d)"
   trap 'rm -rf "'"$work"'"' EXIT
   sm_tag="${SERVEMEDIA_TAG:-}"
-  mm_tag="${MATCHMEDIA_TAG:-}"
   sm_commit="${SERVEMEDIA_COMMIT:-}"
-  if [[ -z "$mm_tag" ]]; then
-    echo "error: MATCHMEDIA_TAG is empty" >&2
-    exit 1
-  fi
 
   if [[ -n "$sm_tag" ]]; then
     git clone --depth 1 --branch "$sm_tag" "https://github.com/${SM_REPO}.git" "$work/servemedia-src"
@@ -349,44 +374,29 @@ inner_regen() {
   sm_src="$work/servemedia-src/src"
   rm -rf "$sm_src/vendor"
 
-  git clone --depth 1 --branch "$mm_tag" "https://github.com/${MM_REPO}.git" "$work/matchmedia-src"
-  mm_src="$work/matchmedia-src/src"
-  rm -rf "$mm_src/vendor"
-
   export GOFLAGS=-buildvcs=false
   export GOPROXY=https://proxy.golang.org,direct
-  mkdir -p "$work/sm" "$work/mm" "${src}/flatpak/pins"
+  mkdir -p "$work/sm" "${src}/flatpak/pins"
   go run github.com/dennwc/flatpak-go-mod@latest \
     -dest-pref src/ \
     -out "$work/sm" \
     "$sm_src"
-  go run github.com/dennwc/flatpak-go-mod@latest \
-    -dest-pref src/ \
-    -out "$work/mm" \
-    "$mm_src"
 
   install -m644 "$work/sm/modules.txt" "${src}/flatpak/pins/servemedia.modules.txt"
-  install -m644 "$work/mm/modules.txt" "${src}/flatpak/pins/matchmedia.modules.txt"
 
   if [[ "$pin_mode" == url ]]; then
     if [[ -z "$sm_commit" ]]; then
       echo "error: SERVEMEDIA_COMMIT required for URL pin mode" >&2
       exit 1
     fi
-    local sm_url mm_url sm_sha mm_sha
+    local sm_url sm_sha
     sm_url="https://raw.githubusercontent.com/${SM_REPO}/${sm_commit}/flatpak/pins/servemedia.modules.txt"
-    mm_url="https://raw.githubusercontent.com/${SM_REPO}/${sm_commit}/flatpak/pins/matchmedia.modules.txt"
     sm_sha="$(sha256sum "${src}/flatpak/pins/servemedia.modules.txt" | awk '{print $1}')"
-    mm_sha="$(sha256sum "${src}/flatpak/pins/matchmedia.modules.txt" | awk '{print $1}')"
     rewrite_modules_to_url "$work/sm/go.mod.yml" \
       "${src}/flatpak/pins/servemedia-go-sources.yml" "src/" "$sm_url" "$sm_sha"
-    rewrite_modules_to_url "$work/mm/go.mod.yml" \
-      "${src}/flatpak/pins/matchmedia-go-sources.yml" "src/" "$mm_url" "$mm_sha"
   else
     rewrite_go_sources_path "$work/sm/go.mod.yml" pins/servemedia.modules.txt \
       "${src}/flatpak/pins/servemedia-go-sources.yml"
-    rewrite_go_sources_path "$work/mm/go.mod.yml" pins/matchmedia.modules.txt \
-      "${src}/flatpak/pins/matchmedia-go-sources.yml"
   fi
   echo "wrote ${src}/flatpak/pins (mode=$pin_mode)"
 }
@@ -464,9 +474,31 @@ menu() {
   done
 }
 
+path_has_glob() {
+  case "$1" in
+    *'*'*|*'?'*|*'['*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Buildah globs the context path, so a literal * in the repo path matches nothing.
+glob_free_context() {
+  local src="$1" dest="$2"
+  if ! path_has_glob "$src"; then
+    printf '%s\n' "$src"
+    return 0
+  fi
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  tar -C "$src" -cf - . | tar -C "$dest" -xf -
+  printf '%s\n' "$dest"
+}
+
 ensure_builder_image() {
+  local ctx
+  ctx="$(glob_free_context "$DIR" "${XDG_CACHE_HOME:-$HOME/.cache}/servemedia/flatpak-context")"
   if network_up; then
-    podman build -t "$IMAGE" -f "$DIR/containerfile" "$DIR"
+    podman build -t "$IMAGE" -f "$ctx/containerfile" "$ctx"
     return
   fi
   if ! podman image exists "$IMAGE"; then
@@ -500,24 +532,17 @@ fedora_run() {
 }
 
 golang_regen() {
-  local mm_tag sm_tag pin_mode sm_commit
-  mm_tag="${MATCHMEDIA_TAG:-}"
+  local sm_tag pin_mode sm_commit
   sm_tag="${SERVEMEDIA_TAG:-}"
   pin_mode="${PIN_MODE:-path}"
   sm_commit="${SERVEMEDIA_COMMIT:-}"
-  if [[ -z "$mm_tag" ]]; then
-    echo "error: MatchMedia tag missing" >&2
-    exit 1
-  fi
   mkdir -p "$PINS"
   podman run --rm \
     -e IN_CONTAINER=1 \
     -e ACTION=regen \
     -e SRC=/src \
     -e SERVEMEDIA_REPO="$SM_REPO" \
-    -e MATCHMEDIA_REPO="$MM_REPO" \
     -e SERVEMEDIA_TAG="$sm_tag" \
-    -e MATCHMEDIA_TAG="$mm_tag" \
     -e SERVEMEDIA_COMMIT="$sm_commit" \
     -e PIN_MODE="$pin_mode" \
     -v "$ROOT:/src:z" \
@@ -573,8 +598,7 @@ import pathlib, re, sys
 
 yml_path = pathlib.Path(sys.argv[1])
 sm_tag, sm_commit = sys.argv[2], sys.argv[3]
-mm_tag, mm_commit = sys.argv[4], sys.argv[5]
-args = sys.argv[6:]
+args = sys.argv[4:]
 yml = yml_path.read_text()
 
 def pin_git(yml, url, tag, commit):
@@ -594,7 +618,6 @@ def pin_git(yml, url, tag, commit):
         sys.exit(4)
     return out
 
-yml = pin_git(yml, "https://github.com/AlyShmahell/MatchMedia.git", mm_tag, mm_commit)
 yml = pin_git(yml, "https://github.com/AlyShmahell/ServeMedia.git", sm_tag, sm_commit)
 
 def pin_file(yml, dest, url, sha):
@@ -633,10 +656,11 @@ PY
 }
 
 do_resync_online() {
-  local json cfg
+  local json cfg vend
   json="$(mktemp)"
   cfg="$(mktemp)"
-  trap 'rm -f "'"$json"'" "'"$cfg"'"' RETURN
+  vend="$(mktemp)"
+  trap 'rm -f "'"$json"'" "'"$cfg"'" "'"$vend"'"' RETURN
   if ! gh_json "https://api.github.com/repos/${SM_REPO}/releases/latest" >"$json"; then
     echo "error: could not fetch latest release for ${SM_REPO}" >&2
     exit 1
@@ -662,12 +686,16 @@ print("DATE=" + json.dumps(pub))
   SM_COMMIT="$(tag_commit "https://api.github.com/repos/${SM_REPO}/git/refs/tags/${TAG}")"
   curl -fL -A "$UA" --retry 3 --retry-delay 1 -o "$cfg" \
     "https://raw.githubusercontent.com/${SM_REPO}/${TAG}/src/share/config/default.yaml"
-  eval "$(parse_default_yaml "$cfg")" || {
-    echo "error: default.yaml on ${TAG} missing fields" >&2
+  curl -fL -A "$UA" --retry 3 --retry-delay 1 -o "$vend" \
+    "https://raw.githubusercontent.com/${SM_REPO}/${TAG}/src/share/vendor.yaml"
+  eval "$(parse_version_yaml "$cfg")" || {
+    echo "error: default.yaml on ${TAG} missing version" >&2
     exit 1
   }
-  MM_TAG="v${MM_VER}"
-  MM_COMMIT="$(tag_commit "https://api.github.com/repos/${MM_REPO}/git/refs/tags/${MM_TAG}")"
+  eval "$(parse_vendor_yaml "$vend")" || {
+    echo "error: vendor.yaml on ${TAG} missing assets" >&2
+    exit 1
+  }
   HTMX_SHA="$(hash_url "$HTMX_URL")"
   HTMX_LIC_SHA="$(hash_url "$HTMX_LICENSE_URL")"
   VIDEOJS_JS_SHA="$(hash_url "$VIDEOJS_JS_URL")"
@@ -680,7 +708,7 @@ print("DATE=" + json.dumps(pub))
   CM_YAML_SHA="$(hash_url "$CODEMIRROR_YAML_URL")"
   CM_LIC_SHA="$(hash_url "$CODEMIRROR_LICENSE_URL")"
   apply_yml_vendor_and_git \
-    "$TAG" "$SM_COMMIT" "$MM_TAG" "$MM_COMMIT" \
+    "$TAG" "$SM_COMMIT" \
     htmx.min.js "$HTMX_URL" "$HTMX_SHA" \
     htmx.min.js.LICENSE "$HTMX_LICENSE_URL" "$HTMX_LIC_SHA" \
     video.min.js "$VIDEOJS_JS_URL" "$VIDEOJS_JS_SHA" \
@@ -694,27 +722,25 @@ print("DATE=" + json.dumps(pub))
     codemirror.LICENSE "$CODEMIRROR_LICENSE_URL" "$CM_LIC_SHA" \
     "$HTMX_LICENSE_URL" "$VIDEOJS_LICENSE_URL" "$HLS_LICENSE_URL" "$CODEMIRROR_LICENSE_URL"
   update_metainfo "$VER" "$DATE"
-  echo "resync online: ${TAG}@${SM_COMMIT} ${MM_TAG}@${MM_COMMIT}"
+  echo "resync online: ${TAG}@${SM_COMMIT}"
   SERVEMEDIA_TAG="$TAG"
-  MATCHMEDIA_TAG="$MM_TAG"
   SERVEMEDIA_COMMIT="$SM_COMMIT"
   PIN_MODE=url
 }
 
 do_resync_offline() {
-  eval "$(parse_default_yaml "$DEFAULT_YAML")" || {
-    echo "error: local default.yaml missing fields" >&2
+  eval "$(parse_version_yaml "$DEFAULT_YAML")" || {
+    echo "error: local default.yaml missing version" >&2
+    exit 1
+  }
+  eval "$(parse_vendor_yaml "$VENDOR_YAML")" || {
+    echo "error: local vendor.yaml missing assets" >&2
     exit 1
   }
   DATE="$(date -u +%Y-%m-%d)"
-  MM_TAG="v${MM_VER}"
   SM_TAG="$(yml_git_tag "https://github.com/${SM_REPO}.git")"
   SM_COMMIT="$(yml_git_commit "https://github.com/${SM_REPO}.git")"
-  MM_COMMIT="$(yml_git_commit "https://github.com/${MM_REPO}.git")"
   if network_up; then
-    if MM_NEW="$(tag_commit "https://api.github.com/repos/${MM_REPO}/git/refs/tags/${MM_TAG}" 2>/dev/null)"; then
-      MM_COMMIT="$MM_NEW"
-    fi
     HTMX_SHA="$(hash_url "$HTMX_URL")"
     HTMX_LIC_SHA="$(hash_url "$HTMX_LICENSE_URL")"
     VIDEOJS_JS_SHA="$(hash_url "$VIDEOJS_JS_URL")"
@@ -727,7 +753,7 @@ do_resync_offline() {
     CM_YAML_SHA="$(hash_url "$CODEMIRROR_YAML_URL")"
     CM_LIC_SHA="$(hash_url "$CODEMIRROR_LICENSE_URL")"
     apply_yml_vendor_and_git \
-      "${SM_TAG:-v0.0.0}" "${SM_COMMIT:-0}" "$MM_TAG" "${MM_COMMIT:-0}" \
+      "${SM_TAG:-v0.0.0}" "${SM_COMMIT:-0}" \
       htmx.min.js "$HTMX_URL" "$HTMX_SHA" \
       htmx.min.js.LICENSE "$HTMX_LICENSE_URL" "$HTMX_LIC_SHA" \
       video.min.js "$VIDEOJS_JS_URL" "$VIDEOJS_JS_SHA" \
@@ -740,31 +766,10 @@ do_resync_offline() {
       yaml.min.js "$CODEMIRROR_YAML_URL" "$CM_YAML_SHA" \
       codemirror.LICENSE "$CODEMIRROR_LICENSE_URL" "$CM_LIC_SHA" \
       "$HTMX_LICENSE_URL" "$VIDEOJS_LICENSE_URL" "$HLS_LICENSE_URL" "$CODEMIRROR_LICENSE_URL"
-  else
-    python3 - "$YML" "$MM_TAG" "${MM_COMMIT:-}" <<'PY'
-import pathlib, re, sys
-path, tag, commit = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
-yml = path.read_text()
-yml2, n = re.subn(
-    r"(url: https://github.com/AlyShmahell/MatchMedia\.git\n        tag: )v[\d.]+",
-    rf"\g<1>{tag}",
-    yml,
-    count=1,
-)
-if n == 1 and commit:
-    yml2, _ = re.subn(
-        r"(url: https://github.com/AlyShmahell/MatchMedia\.git\n        tag: v[\d.]+\n        commit: )[0-9a-f]+",
-        rf"\g<1>{commit}",
-        yml2,
-        count=1,
-    )
-path.write_text(yml2)
-PY
   fi
   update_metainfo "$VER" "$DATE"
-  echo "resync offline: version=${VER} ${MM_TAG}@${MM_COMMIT:-keep}"
+  echo "resync offline: version=${VER}"
   SERVEMEDIA_TAG=""
-  MATCHMEDIA_TAG="$MM_TAG"
   SERVEMEDIA_COMMIT=""
   PIN_MODE=path
 }
@@ -796,7 +801,6 @@ run_pipeline() {
   fi
 
   echo "==> regen ($mode)"
-  MATCHMEDIA_TAG="${MATCHMEDIA_TAG:-$(yml_git_tag "https://github.com/${MM_REPO}.git")}"
   golang_regen
 
   echo "==> lint ($mode)"

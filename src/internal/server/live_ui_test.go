@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -51,6 +52,7 @@ func TestHandleHXRecentAndItemsLive(t *testing.T) {
 	}
 	if _, err := d.UpsertMediaItem(ctx, db.MediaItem{
 		LibraryID: lib.ID, Kind: "movie", Title: "Alpha Film", Path: "/media/Alpha.mkv", Mtime: 1,
+		NFOPath: sql.NullString{String: "/media/Alpha/movie.nfo", Valid: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +98,13 @@ func TestHandleHXRecentAndItemsLive(t *testing.T) {
 		t.Fatalf("idle count oob: %s", idleItems)
 	}
 
-	if _, err := d.CreateScanJob(ctx, lib.ID); err != nil {
+	jobID, err := d.CreateScanJob(ctx, lib.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.UpsertMediaItem(ctx, db.MediaItem{
 		LibraryID: lib.ID, Kind: "show", Title: "Bravo Show", Path: "/media/Bravo", Mtime: 2,
+		NFOPath: sql.NullString{String: "/media/Bravo/tvshow.nfo", Valid: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -122,6 +126,27 @@ func TestHandleHXRecentAndItemsLive(t *testing.T) {
 	}
 	if !strings.Contains(liveItems, "2 titles") {
 		t.Fatalf("live count: %s", liveItems)
+	}
+
+	matchLine := "match 1/2 matched:1 manual:0 unmatched:0 error:0 Show"
+	if err := d.UpdateScanJob(ctx, jobID, "running", 40, matchLine); err != nil {
+		t.Fatal(err)
+	}
+	matchItems := get(fmt.Sprintf("/hx/libraries/%d/items", lib.ID))
+	if !strings.Contains(matchItems, `hx-trigger="every 2s"`) {
+		t.Fatalf("match items poll: %s", matchItems)
+	}
+
+	if err := d.UpdateScanJob(ctx, jobID, "running", 80, matchLine+"\nstills 1/2 ep"); err != nil {
+		t.Fatal(err)
+	}
+	stillItems := get(fmt.Sprintf("/hx/libraries/%d/items", lib.ID))
+	if strings.Contains(stillItems, `hx-trigger="every 2s"`) {
+		t.Fatalf("stills items must not poll: %s", stillItems)
+	}
+	stillRecent := get("/hx/home/recent")
+	if !strings.Contains(stillRecent, `hx-trigger="every 2s"`) {
+		t.Fatalf("stills recent trigger: %s", stillRecent)
 	}
 }
 
@@ -147,12 +172,14 @@ func TestDeleteLibraryRefreshesStrips(t *testing.T) {
 	}
 	goneItem, err := d.UpsertMediaItem(ctx, db.MediaItem{
 		LibraryID: gone.ID, Kind: "movie", Title: "Gone Film", Path: "/media/gone/Gone.mkv", Mtime: 1,
+		NFOPath: sql.NullString{String: "/media/gone/movie.nfo", Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	keptItem, err := d.UpsertMediaItem(ctx, db.MediaItem{
 		LibraryID: kept.ID, Kind: "movie", Title: "Kept Film", Path: "/media/kept/Kept.mkv", Mtime: 2,
+		NFOPath: sql.NullString{String: "/media/kept/movie.nfo", Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)

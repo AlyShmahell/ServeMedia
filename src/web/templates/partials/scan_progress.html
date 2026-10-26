@@ -1,0 +1,15 @@
+{{define "partials/scan_progress.html"}}
+{{if .Phase}}
+<div class="scan-grid">
+  <div class="scan-step">{{.Phase}} {{.Done}}{{if .Total}}/{{.Total}}{{end}}</div>
+  {{if .Stats}}
+  <div class="scan-stats">
+    {{range .Stats}}
+    <span class="scan-stat scan-stat-{{.Tone}}">{{.Label}} {{.Value}}</span>
+    {{end}}
+  </div>
+  {{end}}
+  {{if .Title}}<div class="scan-title" data-mid="{{.Title}}">{{.Title}}</div>{{end}}
+</div>
+{{end}}
+{{end}}

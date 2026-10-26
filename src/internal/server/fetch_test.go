@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/alyshmahell/servemedia/src/internal/config"
 	"github.com/alyshmahell/servemedia/src/internal/db"
+	"github.com/alyshmahell/servemedia/src/internal/fetch"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 	"github.com/alyshmahell/servemedia/src/web"
 	"github.com/go-chi/chi/v5"
@@ -66,6 +68,16 @@ func TestHandleMatchPostSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	nodeID, err := d.UpsertNodeChain(ctx, lib.ID, "Film.mkv", "file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMediaItemNode(ctx, id, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetNodeMatchStatus(ctx, nodeID, "manual", ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := d.SetMatchMediaMatch(ctx, id, "sess", "job", "manual", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +105,10 @@ func TestHandleMatchPostSkip(t *testing.T) {
 	}
 	if got.MatchMediaJobID.Valid {
 		t.Fatalf("job still set %#v", got.MatchMediaJobID)
+	}
+	n, err := d.GetLibraryNode(ctx, nodeID)
+	if err != nil || n == nil || n.MatchStatus.String != db.MatchStatusSkipped {
+		t.Fatalf("node skip %#v %v", n, err)
 	}
 }
 
@@ -230,5 +246,186 @@ func TestHandleMatchGetUsesSnapshotWhenLiveJobsEmpty(t *testing.T) {
 	}
 	if !strings.Contains(html, "Frieren") {
 		t.Fatalf("missing snapshot title: %s", html)
+	}
+}
+
+func TestHandleMatchGetSearchesWhenSnapshotEmpty(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Anime", "/media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "show", Title: "Erased", Path: "/media/Erased", Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"healthy":true}`))
+	})
+	mux.HandleFunc("/v1/ingest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"session":"sess-search","files":1,"jobs":1}`))
+	})
+	mux.HandleFunc("/v1/scan/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"running":false,"files":1,"done":1}`))
+	})
+	mux.HandleFunc("/v1/jobs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id": "job-search", "status": "manual",
+			"candidates": []map[string]any{{
+				"provider": "tvmaze", "id": "42", "title": "Erased", "year": "2016", "score": 0.9,
+			}},
+		}})
+	})
+	stub := httptest.NewServer(mux)
+	defer stub.Close()
+	client := &matchmedia.Client{Base: stub.URL, HTTP: stub.Client()}
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Store.Path = store
+	s := &Server{
+		Cfg: cfg, DB: d, Templates: MustParseTemplates(tplFS),
+		Meta:  client,
+		Fetch: &fetch.Worker{DB: d, Store: store, Meta: client},
+	}
+	rtr := chi.NewRouter()
+	rtr.Get("/hx/media/{id}/match", s.handleMatchGet)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/hx/media/%d/match", id), nil)
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	rtr.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	html := w.Body.String()
+	if !strings.Contains(html, `class="cand"`) || !strings.Contains(html, "Erased") {
+		t.Fatalf("missing searched candidate: %s", html)
+	}
+}
+
+func TestFolderActionsWithoutNodeLink(t *testing.T) {
+	ctx := context.Background()
+	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media := t.TempDir()
+	showDir := filepath.Join(media, "Show")
+	seasonDir := filepath.Join(showDir, "Season 01")
+	movieDir := filepath.Join(media, "Film")
+	if err := os.MkdirAll(seasonDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(movieDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	movieFile := filepath.Join(movieDir, "Film.mkv")
+	if err := os.WriteFile(movieFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	showPoster := filepath.Join(showDir, "poster.jpg")
+	seasonPoster := filepath.Join(seasonDir, "poster.jpg")
+	if err := os.WriteFile(showPoster, []byte("show"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(seasonPoster, []byte("season"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	showNodeID, err := d.UpsertNodeChain(ctx, lib.ID, "Show", "dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seasonNodeID, err := d.UpsertNodeChain(ctx, lib.ID, "Show/Season 01", "dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	movieNodeID, err := d.UpsertNodeChain(ctx, lib.ID, "Film", "dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	showID, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "show", Title: "Show", Path: showDir, Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMatchMediaMatch(ctx, showID, "", "", "manual", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMediaItemPosterNFO(ctx, showID, &showPoster, nil); err != nil {
+		t.Fatal(err)
+	}
+	movieID, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Film", Path: movieFile, Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMatchMediaMatch(ctx, movieID, "", "", "manual", ""); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{DB: d}
+	showNode, err := d.GetLibraryNode(ctx, showNodeID)
+	if err != nil || showNode == nil {
+		t.Fatal(err)
+	}
+	_, id, status, _ := s.nodeActions(ctx, lib, *showNode)
+	if id != showID || status != "manual" {
+		t.Fatalf("show folder id=%d status=%q", id, status)
+	}
+	seasonNode, err := d.GetLibraryNode(ctx, seasonNodeID)
+	if err != nil || seasonNode == nil {
+		t.Fatal(err)
+	}
+	_, sid, sstatus, _ := s.nodeActions(ctx, lib, *seasonNode)
+	if sid != showID || sstatus == "manual" || sstatus == "unmatched" {
+		t.Fatalf("season folder id=%d status=%q", sid, sstatus)
+	}
+	movieNode, err := d.GetLibraryNode(ctx, movieNodeID)
+	if err != nil || movieNode == nil {
+		t.Fatal(err)
+	}
+	_, mid, mstatus, _ := s.nodeActions(ctx, lib, *movieNode)
+	if mid != movieID || mstatus != "manual" {
+		t.Fatalf("movie folder id=%d status=%q", mid, mstatus)
+	}
+	card := s.dirNodeCard(ctx, lib, *seasonNode)
+	if card.Node.PosterPath.String != seasonPoster {
+		t.Fatalf("season art %q", card.Node.PosterPath.String)
+	}
+	if err := os.Remove(seasonPoster); err != nil {
+		t.Fatal(err)
+	}
+	bare := s.dirNodeCard(ctx, lib, *seasonNode)
+	if bare.Node.PosterPath.Valid && strings.TrimSpace(bare.Node.PosterPath.String) != "" {
+		t.Fatalf("season reused show poster %q", bare.Node.PosterPath.String)
 	}
 }

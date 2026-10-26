@@ -1,7 +1,6 @@
 package server
 
 import (
-	"database/sql"
 	"testing"
 
 	"github.com/alyshmahell/servemedia/src/internal/db"
@@ -22,25 +21,25 @@ func TestApplyNav(t *testing.T) {
 	if lib["NavTitle"] != "TV" || lib["NavBack"] != "/" {
 		t.Fatalf("library %#v", lib)
 	}
-
-	show := map[string]any{"Item": &db.MediaItem{Title: "KonoSuba", LibraryID: 4}}
-	applyNav("show.html", show)
-	if show["NavTitle"] != "KonoSuba" || show["NavBack"] != "/libraries/4" {
-		t.Fatalf("show %#v", show)
+	nested := map[string]any{"Library": &db.Library{ID: 4, Name: "TV"}, "Path": "Cool Show/Season 1"}
+	applyNav("library.html", nested)
+	if nested["NavBack"] != "/libraries/4/tree?path=Cool%20Show" {
+		t.Fatalf("nested %#v", nested)
+	}
+	rootChild := map[string]any{"Library": &db.Library{ID: 4, Name: "TV"}, "Path": "Cool Show"}
+	applyNav("library.html", rootChild)
+	if rootChild["NavBack"] != "/libraries/4" {
+		t.Fatalf("root child %#v", rootChild)
+	}
+	playFile := map[string]any{"Kind": "file", "Title": "Pilot", "LibraryID": int64(4), "Folder": "Cool Show"}
+	applyNav("player.html", playFile)
+	if playFile["NavBack"] != "/libraries/4/tree?path=Cool%20Show" {
+		t.Fatalf("file player %#v", playFile)
 	}
 
-	season := map[string]any{
-		"Item":   db.MediaItem{ID: 9},
-		"Season": &db.Season{SeasonNumber: 2, Title: sql.NullString{String: "S2", Valid: true}},
-	}
-	applyNav("season.html", season)
-	if season["NavTitle"] != "S2" || season["NavBack"] != "/shows/9" {
-		t.Fatalf("season %#v", season)
-	}
-
-	play := map[string]any{"Kind": "episode", "Title": "Pilot", "ShowID": int64(3)}
+	play := map[string]any{"Kind": "episode", "Title": "Pilot", "NavBack": "/libraries/4/tree?path=Show"}
 	applyNav("player.html", play)
-	if play["NavTitle"] != "Pilot" || play["NavBack"] != "/shows/3" {
+	if play["NavTitle"] != "Pilot" || play["NavBack"] != "/libraries/4/tree?path=Show" {
 		t.Fatalf("player %#v", play)
 	}
 
@@ -48,11 +47,5 @@ func TestApplyNav(t *testing.T) {
 	applyNav("about.html", preset)
 	if preset["NavTitle"] != "Keep" || preset["NavBack"] != "/custom" {
 		t.Fatalf("preset %#v", preset)
-	}
-
-	support := map[string]any{}
-	applyNav("support.html", support)
-	if support["NavTitle"] != "Support" || support["NavBack"] != "/" {
-		t.Fatalf("support %#v", support)
 	}
 }

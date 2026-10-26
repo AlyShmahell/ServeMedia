@@ -5,7 +5,7 @@
   hx-trigger="{{.RecentTrigger}}"
   hx-swap="outerHTML">
   {{range .Recent}}
-  <a class="card" href="{{if eq .Item.Kind "movie"}}/movies/{{.Item.ID}}{{else}}/shows/{{.Item.ID}}{{end}}">
+  <a class="card" href="{{.Href}}">
     <div class="poster-wrap">
       <img class="poster" src="{{posterURL .Item.PosterPath.String .Item.MetaID.String}}" alt="">
       {{template "partials/card_actions.html" (mediaActions .Item.Kind .Item.ID .Item.Title $.MetaReady $.MetaDisabledReason .Item.MatchStatus.String .Item.MatchError.String)}}
