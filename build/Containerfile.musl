@@ -1,0 +1,12 @@
+FROM docker.io/library/alpine:3.22
+RUN apk add --no-cache \
+    bash curl xz tar \
+    build-base cmake meson samurai nasm yasm python3 pkgconf \
+    libva-dev libdrm-dev linux-headers \
+    binutils perl diffutils \
+  && ln -sf /usr/bin/samu /usr/local/bin/ninja
+WORKDIR /build
+COPY build/build /build/build
+COPY src/share/vendor.yaml /build/vendor.yaml
+RUN chmod +x /build/build
+CMD ["/build/build", "ffmpeg-musl"]

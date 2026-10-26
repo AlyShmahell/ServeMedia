@@ -1,7 +1,7 @@
 id: eu.alyshmahell.ServeMedia
-runtime: org.freedesktop.Platform
-runtime-version: "26.08"
-sdk: org.freedesktop.Sdk
+runtime: org.gnome.Platform
+runtime-version: "51"
+sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.golang
 command: servemedia
@@ -14,7 +14,6 @@ add-extensions:
 finish-args:
   - --share=network
   - --share=ipc
-  - --filesystem=xdg-run/servemedia:create
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri

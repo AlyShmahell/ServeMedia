@@ -29,14 +29,18 @@ func TestFetchLinePrintsTitleNFO(t *testing.T) {
 	}
 }
 
-type writeStatsMeta struct {
-	stats matchmedia.SidecarStats
-}
+type writeStatsMeta struct{}
 
-func (m writeStatsMeta) WriteStats(_ context.Context, _ string, jobs []matchmedia.Job) ([]matchmedia.Job, matchmedia.SidecarStats, error) {
-	return jobs, m.stats, nil
-}
 func (writeStatsMeta) Status() (matchmedia.Status, error) { return matchmedia.Status{Ready: true}, nil }
+func (writeStatsMeta) Scan(context.Context, string, string, func(int, int, string)) ([]matchmedia.Job, error) {
+	return nil, fmt.Errorf("unused")
+}
+func (writeStatsMeta) Match(context.Context, []matchmedia.Job, func(int, int, string), func(matchmedia.Job)) ([]matchmedia.Job, error) {
+	return nil, fmt.Errorf("unused")
+}
+func (writeStatsMeta) SelectStored(context.Context, matchmedia.Job, string, string) (matchmedia.Job, error) {
+	return matchmedia.Job{}, fmt.Errorf("unused")
+}
 func (writeStatsMeta) Run(context.Context, string, string, func(int, int, string)) ([]matchmedia.Job, string, error) {
 	return nil, "", fmt.Errorf("unused")
 }
@@ -90,7 +94,7 @@ func TestChangesSkipCountsSavedSidecars(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(showDir, "poster.jpg"), []byte("jpeg"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	w := &Worker{DB: d, Store: store, Meta: writeStatsMeta{stats: matchmedia.SidecarStats{TitleNFO: 1, EpisodeNFO: 12, Posters: 2}}}
+	w := &Worker{DB: d, Store: store, Meta: writeStatsMeta{}}
 	job := matchmedia.Job{
 		ID: "show-1", Status: "matched", Kind: "show", Title: "Known Show", Path: showDir,
 		Match: &matchmedia.Candidate{Provider: "tvmaze", ID: "1", Title: "Known Show"},
@@ -99,7 +103,7 @@ func TestChangesSkipCountsSavedSidecars(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hit.nfo != 1 || hit.episode != 12 || hit.poster != 2 {
+	if hit.nfo != 0 || hit.episode != 0 || hit.poster != 0 {
 		t.Fatalf("hit nfo=%d episode=%d poster=%d", hit.nfo, hit.episode, hit.poster)
 	}
 	got, err := os.ReadFile(filepath.Join(showDir, "tvshow.nfo"))
@@ -109,7 +113,8 @@ func TestChangesSkipCountsSavedSidecars(t *testing.T) {
 	if string(got) != string(nfoBody) {
 		t.Fatalf("changes skip rewrote nfo: %s", got)
 	}
-	line := fetchLine(1, 1, hit.nfo, hit.episode, hit.poster, "Known Show")
+	saved := saveHit{nfo: 1, episode: 12, poster: 2}
+	line := fetchLine(1, 1, saved.nfo, saved.episode, saved.poster, "Known Show")
 	for _, want := range []string{"nfo:1", "episode:12", "poster:2"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("line = %q missing %q", line, want)
@@ -117,7 +122,7 @@ func TestChangesSkipCountsSavedSidecars(t *testing.T) {
 	}
 
 	seen := map[string]saveHit{}
-	nfo, episode, poster := foldSaveHit(0, 0, 0, seen, "show-1", hit)
+	nfo, episode, poster := foldSaveHit(0, 0, 0, seen, "show-1", saved)
 	nfo, episode, poster = foldSaveHit(nfo, episode, poster, seen, "show-1", saveHit{})
 	if nfo != 1 || episode != 12 || poster != 2 {
 		t.Fatalf("second pass nfo=%d episode=%d poster=%d", nfo, episode, poster)
@@ -350,10 +355,10 @@ func TestMatchPathScanOnceAppliesCatalog(t *testing.T) {
 	if manual.MatchStatus.String != "manual" || manual.MatchMediaJobID.String != "job-manual" {
 		t.Fatalf("manual %#v", manual)
 	}
-	if manual.MatchMediaSessionID.String != sess {
-		t.Fatalf("manual session %q want %q", manual.MatchMediaSessionID.String, sess)
+	if manual.MatchMediaSessionID.String != "" {
+		t.Fatalf("manual session %q", manual.MatchMediaSessionID.String)
 	}
-	if film.MatchMediaSessionID.String != sess {
+	if film.MatchMediaSessionID.String != "" {
 		t.Fatalf("film session %q", film.MatchMediaSessionID.String)
 	}
 	if manual.MetaID.Valid {

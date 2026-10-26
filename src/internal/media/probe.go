@@ -2,7 +2,6 @@ package media
 
 import (
 	"encoding/json"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -254,7 +253,7 @@ func isTextSubtitle(codec string) bool {
 }
 
 func Ffprobe(path string) (*Probe, error) {
-	cmd := exec.Command(ffprobe(), "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path)
+	cmd := ffprobeCommand(nil, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

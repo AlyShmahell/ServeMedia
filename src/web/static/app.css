@@ -15,6 +15,7 @@
 html, body {
   height: 100%;
   overflow: hidden;
+  color-scheme: dark;
 }
 body {
   margin: 0;
@@ -377,8 +378,10 @@ body.spatial-nav textarea:focus {
 .engine-power.on { color: var(--success); }
 .engine-power.off { color: var(--danger); }
 .engines-status-row { margin-bottom: 0.75rem; }
+#overlay-yaml[data-cm-ready="1"] { display: none !important; }
 .CodeMirror {
-  height: 28rem;
+  height: auto;
+  min-height: 16rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 0.9rem;
@@ -572,6 +575,23 @@ label { display: block; margin: 0.75rem 0 0.25rem; color: var(--muted); font-siz
 input, select, button, textarea {
   font: inherit; padding: 0.5rem 0.65rem; border-radius: 6px;
   border: 1px solid var(--border); background: #0c1117; color: var(--text);
+}
+select {
+  color-scheme: dark;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #0c1117;
+  color: #ffffff;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23ffffff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  background-size: 0.75rem;
+  padding-right: 2rem;
+}
+select option,
+select optgroup {
+  background-color: #0c1117;
+  color: #ffffff;
 }
 button, .btn {
   background: var(--accent); color: #041018; border: none; cursor: pointer; font-weight: 600;
@@ -993,15 +1013,19 @@ button.secondary, .btn.secondary { background: var(--panel); color: var(--text);
   background: var(--nav);
   transition: width 0.35s ease;
 }
+.library-card:has(.is-scanning),
 .library-card.is-scanning { border-color: #3a4a5c; }
-.library-card.has-watch:not(.is-scanning) .library-card-progress {
+.library-card:not(:has(.is-scanning)) .library-card-progress[data-watch],
+.library-card.has-watch:not(.is-scanning):not(:has(.is-scanning)) .library-card-progress {
   background: rgba(255, 43, 107, 0.22);
 }
-.library-card.has-watch:not(.is-scanning) .library-card-progress::after {
+.library-card:not(:has(.is-scanning)) .library-card-progress[data-watch]::after,
+.library-card.has-watch:not(.is-scanning):not(:has(.is-scanning)) .library-card-progress::after {
   width: var(--watch-pct);
   background: #FF2B6B;
 }
-.library-card:not(.is-scanning):not(.has-watch) .library-card-progress { display: none; }
+.library-card:not(:has(.is-scanning)):not(.has-watch) .library-card-progress:not([data-watch]),
+.library-card:not(.is-scanning):not(.has-watch):not(:has(.is-scanning)) .library-card-progress:not([data-watch]) { display: none; }
 .poster-wrap { position: relative; }
 .card-actions {
   position: absolute; top: 0.35rem; right: 0.35rem; z-index: 3;

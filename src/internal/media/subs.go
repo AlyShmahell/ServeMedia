@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -27,7 +26,7 @@ func EnsureSubtitleVTT(source string, streamIndex int, outPath string) error {
 	}
 	tmp := outPath + ".tmp"
 	_ = os.Remove(tmp)
-	cmd := exec.Command(ffmpeg(), "-y", "-i", source,
+	cmd := ffmpegCommand(nil, "-y", "-i", source,
 		"-map", fmt.Sprintf("0:%d", streamIndex),
 		"-f", "webvtt", tmp)
 	out, err := cmd.CombinedOutput()

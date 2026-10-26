@@ -98,42 +98,99 @@ func (s *Server) handleSaveEngines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Meta != nil {
-		updates := map[string]string{}
-		for k := range r.PostForm {
-			if !strings.HasPrefix(k, "secret_") {
-				continue
-			}
-			key := strings.TrimPrefix(k, "secret_")
-			if key == "" {
-				continue
-			}
-			if v := strings.TrimSpace(r.FormValue(k)); v != "" {
-				updates[key] = v
-			}
-		}
-		if len(updates) > 0 {
-			if err := s.Meta.SetSecrets(updates); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-		}
 		raw := r.FormValue("overlay_yaml")
-		if strings.TrimSpace(raw) != "" {
-			var patch map[string]any
-			if err := yaml.Unmarshal([]byte(raw), &patch); err != nil {
+		secrets := secretUpdates(r)
+		if strings.TrimSpace(raw) != "" || len(secrets) > 0 {
+			cur, err := s.Meta.Config()
+			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
+			}
+			var patch map[string]any
+			if strings.TrimSpace(raw) != "" {
+				if err := yaml.Unmarshal([]byte(raw), &patch); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			} else {
+				patch = cur
 			}
 			if patch == nil {
 				patch = map[string]any{}
 			}
-			if err := s.Meta.SetConfig(patch); err != nil {
+			if err := s.Meta.SetConfig(mergeProviderKeys(cur, patch, secrets)); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
 	}
 	s.finishEngines(w, r, "matchmedia")
+}
+
+func secretUpdates(r *http.Request) map[string]string {
+	updates := map[string]string{}
+	for k := range r.PostForm {
+		if !strings.HasPrefix(k, "secret_") {
+			continue
+		}
+		name := strings.TrimPrefix(k, "secret_")
+		if name == "" {
+			continue
+		}
+		if v := strings.TrimSpace(r.FormValue(k)); v != "" {
+			updates[name] = v
+		}
+	}
+	return updates
+}
+
+// mergeProviderKeys keeps api_key values the YAML editor omitted, then applies
+// non-blank secret fields. A blank secret leaves the stored key in place.
+func mergeProviderKeys(cur, patch map[string]any, secrets map[string]string) map[string]any {
+	if patch == nil {
+		patch = map[string]any{}
+	}
+	curProviders, _ := cur["providers"].(map[string]any)
+	patchProviders, _ := patch["providers"].(map[string]any)
+	if patchProviders == nil {
+		patchProviders = map[string]any{}
+	}
+	for name, raw := range curProviders {
+		spec, _ := raw.(map[string]any)
+		if spec == nil {
+			continue
+		}
+		key, _ := spec["api_key"].(string)
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		pSpec, ok := patchProviders[name].(map[string]any)
+		if !ok || pSpec == nil {
+			continue
+		}
+		if existing, _ := pSpec["api_key"].(string); strings.TrimSpace(existing) == "" {
+			pSpec["api_key"] = key
+			patchProviders[name] = pSpec
+		}
+	}
+	for name, key := range secrets {
+		name = strings.TrimSpace(name)
+		key = strings.TrimSpace(key)
+		if name == "" || key == "" {
+			continue
+		}
+		pSpec, _ := patchProviders[name].(map[string]any)
+		if pSpec == nil {
+			pSpec = map[string]any{}
+		}
+		pSpec["api_key"] = key
+		patchProviders[name] = pSpec
+	}
+	if len(patchProviders) > 0 {
+		patch["providers"] = patchProviders
+	}
+	return patch
 }
 
 func (s *Server) saveFFmpegSettings(w http.ResponseWriter, r *http.Request) {

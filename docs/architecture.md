@@ -27,7 +27,7 @@ flowchart LR
 | `src/share/vendor.yaml` | Builder-only asset and codec URLs; not loaded by the binary |
 | `src/share/applications` | `servemedia.desktop` staged to `.local/share/applications` |
 | `build/` | Podman dist builder (`Containerfile`, compose, host `run`, `build`) |
-| `flatpak/` | TTY `build` online/offline, manifest, AppStream, `pins/`, wrapper (`eu.alyshmahell.ServeMedia`, Freedesktop 26.08) |
+| `flatpak/` | TTY `build` online/offline, manifest, AppStream, `pins/`, wrapper (`eu.alyshmahell.ServeMedia`, GNOME 51) |
 | `build/cache/` | ffmpeg bins + LICENSE; Flatpak SDK/Platform under `cache/flatpak` |
 | `{payload}/config` | Seed YAML (`-config` default `{payload}/config/default.yaml`) |
 | `{payload}/public` | First-party static in dist (templates stay embedded) |
@@ -53,7 +53,7 @@ flowchart LR
 | Item | Value |
 |------|--------|
 | Go image | `docker.io/library/golang:1.26-bookworm` |
-| Build | `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build`. The binary opens the site in the browser (`xdg-open`; `SERVEMEDIA_NO_BROWSER=1` skips). |
+| Build | glibc: `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build` on `golang:1.26-bookworm`. musl: `CGO_ENABLED=1` on `golang:1.26-alpine` (`build/Containerfile.servemedia-musl`), cached at `build/cache/servemedia-musl`. The binary opens the site in the browser (`xdg-open`; `SERVEMEDIA_NO_BROWSER=1` skips). |
 | App version SoT | `version` in `src/share/config/default.yaml` |
 | MatchMedia | Go module in the `servemedia` binary; Flatpak pins it with the other modules |
 | Dist wipe | `build/dist` wiped at container start (`.gitkeep` kept) |
@@ -69,9 +69,9 @@ Stage tree:
 | `.local/share/applications/` | desktop |
 | dist root + share `LICENSE` | repo `LICENSE` |
 | `.local/share/servemedia/vendor/` | third-party JS at image build |
-| `.local/share/servemedia/vendor/ffmpeg` | copy from `build/cache/ffmpeg` or compile into that cache |
+| `.local/share/servemedia/vendor/ffmpeg` | glibc pair from `build/cache/ffmpeg` in the glibc dist. The musl archive replaces that directory with `build/cache/ffmpeg-musl` |
 
-ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; `libva` / `libdrm` dynamic; NVENC headers only. URLs live in `src/share/vendor.yaml`. Delete `build/cache/ffmpeg` to force a recompile after bumping them. The binary does not download vendor files.
+ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; `libva` / `libdrm` dynamic; NVENC headers only. URLs live in `src/share/vendor.yaml`. The glibc pair is compiled in the Debian builder and shipped only in the glibc archive. The musl pair is the same recipe in [`build/Containerfile.musl`](../build/Containerfile.musl) (Alpine), cached at `build/cache/ffmpeg-musl`, and shipped only in the musl archive at `vendor/ffmpeg/`. Delete `build/cache/ffmpeg`, `build/cache/ffmpeg-musl`, or `build/cache/servemedia-musl` to force a rebuild after bumping them. The binary does not download vendor files.
 
 `./build/run` menu:
 
@@ -79,15 +79,17 @@ ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; 
 |--------|------|
 | **run** | copy `build/dist/.local` → `build/cache/xdg`, exec with `HOME` there (fails if `.local/bin/servemedia` missing) |
 | **(re)build & run** | rebuild dist, then run |
-| **(re)build & package** | tarball + AppImage (not Flatpak); refuses a dist tree missing vendor files |
+| **(re)build & package** | glibc and musl tarballs + AppImages (not Flatpak); refuses a dist tree missing vendor files |
 
 ## Packages
 
 | Archive | ffmpeg | Notes |
 |---------|--------|-------|
-| `servemedia-linux-amd64.tar.gz` | vendored `vendor/ffmpeg` (static codecs, host libva) | root `servemedia/` + `LICENSE`; `.local/bin/servemedia` + share trees |
-| `servemedia-linux-amd64.AppImage` | same ELFs; host `libva` / Mesa | packs that tarball (quick-sharun / sharun / uruntime); `SERVEMEDIA_ROOT` = bundled share; data under `$XDG_DATA_HOME/servemedia`; needs `/dev/dri` for GPU |
-| `servemedia-linux-amd64.flatpak` | none; `org.freedesktop.Platform.ffmpeg-full` (26.08) | `./flatpak/build`; runtime `org.freedesktop.Platform//26.08`; app id `eu.alyshmahell.ServeMedia`; wrapper `SERVEMEDIA_ROOT=/app`; data `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` |
+| `servemedia-linux-amd64-glibc.tar.gz` | glibc `vendor/ffmpeg/{ffmpeg,ffprobe}` (static codecs, host libva) | root `servemedia/` + `LICENSE`; glibc `.local/bin/servemedia` + share trees |
+| `servemedia-linux-amd64-glibc.AppImage` | same ELFs | packs that tarball (quick-sharun / sharun / uruntime). quick-sharun deploys the server binary only. `libva` and `libdrm` are deleted from the image. Host `libwebkitgtk-6.0` with GTK 4 when installed, otherwise `libwebkit2gtk-4.1` with GTK 3, the same as a local `--webkit` run; `SERVEMEDIA_ROOT` = bundled share; data under `$XDG_DATA_HOME/servemedia`; needs `/dev/dri` for GPU |
+| `servemedia-linux-amd64-musl.tar.gz` | musl `vendor/ffmpeg/{ffmpeg,ffprobe}` | same share tree; `.local/bin/servemedia` is the Alpine cgo binary (`ld-musl`, no `libc.so.6`) |
+| `servemedia-linux-amd64-musl.AppImage` | same ELFs | static musl `AppRun` execs the untouched musl binary with `--webkit`. quick-sharun only packs the AppDir, so the ELF keeps `ld-musl`. Host musl `libva` / WebKit; `libva` and `libdrm` are not shipped |
+| `servemedia-linux-amd64.flatpak` | none; `org.freedesktop.Platform.ffmpeg-full` (26.08); WebKitGTK 6.0 from the runtime when present, otherwise WebKitGTK 4.1 | `./flatpak/build`; runtime `org.gnome.Platform//51`; app id `eu.alyshmahell.ServeMedia`; wrapper `SERVEMEDIA_ROOT=/app` and `--webkit`; data `~/.var/app/eu.alyshmahell.ServeMedia/data/servemedia/` |
 
 Sideload:
 
@@ -109,7 +111,7 @@ Sandbox reads `/media`, `/mnt`, `/run/media`, `~/Videos`, `~/Music`; other paths
 
 ## HTTP
 
-ServeMedia listens on a TCP address from `--host` and `--port`, and on `$XDG_RUNTIME_DIR/servemedia/servemedia.sock` (mode `0600`). Unset `--host` is every interface. Unset `--port` is `7676`. If that bind fails, ServeMedia listens again on port `0` and the kernel chooses the port. An explicit `--port` that cannot bind stops the process. The browser opens `http://127.0.0.1:<port>` when `DISPLAY` or `WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips). Other machines use `http://<lan-ip>:<port>`. The chosen port is written to `port` and `http.url` in that runtime directory, or under `$XDG_STATE_HOME/servemedia` when `XDG_RUNTIME_DIR` is unset. A second start dials the socket, opens the recorded URL, and exits. A future desktop shell uses the socket and no TCP port. Inside Flatpak the host sees the socket under `$XDG_RUNTIME_DIR/app/eu.alyshmahell.ServeMedia`. MatchMedia runs inside that process.
+ServeMedia listens on a TCP address from `--host` and `--port`. Unset `--host` is every interface. Unset `--port` is `7676`. If that bind fails, ServeMedia listens again on port `0` and the kernel chooses the port. An explicit `--port` that cannot bind stops the process. `--webkit` forces `127.0.0.1` and port `0` and opens a window on that loopback URL, using host `libwebkitgtk-6.0` with GTK 4 when that library is installed and otherwise `libwebkit2gtk-4.1` with GTK 3. A successful window does not also open a browser. If the window cannot be created, the error is logged, the system browser opens, and the server keeps running until a signal or the watchdog. A second `--webkit` start that cannot open a window opens the browser and exits, leaving the existing server up. Without `--webkit`, the browser opens `http://127.0.0.1:<port>` when `DISPLAY` or `WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips that open). Other machines use `http://<lan-ip>:<port>`. The chosen port is written to `port` and the loopback URL to `http.url` in `$XDG_RUNTIME_DIR/servemedia`, or under `$XDG_STATE_HOME/servemedia` when `XDG_RUNTIME_DIR` is unset. A second start reads `http.url` and `GET`s `/healthz` on that loopback URL. A live server is opened and this process exits. A missing file or a failed check starts a new server. Shutdown deletes `http.url` and `port`. MatchMedia runs inside that process.
 
 | Method | Path | Role |
 |--------|------|------|
@@ -135,7 +137,7 @@ Idle HLS jobs are cancelled a few minutes after last segment access. The process
 | Overlay | `config/overlay.yaml` stores settings (backup, webhooks, transcode knobs, startup scan, watchdog). Internal paths in that file are ignored. `media.path` there still overrides the seed. |
 | Transcode cache | `$XDG_CACHE_HOME/servemedia/transcode` |
 | Media root | `SERVEMEDIA_MEDIA_PATH` / overlay `media.path` (comma-separated paths jailed separately, one picker tree; `$HOME`, `$XDG_VIDEOS_DIR`, `$XDG_MUSIC_DIR` expand) |
-| ffmpeg/ffprobe | `{payload}/vendor/ffmpeg/` (`SERVEMEDIA_FFMPEG` override); Flatpak: `ffmpeg` on `PATH` when that tree is absent |
+| ffmpeg/ffprobe | `{payload}/vendor/ffmpeg/` pair shipped with that archive. A tree that also has `musl/` uses it when host `libva` needs `libc.musl` (`SERVEMEDIA_FFMPEG` override). Flatpak: `ffmpeg` on `PATH` when that tree is absent |
 
 ## Libraries and scan
 
@@ -220,12 +222,13 @@ ps -o pid,pcpu,rss,comm -p "$(pgrep -n -f '/servemedia$')"
 
 ## VAAPI
 
-GPU encode uses **host** Mesa/libva and `/dev/dri`. Dist ffmpeg: static codecs, dynamic libva/libdrm. AppImage does not ship `libva.so.2`. Fully static builds cannot drive host VAAPI. Software `libx264` is the probe fallback. A host without `libva.so.2` cannot start the bundled `ffmpeg`.
+GPU encode uses **host** libva and `/dev/dri`. Dist ffmpeg: static codecs, dynamic libva/libdrm. The glibc pair loads a glibc host `libva`. The musl pair loads Alpine's `/usr/lib/libva.so.2` and `/usr/lib/dri` drivers. A child whose ELF needs `libc.musl` has `LD_LIBRARY_PATH` and `LD_PRELOAD` cleared so it does not load a bundled glibc. AppImages do not ship `libva.so.2`. Fully static ffmpeg builds cannot drive host VAAPI. Software `libx264` is the probe fallback. A host without a matching `libva.so.2` cannot start the selected `ffmpeg`.
 
 | Distro | Packages |
 |--------|----------|
 | Fedora | `libva libdrm mesa-dri-drivers mesa-va-drivers`; H.264/HEVC VA also needs RPM Fusion `mesa-va-drivers-freeworld` |
 | Debian | `libva2 libdrm2 mesa-va-drivers` |
+| Alpine | `libva libdrm mesa-va-gallium`; Intel also needs community `intel-media-driver` |
 
 `hwaccel: none` in overlay skips the probe / forces software.
 

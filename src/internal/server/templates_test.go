@@ -364,6 +364,11 @@ func TestScanProgressStacksBothLines(t *testing.T) {
 	if strings.Contains(html, "has-watch") || strings.Contains(html, "watched ") {
 		t.Fatalf("watch during scan: %s", html)
 	}
+	statusAt := strings.Index(html, `id="library-1-status"`)
+	collageAt := strings.Index(html, "library-collage")
+	if statusAt < 0 || collageAt < 0 || collageAt > statusAt || !strings.Contains(html, `hx-swap="innerHTML"`) || !strings.Contains(html, `hx-get="/hx/scan/9/status"`) {
+		t.Fatalf("poll not on status: %s", html)
+	}
 
 	buf.Reset()
 	lines = parseScanLines("match 120/230 matched:80 manual:10 unmatched:2 error:0 title\nfetch 40 nfo:510 poster:38 other title\nstills 0/3 Legend of Crimson")
@@ -400,6 +405,25 @@ func TestScanProgressStacksBothLines(t *testing.T) {
 	}
 	if strings.Contains(idle, "watched ") {
 		t.Fatalf("watch chip: %s", idle)
+	}
+
+	buf.Reset()
+	if err := tpl.ExecuteTemplate(&buf, "partials/library_card_status_poll.html", map[string]any{
+		"Library": db.Library{ID: 1, Name: "Lib"},
+		"Posters": []string{"posters/a.jpg", "posters/b.jpg", "posters/c.jpg"},
+		"Poll":    true,
+		"Job":     &db.ScanJob{ID: 9, Status: "running", ProgressPct: 40},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	poll := buf.String()
+	if !strings.Contains(poll, "library-collage-next") {
+		t.Fatalf("poll missing collage marker: %s", poll)
+	}
+	for _, name := range []string{"posters/a.jpg", "posters/b.jpg", "posters/c.jpg"} {
+		if !strings.Contains(poll, name) {
+			t.Fatalf("poll missing %s: %s", name, poll)
+		}
 	}
 }
 

@@ -186,26 +186,12 @@ func (w *Worker) matchAndFetch(ctx context.Context, lib *db.Library, scanPath st
 		return fmt.Errorf("metadata service unavailable")
 	}
 	w.progress(ctx, opts.ScanJobID, 0, "scan 0/0")
-	if pipe, ok := w.Meta.(scanMatcher); ok {
-		return w.matchPipeline(ctx, lib, scanPath, only, opts, pipe)
-	}
-	jobs, session, err := w.Meta.Run(ctx, scanPath, opts.ScanMode, func(done, total int, name string) {
-		w.reportRunProgress(ctx, opts.ScanJobID, done, total, name)
-	})
-	if err != nil {
-		return err
-	}
-	return w.applyJobs(ctx, lib, jobs, only, opts, session)
+	return w.matchPipeline(ctx, lib, scanPath, only, opts)
 }
 
-type scanMatcher interface {
-	Scan(ctx context.Context, path, mode string, report func(done, total int, name string)) ([]matchmedia.Job, error)
-	Match(ctx context.Context, jobs []matchmedia.Job, report func(done, total int, name string), onJob func(matchmedia.Job)) ([]matchmedia.Job, error)
-}
-
-func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath string, only *db.MediaItem, opts Opts, pipe scanMatcher) error {
+func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath string, only *db.MediaItem, opts Opts) error {
 	opts = rescanSaves(opts)
-	jobs, err := pipe.Scan(ctx, scanPath, opts.ScanMode, func(done, total int, name string) {
+	jobs, err := w.Meta.Scan(ctx, scanPath, opts.ScanMode, func(done, total int, name string) {
 		w.reportRunProgress(ctx, opts.ScanJobID, done, total, name)
 	})
 	if err != nil {
@@ -246,7 +232,7 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 		if j.ID == "" {
 			j.ID = matchmedia.StableID(j.Path)
 		}
-		if !opts.Overwrite && strings.TrimSpace(opts.ScanMode) == "changes" && matchmedia.SidecarComplete(j) {
+		if Next(queueDecision(opts, j)) == ActionAdoptSidecar {
 			qmu.Lock()
 			if adopted[j.ID] {
 				qmu.Unlock()
@@ -283,7 +269,7 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 	}
 	final := jobs
 	if jobsNeedMatch(jobs) {
-		final, err = pipe.Match(ctx, jobs, func(done, total int, name string) {
+		final, err = w.Meta.Match(ctx, jobs, func(done, total int, name string) {
 			live.setMatch(name, done, total)
 			w.flushLive(ctx, live)
 		}, func(j matchmedia.Job) {
@@ -570,44 +556,6 @@ func (w *Worker) applyJobs(ctx context.Context, lib *db.Library, jobs []matchmed
 	return w.resolveManualFromChildren(ctx, lib)
 }
 
-func (w *Worker) persistSidecars(ctx context.Context, j matchmedia.Job, mode string) (matchmedia.Job, saveHit) {
-	switch strings.TrimSpace(mode) {
-	case "", "nfo", "local":
-		return j, saveHit{}
-	}
-	if j.Status != "matched" || j.Match == nil {
-		return j, saveHit{}
-	}
-	type sidecarStatWriter interface {
-		WriteStats(ctx context.Context, mode string, jobs []matchmedia.Job) ([]matchmedia.Job, matchmedia.SidecarStats, error)
-	}
-	if sw, ok := w.Meta.(sidecarStatWriter); ok {
-		out, st, err := sw.WriteStats(ctx, mode, []matchmedia.Job{j})
-		if err != nil || len(out) == 0 {
-			if err != nil {
-				log.Printf("sidecar %s: %v", j.Path, err)
-			}
-			return j, saveHit{}
-		}
-		return out[0], saveHit{nfo: st.TitleNFO, episode: st.EpisodeNFO, poster: st.Posters}
-	}
-	type sidecarWriter interface {
-		Write(ctx context.Context, mode string, jobs []matchmedia.Job) ([]matchmedia.Job, error)
-	}
-	wr, ok := w.Meta.(sidecarWriter)
-	if !ok {
-		return j, saveHit{}
-	}
-	out, err := wr.Write(ctx, mode, []matchmedia.Job{j})
-	if err != nil || len(out) == 0 {
-		if err != nil {
-			log.Printf("sidecar %s: %v", j.Path, err)
-		}
-		return j, saveHit{}
-	}
-	return out[0], saveHit{}
-}
-
 func fileSidecars(j matchmedia.Job, video string) (nfo, still string) {
 	for _, f := range j.Files {
 		if f.Path == video {
@@ -666,7 +614,6 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchm
 		return saveHit{}, nil
 	}
 	var wrote saveHit
-	j, wrote = w.persistSidecars(ctx, j, opts.ScanMode)
 	it, err := w.upsertFromJob(ctx, lib.ID, j, opts.Overwrite, only == nil, opts.ScanMode)
 	if err != nil {
 		return saveHit{}, err
@@ -685,14 +632,14 @@ func (w *Worker) applyFinishedJob(ctx context.Context, lib *db.Library, j matchm
 	if only == nil && it.MatchSkipped() {
 		return wrote, nil
 	}
-	if changesSkipApply(opts, it, j) {
+	switch Next(applyDecision(opts, it, j)) {
+	case ActionKeepIdentity:
 		if err := w.storeSidecarIdentity(ctx, it, j); err != nil {
 			return saveHit{}, err
 		}
 		w.restoreKeptPosters(ctx, lib, it, j)
 		return wrote, nil
-	}
-	if extrasShapedJob(j) {
+	case ActionSkipExtras:
 		return wrote, nil
 	}
 	if err := w.applyJob(ctx, it, j, opts, session); err != nil {
@@ -745,31 +692,18 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	if item.MatchMediaSessionID.Valid {
 		session = strings.TrimSpace(item.MatchMediaSessionID.String)
 	}
-	var (
-		j   matchmedia.Job
-		err error
-	)
-	if sel, ok := w.Meta.(interface {
-		SelectStored(context.Context, matchmedia.Job, string, string) (matchmedia.Job, error)
-	}); ok {
-		hint := DecodePickerSnapshot(item.MatchCandidates.String)
-		hint.ID = item.MatchMediaJobID.String
-		if hint.Path == "" {
-			hint.Path = item.Path
-		}
-		if hint.Title == "" {
-			hint.Title = item.Title
-		}
-		if hint.Kind == "" {
-			hint.Kind = item.Kind
-		}
-		j, err = sel.SelectStored(ctx, hint, provider, id)
-	} else {
-		if session == "" {
-			return fmt.Errorf("no MatchMedia job for this title — rescan to match again")
-		}
-		j, err = w.Meta.Select(session, item.MatchMediaJobID.String, provider, id)
+	hint := DecodePickerSnapshot(item.MatchCandidates.String)
+	hint.ID = item.MatchMediaJobID.String
+	if hint.Path == "" {
+		hint.Path = item.Path
 	}
+	if hint.Title == "" {
+		hint.Title = item.Title
+	}
+	if hint.Kind == "" {
+		hint.Kind = item.Kind
+	}
+	j, err := w.Meta.SelectStored(ctx, hint, provider, id)
 	if err != nil {
 		return err
 	}
@@ -1468,40 +1402,20 @@ func fileMtime(path string) int64 {
 }
 
 func (w *Worker) applyJob(ctx context.Context, it *db.MediaItem, j matchmedia.Job, opts Opts, session string) error {
-	hasMeta := it.MetaID.Valid && strings.TrimSpace(it.MetaID.String) != ""
-	switch j.Status {
-	case "manual", "multiple":
-		if opts.ManualSelect || !(hasMeta && !opts.Overwrite) {
-			return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
-		}
-		return nil
-	case "unmatched":
-		if opts.ManualSelect || !(hasMeta && !opts.Overwrite) {
-			if JobHasPickerCandidates(j) {
-				return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
-			}
-			return w.setJobMatch(ctx, it, session, j.ID, "unmatched", "", j)
-		}
-		return nil
-	case "error":
-		if hasMeta && !opts.Overwrite && !opts.ManualSelect {
-			return nil
-		}
-		if JobHasPickerCandidates(j) {
-			return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
-		}
+	switch Next(applyDecision(opts, it, j)) {
+	case ActionParkManual:
+		return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
+	case ActionMarkUnmatched:
+		return w.setJobMatch(ctx, it, session, j.ID, "unmatched", "", j)
+	case ActionMarkError:
 		msg := strings.TrimSpace(j.Error)
 		if msg == "" {
 			msg = "Match failed"
 		}
 		return w.setJobMatch(ctx, it, session, j.ID, "error", msg, j)
-	case "matched":
-		if opts.ManualSelect {
-			return w.setJobMatch(ctx, it, session, j.ID, "manual", "", j)
-		}
-		if hasMeta && !opts.Overwrite {
-			return w.fillMissingArt(ctx, it, opts.Persist, session)
-		}
+	case ActionFillArt:
+		return w.fillMissingArt(ctx, it, opts.Persist, session)
+	case ActionApply:
 		return w.applyMatched(ctx, it, j, opts.Persist, session)
 	default:
 		return nil
@@ -1777,6 +1691,9 @@ func catalogSessions(it *db.MediaItem, jobSession string) []string {
 		add(it.MatchMediaSessionID.String)
 	}
 	add(jobSession)
+	if len(out) == 0 {
+		out = append(out, "")
+	}
 	return out
 }
 
@@ -1788,6 +1705,7 @@ func (w *Worker) fillMissingArt(ctx context.Context, it *db.MediaItem, persist b
 	metaID := strings.TrimSpace(it.MetaID.String)
 	var cat matchmedia.Catalog
 	usedSess := ""
+	gotCat := false
 	if w.Meta != nil {
 		for _, sess := range catalogSessions(it, session) {
 			c, err := w.Meta.Catalog(sess, provider, metaID)
@@ -1797,10 +1715,11 @@ func (w *Worker) fillMissingArt(ctx context.Context, it *db.MediaItem, persist b
 			}
 			cat = c
 			usedSess = sess
+			gotCat = true
 			break
 		}
 	}
-	if usedSess != "" {
+	if gotCat {
 		switch it.Kind {
 		case "movie":
 			w.fillMissingMoviePoster(ctx, it, cat, persist, usedSess)

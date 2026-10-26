@@ -152,7 +152,7 @@ func stillSeekTimes(dur float64) []float64 {
 }
 
 func grabJPEGFrame(src, dst string, at float64) error {
-	cmd := exec.Command(ffmpeg(),
+	cmd := ffmpegCommand(nil,
 		"-hide_banner", "-loglevel", "error",
 		"-ss", fmt.Sprintf("%.3f", at),
 		"-i", src,

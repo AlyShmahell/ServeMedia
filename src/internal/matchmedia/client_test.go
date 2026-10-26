@@ -74,7 +74,7 @@ func TestScanJSONPath(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	got, err := c.Scan("/media/tv", "", nil)
+	got, err := c.postScan("/media/tv", "", nil)
 	if err != nil || got.Files != 3 || got.Session != "20260829T122800Z-a1b2c3d4e5f6g7h8" || gotPath != "/media/tv" {
 		t.Fatalf("got=%+v path=%q err=%v", got, gotPath, err)
 	}
@@ -91,7 +91,7 @@ func TestScanJSONMode(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	out, err := c.Scan("/media/tv", "changes", nil)
+	out, err := c.postScan("/media/tv", "changes", nil)
 	if err != nil || out.Session == "" {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestScanJSONRequireEpisodeNFO(t *testing.T) {
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
 	flag := true
-	if _, err := c.Scan("/media/tv", "changes", &flag); err != nil {
+	if _, err := c.postScan("/media/tv", "changes", &flag); err != nil {
 		t.Fatal(err)
 	}
 	if got["path"] != "/media/tv" || got["mode"] != "changes" || got["require_episode_nfo"] != true {
@@ -127,7 +127,7 @@ func TestScanMissingSession(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := &Client{Base: srv.URL, HTTP: srv.Client()}
-	if _, err := c.Scan("/media/tv", "", nil); err == nil {
+	if _, err := c.postScan("/media/tv", "", nil); err == nil {
 		t.Fatal("expected missing session")
 	}
 }
@@ -223,12 +223,12 @@ func TestIngestJSON(t *testing.T) {
 }
 
 func TestScanResultJobsCount(t *testing.T) {
-	got, err := decodeScanResult([]byte(`{"session":"s1","files":2,"jobs":3}`))
-	if err != nil || got.Session != "s1" || got.Files != 2 || got.Jobs != 3 {
+	var got ScanResult
+	if err := json.Unmarshal([]byte(`{"session":"s1","files":2,"jobs":3}`), &got); err != nil || got.Session != "s1" || got.Files != 2 || got.Jobs != 3 {
 		t.Fatalf("count: %+v %v", got, err)
 	}
-	got, err = decodeScanResult([]byte(`{"session":"s1","files":2}`))
-	if err != nil || got.Jobs != 0 {
+	got = ScanResult{}
+	if err := json.Unmarshal([]byte(`{"session":"s1","files":2}`), &got); err != nil || got.Jobs != 0 {
 		t.Fatalf("omitted: %+v %v", got, err)
 	}
 }
@@ -340,7 +340,7 @@ func TestOpenUsesMatchMediaDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc["version"] != "0.1.1" {
+	if doc["version"] != "0.2.0" {
 		t.Fatalf("version %#v", doc["version"])
 	}
 	if _, ok := doc["data_dir"]; ok {
@@ -397,7 +397,7 @@ func TestOpenKeepsOverlayDelta(t *testing.T) {
 	if !numIs(match["min_score"], 0.81) {
 		t.Fatalf("min_score %#v", match["min_score"])
 	}
-	if doc["version"] != "0.1.1" {
+	if doc["version"] != "0.2.0" {
 		t.Fatalf("default version missing %#v", doc["version"])
 	}
 	providers, _ := doc["providers"].(map[string]any)

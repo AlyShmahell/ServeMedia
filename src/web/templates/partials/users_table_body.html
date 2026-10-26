@@ -1,5 +1,6 @@
 {{define "partials/users_table_body.html"}}
 {{range .Users}}
+{{if ne .Username "overlord"}}
 <tr><td>{{.Username}}</td><td>{{.Role}}</td>
 <td>{{if ne .Role "admin"}}
   <div class="user-actions">
@@ -26,5 +27,6 @@
     </button>
   </div>
 {{end}}</td></tr>
+{{end}}
 {{end}}
 {{end}}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -30,7 +29,9 @@ func main() {
 	configPath := flag.String("config", "", "path to default.yaml")
 	hostFlag := flag.String("host", "", "bind address (default all interfaces)")
 	portFlag := flag.String("port", "", "bind port (default 0)")
+	webkitFlag := flag.Bool("webkit", false, "open a WebKit window on 127.0.0.1 and an ephemeral port")
 	flag.Parse()
+	host, port := webkitBind(*webkitFlag, *hostFlag, *portFlag)
 	path := *configPath
 	if path == "" {
 		var err error
@@ -55,11 +56,12 @@ func main() {
 	}
 	if url, ok := probeRunning(rt); ok {
 		if url != "" {
-			openBrowser(url)
+			if err := present(*webkitFlag, url); err != nil {
+				log.Fatal(err)
+			}
 		}
 		return
 	}
-	discardStaleSocket(rt)
 
 	var meta matchmedia.Service
 	if opened, err := matchmedia.Open(); err != nil {
@@ -78,6 +80,11 @@ func main() {
 	if err := openDB(); err != nil {
 		log.Fatal(err)
 	}
+	if *webkitFlag {
+		if _, err := database.EnsureOverlord(context.Background()); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if err := database.FailRunningScanJobs(context.Background(), "Interrupted (server restarted)"); err != nil {
 		log.Printf("clear stale scan jobs: %v", err)
 	}
@@ -95,6 +102,11 @@ func main() {
 		media.SetRoot(cfg.ExeDir, cfg.Transcode.FFmpeg)
 		if err := openDB(); err != nil {
 			return err
+		}
+		if *webkitFlag {
+			if _, err := database.EnsureOverlord(context.Background()); err != nil {
+				return err
+			}
 		}
 		bak.DB = database
 		bak.Cfg = &cfg
@@ -117,6 +129,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	srv.Overlord = *webkitFlag
 	srv.SetRestartMeta(func() error {
 		if meta == nil {
 			opened, err := matchmedia.Open()
@@ -174,7 +187,7 @@ func main() {
 		}()
 	}
 
-	tcpLn, err := listenTCP(*hostFlag, *portFlag)
+	tcpLn, err := listenTCP(host, port)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -185,13 +198,6 @@ func main() {
 	if err := rt.ensure(); err != nil {
 		log.Fatal(err)
 	}
-	unixLn, err := net.Listen("unix", rt.Sock)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := os.Chmod(rt.Sock, 0o600); err != nil {
-		log.Fatal(err)
-	}
 	if err := rt.write(uiURL, port); err != nil {
 		log.Fatal(err)
 	}
@@ -200,36 +206,85 @@ func main() {
 	}
 	handler := srv.Router()
 	tcpSrv := &http.Server{Handler: handler}
-	unixSrv := &http.Server{Handler: handler}
 	go func() {
 		log.Printf("servemedia listening on %s", uiURL)
 		if err := tcpSrv.Serve(tcpLn); err != nil && err != http.ErrServerClosed {
 			log.Fatal(err)
 		}
 	}()
-	go func() {
-		if err := unixSrv.Serve(unixLn); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-	}()
-	openBrowser(uiURL)
-
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	select {
-	case <-sig:
-	case <-shutdownCh:
-		log.Printf("watchdog: all tabs closed, shutting down")
+	if openUI(*webkitFlag, uiURL, func(rawURL string) error {
+		return runWebKit(rawURL, func() { go watchQuit(sig, shutdownCh) })
+	}, openBrowser) {
+		select {
+		case <-sig:
+		case <-shutdownCh:
+			log.Printf("watchdog: all tabs closed, shutting down")
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = tcpSrv.Shutdown(ctx)
-	_ = unixSrv.Shutdown(ctx)
 	rt.cleanup()
 	if err := database.FailRunningScanJobs(context.Background(), "Interrupted (server shutting down)"); err != nil {
 		log.Printf("fail running scan jobs: %v", err)
 	}
 	_ = database.Close()
+}
+
+// webkitBind forces the window onto loopback and a kernel-chosen port.
+// --host and --port do not apply in that mode.
+func webkitBind(webkit bool, host, port string) (string, string) {
+	if webkit {
+		return "127.0.0.1", "0"
+	}
+	return host, port
+}
+
+func uiUsesWebKit(webkit bool) bool {
+	return webkit
+}
+
+// present opens the page. A WebKit window replaces the system browser.
+// If that window cannot be created, the browser opens and this process exits.
+func present(webkit bool, rawURL string) error {
+	openUI(webkit, rawURL, func(rawURL string) error {
+		return runWebKit(rawURL, func() {
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sig
+				requestQuit()
+			}()
+		})
+	}, openBrowser)
+	return nil
+}
+
+// openUI opens a WebKit window when webkit is set. A window error opens the
+// browser instead. The returned bool is true when the caller must keep the
+// process alive until a signal or the watchdog.
+func openUI(webkit bool, rawURL string, window func(string) error, browser func(string)) bool {
+	if !webkit {
+		browser(rawURL)
+		return true
+	}
+	if err := window(rawURL); err != nil {
+		log.Printf("webkit: %v; opening a browser", err)
+		browser(rawURL)
+		return true
+	}
+	return false
+}
+
+func watchQuit(sig <-chan os.Signal, shutdownCh <-chan struct{}) {
+	select {
+	case <-sig:
+	case <-shutdownCh:
+		log.Printf("watchdog: all tabs closed, shutting down")
+	}
+	requestQuit()
 }
 
 func shouldOpenBrowser() bool {

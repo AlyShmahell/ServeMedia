@@ -1,12 +1,12 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,7 +16,6 @@ import (
 
 type runtimeDir struct {
 	Dir      string
-	Sock     string
 	URLFile  string
 	PortFile string
 }
@@ -36,7 +35,6 @@ func runtimePaths() (runtimeDir, error) {
 	dir := filepath.Join(base, "servemedia")
 	return runtimeDir{
 		Dir:      dir,
-		Sock:     filepath.Join(dir, "servemedia.sock"),
 		URLFile:  filepath.Join(dir, "http.url"),
 		PortFile: filepath.Join(dir, "port"),
 	}, nil
@@ -67,7 +65,6 @@ func writePrivate(path, body string) error {
 }
 
 func (r runtimeDir) cleanup() {
-	_ = os.Remove(r.Sock)
 	_ = os.Remove(r.URLFile)
 	_ = os.Remove(r.PortFile)
 }
@@ -112,22 +109,24 @@ func loopbackURL(addr net.Addr) (url, port string, err error) {
 }
 
 func probeRunning(r runtimeDir) (string, bool) {
-	if strings.TrimSpace(r.Sock) == "" {
+	b, err := os.ReadFile(r.URLFile)
+	if err != nil {
 		return "", false
 	}
-	if _, err := os.Stat(r.Sock); err != nil {
+	raw := strings.TrimSpace(string(b))
+	page, err := url.Parse(raw)
+	if err != nil || page.Host == "" || (page.Scheme != "http" && page.Scheme != "https") {
 		return "", false
 	}
-	client := &http.Client{
-		Timeout: 400 * time.Millisecond,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				d := net.Dialer{Timeout: 200 * time.Millisecond}
-				return d.DialContext(ctx, "unix", r.Sock)
-			},
-		},
+	if !loopbackHost(page.Hostname()) {
+		return "", false
 	}
-	resp, err := client.Get("http://servemedia/healthz")
+	health := *page
+	health.Path = "/healthz"
+	health.RawQuery = ""
+	health.Fragment = ""
+	client := &http.Client{Timeout: 400 * time.Millisecond}
+	resp, err := client.Get(health.String())
 	if err != nil {
 		return "", false
 	}
@@ -136,16 +135,14 @@ func probeRunning(r runtimeDir) (string, bool) {
 	if resp.StatusCode != http.StatusOK {
 		return "", false
 	}
-	b, err := os.ReadFile(r.URLFile)
-	if err != nil {
-		return "", true
-	}
-	return strings.TrimSpace(string(b)), true
+	return raw, true
 }
 
-func discardStaleSocket(r runtimeDir) {
-	if _, ok := probeRunning(r); ok {
-		return
+func loopbackHost(host string) bool {
+	switch strings.Trim(strings.ToLower(host), "[]") {
+	case "127.0.0.1", "localhost", "::1":
+		return true
+	default:
+		return false
 	}
-	_ = os.Remove(r.Sock)
 }

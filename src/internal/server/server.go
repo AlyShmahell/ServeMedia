@@ -48,6 +48,8 @@ type Server struct {
 	reopen      func() error
 	restartMeta func() error
 	repointOnce sync.Map
+	// Overlord signs every request in as the admin named overlord.
+	Overlord bool
 }
 
 type ctxKey int
@@ -282,6 +284,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		if s.Overlord {
+			u, err := s.DB.EnsureOverlord(r.Context())
+			if err != nil || u == nil {
+				http.Error(w, "db error", 500)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey, u)))
+			return
+		}
 		n, err := s.DB.UserCount(r.Context())
 		if err != nil {
 			http.Error(w, "db error", 500)
@@ -391,6 +402,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 	u := userFrom(r)
 	data["User"] = u
+	data["Overlord"] = s.Overlord || (u != nil && db.IsOverlord(u.Username))
 	if _, ok := data["Version"]; !ok {
 		ver := ""
 		if s.Cfg != nil {
@@ -474,6 +486,10 @@ func (s *Server) handleLoginGet(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
+	if db.IsOverlord(r.FormValue("username")) {
+		s.render(w, r, "login.html", map[string]any{"Error": "Invalid credentials"})
+		return
+	}
 	u, err := s.DB.GetUserByUsername(r.Context(), r.FormValue("username"))
 	if err != nil || u == nil || !db.CheckPassword(u.PasswordHash, r.FormValue("password")) {
 		s.render(w, r, "login.html", map[string]any{"Error": "Invalid credentials"})
@@ -489,10 +505,15 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	u := userFrom(r)
 	if c, _ := r.Cookie(sessionCookie); c != nil {
 		_ = s.DB.DeleteSession(r.Context(), c.Value)
 	}
 	s.clearSession(w)
+	if s.Overlord || (u != nil && db.IsOverlord(u.Username)) {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
@@ -1851,11 +1872,26 @@ func (s *Server) integrationsData(r *http.Request) (map[string]any, int, error) 
 }
 
 func (s *Server) accountsData(r *http.Request) (map[string]any, error) {
-	users, err := s.DB.ListUsers(r.Context())
+	users, err := s.accountUsers(r.Context())
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{"Users": users}, nil
+}
+
+func (s *Server) accountUsers(ctx context.Context) ([]db.User, error) {
+	users, err := s.DB.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]db.User, 0, len(users))
+	for _, u := range users {
+		if db.IsOverlord(u.Username) {
+			continue
+		}
+		out = append(out, u)
+	}
+	return out, nil
 }
 
 func (s *Server) backupData() map[string]any {
@@ -2322,7 +2358,21 @@ func (s *Server) handleScanStatus(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.renderLibraryCard(w, r, lib, j)
+	s.renderLibraryCardStatus(w, r, lib, j)
+}
+
+func (s *Server) renderLibraryCardStatus(w http.ResponseWriter, r *http.Request, lib *db.Library, job *db.ScanJob) {
+	u := userFrom(r)
+	var userID int64
+	if u != nil {
+		userID = u.ID
+	}
+	card := s.libraryCardData(r.Context(), userID, lib, job)
+	s.render(w, r, "partials/library_card_status_poll.html", map[string]any{
+		"Library": card.Library, "Job": card.Job, "Posters": card.Posters,
+		"Message": card.Message, "Lines": card.Lines, "Poll": card.Poll, "ProgressPct": card.ProgressPct,
+		"Enriching": card.Enriching, "Total": card.Total, "WatchPct": card.WatchPct,
+	})
 }
 
 func (s *Server) handleScanMedia(w http.ResponseWriter, r *http.Request) {
@@ -2585,6 +2635,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	pass := r.FormValue("password")
 	confirm := r.FormValue("confirm")
+	if db.IsOverlord(username) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if username == "" || pass == "" || pass != confirm {
 		http.Error(w, "invalid input or passwords do not match", http.StatusBadRequest)
 		return
@@ -2619,7 +2673,7 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	if u == nil || u.Role == db.RoleAdmin {
+	if u == nil || u.Role == db.RoleAdmin || db.IsOverlord(u.Username) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -2638,6 +2692,10 @@ func (s *Server) handleResetUserPassword(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	u, _ := s.DB.GetUser(r.Context(), id)
+	if u != nil && db.IsOverlord(u.Username) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	var whCfg *config.WebhooksConfig
 	if u != nil {
 		if userWH, err := s.DB.GetUserWebhooks(r.Context(), u.ID); err == nil && userWH != nil {
@@ -2652,7 +2710,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if u != nil && s.Webhooks != nil && whCfg != nil {
 		s.Webhooks.Dispatch(r.Context(), whCfg, s.serverID(), webhooks.NotificationUserDeleted, webhooks.UserPayload(u))
 	}
-	users, err := s.DB.ListUsers(r.Context())
+	users, err := s.accountUsers(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return

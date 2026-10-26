@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=ServeMedia
 Comment=Self-hosted media library
-Exec=servemedia
+Exec=servemedia --webkit
 Icon=eu.alyshmahell.ServeMedia
 StartupWMClass=eu.alyshmahell.ServeMedia
 Terminal=false

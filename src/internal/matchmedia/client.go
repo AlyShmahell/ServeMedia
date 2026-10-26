@@ -8,223 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 )
 
-type Status struct {
-	Ready          bool
-	Version        string
-	DisabledReason string
-	Hint           string
-}
-
 type Client struct {
-	Base string
-	HTTP *http.Client
-}
-
-type ScanResult struct {
-	Session string `json:"session"`
-	Files   int    `json:"files"`
-	Jobs    int    `json:"jobs"`
-}
-
-func decodeScanResult(b []byte) (ScanResult, error) {
-	var raw ScanResult
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return ScanResult{}, err
-	}
-	return raw, nil
-}
-
-type IngestRow struct {
-	Title string `json:"title"`
-	Year  string `json:"year,omitempty"`
-	Type  string `json:"type,omitempty"`
-}
-
-type ScanProgress struct {
-	Files   int  `json:"files"`
-	Done    int  `json:"done"`
-	Chunks  int  `json:"chunks"`
-	Chunk   int  `json:"chunk"`
-	Running bool `json:"running"`
-}
-
-type JobFile struct {
-	Path       string `json:"path"`
-	Season     string `json:"season,omitempty"`
-	Episode    string `json:"episode,omitempty"`
-	NFOPath    string `json:"nfo_path,omitempty"`
-	PosterPath string `json:"poster_path,omitempty"`
-}
-
-type Job struct {
-	ID         string      `json:"id"`
-	Source     string      `json:"source"`
-	Title      string      `json:"title"`
-	Year       string      `json:"year,omitempty"`
-	Parent     string      `json:"parent,omitempty"`
-	Path       string      `json:"path,omitempty"`
-	NFOPath    string      `json:"nfo_path,omitempty"`
-	PosterPath string      `json:"poster_path,omitempty"`
-	Kind       string      `json:"kind,omitempty"`
-	Role       string      `json:"role,omitempty"`
-	CatalogFor string      `json:"catalog_for,omitempty"`
-	Files      []JobFile   `json:"files,omitempty"`
-	Ngrams     int         `json:"ngrams,omitempty"`
-	Status     string      `json:"status"`
-	Error      string      `json:"error,omitempty"`
-	Match      *Candidate  `json:"match,omitempty"`
-	Candidates []Candidate `json:"candidates,omitempty"`
-	Catalog    []Season    `json:"catalog,omitempty"`
-	Ranker     string      `json:"ranker,omitempty"`
-	Requests   []Request   `json:"requests,omitempty"`
-}
-
-// Request is one provider call stored in a title NFO or returned on a hit.
-type Request struct {
-	Section  string `json:"section,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	NFO      string `json:"nfo,omitempty"`
-	URL      string `json:"url,omitempty"`
-	Query    string `json:"query,omitempty"`
-	Season   string `json:"season,omitempty"`
-}
-
-type Candidate struct {
-	Provider string            `json:"provider"`
-	ID       string            `json:"id"`
-	Title    string            `json:"title"`
-	Year     string            `json:"year,omitempty"`
-	Score    float64           `json:"score,omitempty"`
-	Jaccard  float64           `json:"jaccard,omitempty"`
-	Synopsis string            `json:"synopsis,omitempty"`
-	Poster   string            `json:"poster,omitempty"`
-	Attrs    map[string]string `json:"attrs,omitempty"`
-	Requests []Request         `json:"requests,omitempty"`
-}
-
-// UnmarshalJSON accepts both the stored picker names (provider, id) and
-// MatchMedia's exported field names (Provider, ID).
-func (c *Candidate) UnmarshalJSON(b []byte) error {
-	var raw struct {
-		Provider  string            `json:"provider"`
-		Provider2 string            `json:"Provider"`
-		ID        string            `json:"id"`
-		ID2       string            `json:"ID"`
-		Title     string            `json:"title"`
-		Title2    string            `json:"Title"`
-		Year      string            `json:"year"`
-		Year2     string            `json:"Year"`
-		Score     float64           `json:"score"`
-		Score2    float64           `json:"Score"`
-		Jaccard   float64           `json:"jaccard"`
-		Jaccard2  float64           `json:"Jaccard"`
-		Synopsis  string            `json:"synopsis"`
-		Synopsis2 string            `json:"Synopsis"`
-		Poster    string            `json:"poster"`
-		Poster2   string            `json:"Poster"`
-		Attrs     map[string]string `json:"attrs"`
-		Attrs2    map[string]string `json:"Attrs"`
-		Requests  []Request         `json:"requests"`
-		Requests2 []Request         `json:"Requests"`
-	}
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	c.Provider = firstNonEmpty(raw.Provider, raw.Provider2)
-	c.ID = firstNonEmpty(raw.ID, raw.ID2)
-	c.Title = firstNonEmpty(raw.Title, raw.Title2)
-	c.Year = firstNonEmpty(raw.Year, raw.Year2)
-	c.Score = raw.Score
-	if c.Score == 0 {
-		c.Score = raw.Score2
-	}
-	c.Jaccard = raw.Jaccard
-	if c.Jaccard == 0 {
-		c.Jaccard = raw.Jaccard2
-	}
-	c.Synopsis = firstNonEmpty(raw.Synopsis, raw.Synopsis2)
-	c.Poster = firstNonEmpty(raw.Poster, raw.Poster2)
-	c.Attrs = raw.Attrs
-	if len(c.Attrs) == 0 {
-		c.Attrs = raw.Attrs2
-	}
-	c.Requests = raw.Requests
-	if len(c.Requests) == 0 {
-		c.Requests = raw.Requests2
-	}
-	return nil
-}
-
-func (r *Request) UnmarshalJSON(b []byte) error {
-	var raw struct {
-		Section   string `json:"section"`
-		Section2  string `json:"Section"`
-		Provider  string `json:"provider"`
-		Provider2 string `json:"Provider"`
-		NFO       string `json:"nfo"`
-		NFO2      string `json:"NFO"`
-		URL       string `json:"url"`
-		URL2      string `json:"URL"`
-		Query     string `json:"query"`
-		Query2    string `json:"Query"`
-		Season    string `json:"season"`
-		Season2   string `json:"Season"`
-	}
-	if err := json.Unmarshal(b, &raw); err != nil {
-		return err
-	}
-	r.Section = firstNonEmpty(raw.Section, raw.Section2)
-	r.Provider = firstNonEmpty(raw.Provider, raw.Provider2)
-	r.NFO = firstNonEmpty(raw.NFO, raw.NFO2)
-	r.URL = firstNonEmpty(raw.URL, raw.URL2)
-	r.Query = firstNonEmpty(raw.Query, raw.Query2)
-	r.Season = firstNonEmpty(raw.Season, raw.Season2)
-	return nil
-}
-
-func firstNonEmpty(a, b string) string {
-	if strings.TrimSpace(a) != "" {
-		return a
-	}
-	return b
-}
-
-type Catalog struct {
-	Provider string            `json:"provider"`
-	ID       string            `json:"id"`
-	Title    string            `json:"title"`
-	Year     string            `json:"year,omitempty"`
-	Type     string            `json:"type"`
-	Synopsis string            `json:"synopsis,omitempty"`
-	Poster   string            `json:"poster,omitempty"`
-	Attrs    map[string]string `json:"attrs,omitempty"`
-	Seasons  []Season          `json:"seasons,omitempty"`
-}
-
-type Season struct {
-	Number   string    `json:"number,omitempty"`
-	Title    string    `json:"title"`
-	Synopsis string    `json:"synopsis,omitempty"`
-	Poster   string    `json:"poster,omitempty"`
-	Year     string    `json:"year,omitempty"`
-	Episodes []Episode `json:"episodes,omitempty"`
-}
-
-type Episode struct {
-	Number   string   `json:"number,omitempty"`
-	Title    string   `json:"title"`
-	Synopsis string   `json:"synopsis,omitempty"`
-	Poster   string   `json:"poster,omitempty"`
-	Year     string   `json:"year,omitempty"`
-	Runtime  string   `json:"runtime,omitempty"`
-	Aired    string   `json:"aired,omitempty"`
-	Path     string   `json:"path,omitempty"`
-	Paths    []string `json:"paths,omitempty"`
+	Base    string
+	HTTP    *http.Client
+	session string
 }
 
 func withSession(path, session string) string {
@@ -313,7 +104,7 @@ func (c *Client) SetConfig(patch map[string]any) error {
 	return waitHealth(c.httpc(), c.Base, 60*time.Second)
 }
 
-func (c *Client) Scan(path, mode string, requireEpisodeNFO *bool) (ScanResult, error) {
+func (c *Client) postScan(path, mode string, requireEpisodeNFO *bool) (ScanResult, error) {
 	payload := map[string]any{"path": path}
 	if m := strings.TrimSpace(mode); m != "" {
 		payload["mode"] = m
@@ -339,8 +130,8 @@ func (c *Client) Scan(path, mode string, requireEpisodeNFO *bool) (ScanResult, e
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return ScanResult{}, fmt.Errorf("scan: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	out, err := decodeScanResult(b)
-	if err != nil {
+	var out ScanResult
+	if err := json.Unmarshal(b, &out); err != nil {
 		return ScanResult{}, err
 	}
 	if strings.TrimSpace(out.Session) == "" {
@@ -368,8 +159,8 @@ func (c *Client) Ingest(rows []IngestRow) (ScanResult, error) {
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
 		return ScanResult{}, fmt.Errorf("ingest: %s %s", resp.Status, strings.TrimSpace(string(b)))
 	}
-	out, err := decodeScanResult(b)
-	if err != nil {
+	var out ScanResult
+	if err := json.Unmarshal(b, &out); err != nil {
 		return ScanResult{}, err
 	}
 	if strings.TrimSpace(out.Session) == "" {
@@ -431,7 +222,18 @@ func (c *Client) Select(session, jobID, provider, id string) (Job, error) {
 	return j, nil
 }
 
+func (c *Client) sessionOr(session string) string {
+	if strings.TrimSpace(session) != "" {
+		return strings.TrimSpace(session)
+	}
+	if c == nil {
+		return ""
+	}
+	return c.session
+}
+
 func (c *Client) Catalog(session, provider, id string) (Catalog, error) {
+	session = c.sessionOr(session)
 	var t Catalog
 	path := withSession("/v1/catalog/"+url.PathEscape(provider)+"/"+url.PathEscape(id), session)
 	if err := c.getJSON(path, &t); err != nil {
@@ -445,6 +247,7 @@ func (c *Client) ResolveURL(u, session string) string {
 	if u == "" || c == nil {
 		return u
 	}
+	session = c.sessionOr(session)
 	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
 		return u
 	}
@@ -534,49 +337,32 @@ func (c *Client) getJSON(path string, dest any) error {
 	return json.NewDecoder(resp.Body).Decode(dest)
 }
 
-func (t Catalog) FindSeason(n int) *Season {
-	for i := range t.Seasons {
-		if atoi(t.Seasons[i].Number) == n {
-			return &t.Seasons[i]
-		}
-	}
-	return nil
-}
-
-func (t Catalog) FindEpisode(season, episode int) *Episode {
-	s := t.FindSeason(season)
-	if s == nil {
-		return nil
-	}
-	for i := range s.Episodes {
-		if atoi(s.Episodes[i].Number) == episode {
-			return &s.Episodes[i]
-		}
-	}
-	return nil
-}
-
-func atoi(s string) int {
-	s = strings.TrimSpace(s)
-	if len(s) >= 4 {
-		if n, err := strconv.Atoi(s[:4]); err == nil {
-			return n
-		}
-	}
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
 func (c *Client) Run(ctx context.Context, path, mode string, report func(done, total int, name string)) ([]Job, string, error) {
-	scanned, err := c.Scan(path, mode, nil)
+	jobs, err := c.Scan(ctx, path, mode, report)
 	if err != nil {
-		return nil, "", err
+		return nil, c.session, err
 	}
-	jobs, err := c.waitJobs(ctx, scanned.Session, report)
+	return jobs, c.session, nil
+}
+
+// Scan posts a library walk and waits until the stub returns finished jobs.
+func (c *Client) Scan(ctx context.Context, path, mode string, report func(done, total int, name string)) ([]Job, error) {
+	scanned, err := c.postScan(path, mode, nil)
 	if err != nil {
-		return nil, scanned.Session, err
+		return nil, err
 	}
-	return jobs, scanned.Session, nil
+	c.session = scanned.Session
+	return c.waitJobs(ctx, scanned.Session, report)
+}
+
+// Match returns the jobs Scan already finished. Stub servers do not match again.
+func (c *Client) Match(ctx context.Context, jobs []Job, report func(done, total int, name string), onJob func(Job)) ([]Job, error) {
+	return jobs, nil
+}
+
+// SelectStored posts the last scan session. Engine ignores that session.
+func (c *Client) SelectStored(ctx context.Context, hint Job, provider, id string) (Job, error) {
+	return c.Select(c.sessionOr(""), hint.ID, provider, id)
 }
 
 func (c *Client) RunIngest(ctx context.Context, rows []IngestRow, report func(done, total int, name string)) ([]Job, string, error) {
@@ -584,6 +370,7 @@ func (c *Client) RunIngest(ctx context.Context, rows []IngestRow, report func(do
 	if err != nil {
 		return nil, "", err
 	}
+	c.session = scanned.Session
 	jobs, err := c.waitJobs(ctx, scanned.Session, report)
 	if err != nil {
 		return nil, scanned.Session, err

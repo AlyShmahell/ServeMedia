@@ -61,6 +61,18 @@ services:
       - $(yaml_quote "$DIR/dist:/out:z")
       - $(yaml_quote "$DIR/cache:/cache:z")
       - $(yaml_quote "$DIR/package:/package:z")
+  ffmpeg-musl:
+    build:
+      context: $(yaml_quote "$dest")
+      dockerfile: $(yaml_quote "$dest/build/Containerfile.musl")
+    volumes:
+      - $(yaml_quote "$DIR/cache:/cache:z")
+  servemedia-musl:
+    build:
+      context: $(yaml_quote "$dest")
+      dockerfile: $(yaml_quote "$dest/build/Containerfile.servemedia-musl")
+    volumes:
+      - $(yaml_quote "$DIR/cache:/cache:z")
 EOF
 }
 
@@ -69,7 +81,7 @@ rebuild() {
   : >"$DIR/dist/.gitkeep"
   : >"$DIR/cache/.gitkeep"
   prepare_compose
-  compose up --build --force-recreate --abort-on-container-exit
+  compose up --build --force-recreate --abort-on-container-exit --no-deps dist
 }
 
 stage_package() {
@@ -158,6 +170,91 @@ PY
   fi
 }
 
+elf_interp() {
+  readelf -l "$1" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p'
+}
+
+require_ld_linux() {
+  local bin="$1" interp
+  interp="$(elf_interp "$bin")"
+  case "$interp" in
+    *ld-linux*)
+      echo "$bin interpreter: $interp"
+      ;;
+    *)
+      echo "error: $bin interpreter is ${interp:-unset}; expected ld-linux" >&2
+      exit 1
+      ;;
+  esac
+}
+
+require_ld_musl() {
+  local bin="$1" interp
+  interp="$(elf_interp "$bin")"
+  case "$interp" in
+    *ld-musl*)
+      echo "$bin interpreter: $interp"
+      ;;
+    *)
+      echo "error: $bin interpreter is ${interp:-unset}; expected ld-musl" >&2
+      exit 1
+      ;;
+  esac
+  if readelf -d "$bin" | grep -q 'libc\.so\.6'; then
+    echo "error: $bin needs libc.so.6" >&2
+    exit 1
+  fi
+}
+
+ensure_musl_ffmpeg() {
+  local cache="$DIR/cache/ffmpeg-musl"
+  if [[ ! -x "$cache/ffmpeg" || ! -x "$cache/ffprobe" ]]; then
+    echo "compiling musl ffmpeg into $cache"
+    compose build ffmpeg-musl
+    compose run --rm --no-deps ffmpeg-musl
+  else
+    echo "using cached musl ffmpeg from $cache"
+  fi
+  if [[ ! -x "$cache/ffmpeg" || ! -x "$cache/ffprobe" ]]; then
+    echo "error: musl ffmpeg missing in $cache" >&2
+    exit 1
+  fi
+  require_ld_musl "$cache/ffmpeg"
+}
+
+ensure_musl_servemedia() {
+  echo "building musl servemedia into $DIR/cache"
+  compose build servemedia-musl
+  compose run --rm --no-deps servemedia-musl
+  if [[ ! -x "$DIR/cache/servemedia-musl" || ! -x "$DIR/cache/servemedia-apprun" ]]; then
+    echo "error: musl servemedia missing in $DIR/cache" >&2
+    exit 1
+  fi
+  require_ld_musl "$DIR/cache/servemedia-musl"
+}
+
+stage_musl_package() {
+  local staging="$1"
+  local share ff
+  stage_package "$staging"
+  share="$staging/servemedia/.local/share/servemedia"
+  ff="$share/vendor/ffmpeg"
+  rm -rf "$ff"
+  mkdir -p "$ff"
+  cp -a "$DIR/cache/ffmpeg-musl/ffmpeg" "$DIR/cache/ffmpeg-musl/ffprobe" "$ff/"
+  if [[ -f "$DIR/cache/ffmpeg-musl/LICENSE" ]]; then
+    cp -a "$DIR/cache/ffmpeg-musl/LICENSE" "$ff/"
+  fi
+  if [[ -f "$DIR/cache/ffmpeg-musl/LICENSE.NOTICE" ]]; then
+    cp -a "$DIR/cache/ffmpeg-musl/LICENSE.NOTICE" "$ff/"
+  fi
+  chmod a+x "$ff/ffmpeg" "$ff/ffprobe"
+  cp -a "$DIR/cache/servemedia-musl" "$staging/servemedia/.local/bin/servemedia"
+  chmod a+x "$staging/servemedia/.local/bin/servemedia"
+  require_ld_musl "$staging/servemedia/.local/bin/servemedia"
+  require_ld_musl "$ff/ffmpeg"
+}
+
 package() {
   if [[ ! -x "$DIR/dist/.local/bin/servemedia" ]]; then
     echo "error: build/dist/.local/bin/servemedia not found; rebuild first" >&2
@@ -167,14 +264,24 @@ package() {
   : >"$DIR/package/.gitkeep"
   prepare_compose
   require_vendor_tree
+  require_ld_linux "$DIR/dist/.local/bin/servemedia"
+  require_ld_linux "$DIR/dist/.local/share/servemedia/vendor/ffmpeg/ffmpeg"
+  ensure_musl_ffmpeg
+  ensure_musl_servemedia
   local staging
 
   staging="$(mktemp -d)"
   stage_package "$staging"
-  local name="servemedia-linux-amd64.tar.gz"
-  write_tar "$staging" "$name"
+  rm -rf "$staging/servemedia/.local/share/servemedia/vendor/ffmpeg/musl"
+  write_tar "$staging" "servemedia-linux-amd64-glibc.tar.gz"
   rm -rf "$staging"
-  compose run --rm dist /build/build appimage "/package/$name"
+
+  staging="$(mktemp -d)"
+  stage_musl_package "$staging"
+  write_tar "$staging" "servemedia-linux-amd64-musl.tar.gz"
+  rm -rf "$staging"
+  compose run --rm dist /build/build appimage "/package/servemedia-linux-amd64-glibc.tar.gz"
+  compose run --rm dist /build/build appimage-musl "/package/servemedia-linux-amd64-musl.tar.gz"
 }
 
 start() {
@@ -255,16 +362,23 @@ menu() {
 }
 
 CHOICE=
-menu "run" "(re)build & run" "(re)build & package"
+menu "run" "run (webkit)" "(re)build & run" "(re)build & run (webkit)" "(re)build & package"
 case "$CHOICE" in
   0)
     start
     ;;
   1)
+    start --webkit
+    ;;
+  2)
     rebuild
     start
     ;;
-  2)
+  3)
+    rebuild
+    start --webkit
+    ;;
+  4)
     rebuild
     package
     ;;

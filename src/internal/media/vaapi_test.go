@@ -101,7 +101,7 @@ func TestVaapiFullHWEncodeSmoke(t *testing.T) {
 	if clip == "" {
 		t.Fatal("expected probe clip")
 	}
-	cmd := exec.Command(ffmpeg(),
+	cmd := ffmpegCommand(nil,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
@@ -159,7 +159,7 @@ func TestVaapiSmokeTest10BitDirect(t *testing.T) {
 
 func TestVaapiHybridEncodeSmoke(t *testing.T) {
 	dev := requireRenderNode(t)
-	cmd := exec.Command(ffmpeg(),
+	cmd := ffmpegCommand(nil,
 		"-hide_banner", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",

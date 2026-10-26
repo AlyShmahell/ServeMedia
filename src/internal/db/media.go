@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
 )
 
 type Library struct {
@@ -1424,8 +1426,8 @@ func (d *DB) MediaItemsProgressPct(ctx context.Context, userID int64, items []Me
 func (d *DB) ContinueWatching(ctx context.Context, userID int64, limit int) ([]WatchProgress, error) {
 	rows, err := d.SQL.QueryContext(ctx, `
 		SELECT wp.id, wp.user_id, wp.media_item_id, wp.episode_id, wp.node_id, wp.position_seconds, wp.duration_seconds, wp.completed, wp.updated_at,
-			COALESCE(m.title, e.title, NULLIF(n.file_title,''), NULLIF(n.mm_title,''), n.name, 'Item'),
-			COALESCE(m.poster_path, sm.poster_path, n.poster_path, ''),
+			COALESCE(NULLIF(m.title,''), NULLIF(e.title,''), NULLIF(n.file_title,''), NULLIF(n.mm_title,''), NULLIF(g.mm_title,''), NULLIF(n.name,''), 'Item'),
+			COALESCE(NULLIF(m.poster_path,''), NULLIF(sm.poster_path,''), NULLIF(n.still_path,''), NULLIF(n.poster_path,''), NULLIF(g.poster_path,''), NULLIF(parent.poster_path,''), ''),
 			COALESCE(m.kind, CASE WHEN wp.node_id IS NOT NULL THEN 'file' ELSE 'episode' END)
 		FROM watch_progress wp
 		LEFT JOIN media_items m ON m.id = wp.media_item_id
@@ -1434,6 +1436,8 @@ func (d *DB) ContinueWatching(ctx context.Context, userID int64, limit int) ([]W
 		LEFT JOIN media_items sm ON sm.id = e.show_id
 		LEFT JOIN libraries le ON le.id = sm.library_id AND le.user_id = wp.user_id
 		LEFT JOIN library_nodes n ON n.id = wp.node_id
+		LEFT JOIN library_nodes g ON g.id = n.group_node_id
+		LEFT JOIN library_nodes parent ON parent.id = n.parent_id
 		LEFT JOIN libraries ln ON ln.id = n.library_id AND ln.user_id = wp.user_id
 		WHERE wp.user_id = ? AND wp.completed = 0 AND wp.position_seconds > 5
 			AND (
@@ -1454,6 +1458,7 @@ func (d *DB) ContinueWatching(ctx context.Context, userID int64, limit int) ([]W
 			return nil, err
 		}
 		w.Completed = completed == 1
+		w.Title = displayWatchTitle(w.Title)
 		if w.DurationSeconds.Valid && w.DurationSeconds.Float64 > 0 {
 			p := int((w.PositionSeconds / w.DurationSeconds.Float64) * 100)
 			if p < 0 {
@@ -1475,6 +1480,14 @@ func (d *DB) ContinueWatching(ctx context.Context, userID int64, limit int) ([]W
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+func displayWatchTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" || !metadata.IsVideo(title) {
+		return title
+	}
+	return strings.TrimSuffix(title, filepath.Ext(title))
 }
 
 func (d *DB) CreateScanJob(ctx context.Context, libraryID int64) (int64, error) {

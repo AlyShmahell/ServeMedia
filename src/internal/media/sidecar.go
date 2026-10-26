@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -121,7 +120,7 @@ func EnsureSidecarVTT(sourceSub, outPath string) error {
 	}
 	tmp := outPath + ".tmp"
 	_ = os.Remove(tmp)
-	cmd := exec.Command(ffmpeg(), "-y", "-i", sourceSub, "-f", "webvtt", tmp)
+	cmd := ffmpegCommand(nil, "-y", "-i", sourceSub, "-f", "webvtt", tmp)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		_ = os.Remove(tmp)

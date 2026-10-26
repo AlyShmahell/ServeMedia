@@ -273,6 +273,26 @@ compile_ffmpeg() {
   rm -rf "$tmp"
 }
 
+# Alpine build of the same recipe. CACHE is forced so this cannot replace the glibc cache.
+ffmpeg_musl() {
+  local saved="${CACHE:-}"
+  CACHE="${MUSL_CACHE:-/cache/ffmpeg-musl}"
+  export CACHE
+  mkdir -p "$CACHE"
+  if [[ -f "$CACHE/ffmpeg" && -f "$CACHE/ffprobe" && -s "$CACHE/LICENSE" ]]; then
+    echo "using cached musl ffmpeg from $CACHE"
+  else
+    echo "compiling musl ffmpeg into $CACHE"
+    compile_ffmpeg
+  fi
+  chmod a+x "$CACHE/ffmpeg" "$CACHE/ffprobe"
+  chmod -R a+rwX "$CACHE"
+  if [[ -n "$saved" ]]; then
+    CACHE="$saved"
+    export CACHE
+  fi
+}
+
 stage() {
   find "$OUT" -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} +
   mkdir -p "$CACHE" "$SHARE/vendor/ffmpeg"
@@ -294,58 +314,34 @@ stage() {
   find "$OUT/.local/share/servemedia/vendor/ffmpeg" -type f \( -name ffmpeg -o -name ffprobe \) -exec chmod a+x {} +
 }
 
-appimage() {
-  local tarball="${1:-}"
-  if [[ -z "$tarball" || ! -f "$tarball" ]]; then
-    echo "error: appimage requires the package tarball" >&2
+elf_interp() {
+  readelf -l "$1" | sed -n 's/.*Requesting program interpreter: \(.*\)\]/\1/p'
+}
+
+require_interp() {
+  local bin="$1" want="$2" interp
+  interp="$(elf_interp "$bin")"
+  case "$interp" in
+    *"$want"*)
+      echo "$bin interpreter: $interp"
+      ;;
+    *)
+      echo "error: $bin interpreter is ${interp:-unset}; expected $want" >&2
+      exit 1
+      ;;
+  esac
+}
+
+reject_glibc_needed() {
+  local bin="$1"
+  if readelf -d "$bin" | grep -q 'libc\.so\.6'; then
+    echo "error: $bin needs libc.so.6" >&2
     exit 1
   fi
-  local work root share qs appdir name
-  work="$(mktemp -d)"
-  tar -C "$work" -xzf "$tarball"
-  root="$work/servemedia"
-  share="$root/.local/share/servemedia"
-  for b in \
-    "$root/.local/bin/servemedia" \
-    "$share/vendor/ffmpeg/ffmpeg" \
-    "$share/vendor/ffmpeg/ffprobe"
-  do
-    if [[ ! -f "$b" ]]; then
-      echo "error: missing $b in $tarball" >&2
-      exit 1
-    fi
-  done
-  name="servemedia-linux-amd64.AppImage"
-  local version
-  version="$(yaml_version_from_text < "$share/config/default.yaml")"
-  version="${version:-0.0.0}"
-  qs="$work/quick-sharun"
-  retry -o "$qs" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh"
-  chmod +x "$qs"
-  appdir="$work/AppDir"
-  export STRACE_MODE=0 ANYLINUX_LIB=1
-  export ARCH="$(uname -m)"
-  export APPDIR="$appdir"
-  export OUTPATH="$(dirname "$tarball")"
-  export OUTNAME="$name"
-  export DESKTOP="$root/.local/share/applications/servemedia.desktop"
-  export ICON="$share/public/logo.svg"
-  export VERSION="$version"
-  export STARTUPWMCLASS=eu.alyshmahell.ServeMedia
-  export UPINFO="gh-releases-zsync|AlyShmahell|servemedia|latest|servemedia-linux-amd64.AppImage.zsync"
-  "$qs" \
-    "$root/.local/bin/servemedia"
-  mkdir -p "$appdir/servemedia"
-  cp -a "$root"/. "$appdir/servemedia/"
-  find "$appdir" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
-  cat >"$appdir/bin/00-servemedia-root.hook" <<'EOF'
-export SERVEMEDIA_ROOT="${APPDIR}/servemedia/.local/share/servemedia"
-if [ -z "${SERVEMEDIA_LAUNCHED:-}" ]; then
-  export SERVEMEDIA_LAUNCHED=1
-  exec "${APPDIR}/servemedia/.local/bin/servemedia" "$@"
-fi
-EOF
-  chmod +x "$appdir/bin/00-servemedia-root.hook"
+}
+
+finish_appimage() {
+  local qs="$1" name="$2"
   "$qs" --make-appimage
   if [[ ! -f "$OUTPATH/$name" ]]; then
     local produced
@@ -358,15 +354,106 @@ EOF
   fi
   chmod a+rwx "$OUTPATH/$name"
   echo "wrote $OUTPATH/$name"
-  rm -rf "$work"
+}
+
+prepare_appimage() {
+  local tarball="${1:-}"
+  if [[ -z "$tarball" || ! -f "$tarball" ]]; then
+    echo "error: appimage requires the package tarball" >&2
+    exit 1
+  fi
+  APP_WORK="$(mktemp -d)"
+  tar -C "$APP_WORK" -xzf "$tarball"
+  APP_ROOT="$APP_WORK/servemedia"
+  APP_SHARE="$APP_ROOT/.local/share/servemedia"
+  local b
+  for b in \
+    "$APP_ROOT/.local/bin/servemedia" \
+    "$APP_SHARE/vendor/ffmpeg/ffmpeg" \
+    "$APP_SHARE/vendor/ffmpeg/ffprobe"
+  do
+    if [[ ! -f "$b" ]]; then
+      echo "error: missing $b in $tarball" >&2
+      exit 1
+    fi
+  done
+  APP_NAME="$(basename "$tarball" .tar.gz).AppImage"
+  APP_VERSION="$(yaml_version_from_text < "$APP_SHARE/config/default.yaml")"
+  APP_VERSION="${APP_VERSION:-0.0.0}"
+  APP_QS="$APP_WORK/quick-sharun"
+  retry -o "$APP_QS" "https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/refs/heads/main/useful-tools/quick-sharun.sh"
+  chmod +x "$APP_QS"
+  APP_DIR="$APP_WORK/AppDir"
+  export ARCH="$(uname -m)"
+  export APPDIR="$APP_DIR"
+  export OUTPATH="$(dirname "$tarball")"
+  export OUTNAME="$APP_NAME"
+  export DESKTOP="$APP_ROOT/.local/share/applications/servemedia.desktop"
+  export ICON="$APP_SHARE/public/logo.svg"
+  export VERSION="$APP_VERSION"
+  export STARTUPWMCLASS=eu.alyshmahell.ServeMedia
+  export UPINFO="gh-releases-zsync|AlyShmahell|servemedia|latest|$APP_NAME.zsync"
+}
+
+appimage() {
+  prepare_appimage "${1:-}"
+  export STRACE_MODE=0 ANYLINUX_LIB=1
+  "$APP_QS" \
+    "$APP_ROOT/.local/bin/servemedia"
+  mkdir -p "$APP_DIR/servemedia"
+  cp -a "$APP_ROOT"/. "$APP_DIR/servemedia/"
+  find "$APP_DIR" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
+  cat >"$APP_DIR/bin/00-servemedia-root.hook" <<'EOF'
+export SERVEMEDIA_ROOT="${APPDIR}/servemedia/.local/share/servemedia"
+if [ -z "${SERVEMEDIA_LAUNCHED:-}" ]; then
+  export SERVEMEDIA_LAUNCHED=1
+  exec "${APPDIR}/servemedia/.local/bin/servemedia" --webkit "$@"
+fi
+EOF
+  chmod +x "$APP_DIR/bin/00-servemedia-root.hook"
+  # quick-sharun deploys only the servemedia binary it was given. The copy under
+  # servemedia/ is the archive ELF and must stay glibc.
+  require_interp "$APP_DIR/servemedia/.local/bin/servemedia" ld-linux
+  require_interp "$APP_DIR/servemedia/.local/share/servemedia/vendor/ffmpeg/ffmpeg" ld-linux
+  finish_appimage "$APP_QS" "$APP_NAME"
+  rm -rf "$APP_WORK"
+}
+
+# The musl ELF is not passed to quick-sharun's deploy step. That step patchelfs
+# its argument and bundles glibc. AppRun is a static musl program that execs
+# the untouched servemedia binary.
+appimage_musl() {
+  local apprun="${APPRUN:-/cache/servemedia-apprun}"
+  prepare_appimage "${1:-}"
+  if [[ ! -x "$apprun" ]]; then
+    echo "error: musl AppRun missing at $apprun" >&2
+    exit 1
+  fi
+  unset ANYLINUX_LIB
+  export STRACE_MODE=0
+  mkdir -p "$APP_DIR/servemedia"
+  cp -a "$apprun" "$APP_DIR/AppRun"
+  chmod a+x "$APP_DIR/AppRun"
+  cp -a "$APP_ROOT"/. "$APP_DIR/servemedia/"
+  find "$APP_DIR" \( -name 'libva.so*' -o -name 'libva-drm.so*' -o -name 'libdrm.so*' \) -delete
+  local bin="$APP_DIR/servemedia/.local/bin/servemedia"
+  local ff="$APP_DIR/servemedia/.local/share/servemedia/vendor/ffmpeg/ffmpeg"
+  require_interp "$bin" ld-musl
+  reject_glibc_needed "$bin"
+  require_interp "$ff" ld-musl
+  reject_glibc_needed "$ff"
+  finish_appimage "$APP_QS" "$APP_NAME"
+  rm -rf "$APP_WORK"
 }
 
 case "${1:-}" in
   vendor) vendor ;;
   stage) stage ;;
+  ffmpeg-musl) ffmpeg_musl ;;
   appimage) appimage "${2:-}" ;;
+  appimage-musl) appimage_musl "${2:-}" ;;
   *)
-    echo "usage: $0 vendor|stage|appimage" >&2
+    echo "usage: $0 vendor|stage|ffmpeg-musl|appimage|appimage-musl" >&2
     exit 1
     ;;
 esac

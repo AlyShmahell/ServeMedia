@@ -23,12 +23,22 @@ func TestRequestRoundTrip(t *testing.T) {
 			Requests: []Request{req},
 		},
 	}
-	back := fromMM(toMM(job))
+	rawJob, err := json.Marshal(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Job
+	if err := json.Unmarshal(rawJob, &back); err != nil {
+		t.Fatal(err)
+	}
 	if len(back.Requests) != 1 || back.Requests[0] != req || back.Ngrams != 2 {
 		t.Fatalf("job requests %+v ngrams %d", back.Requests, back.Ngrams)
 	}
 	if back.Match == nil || len(back.Match.Requests) != 1 || back.Match.Requests[0] != req {
 		t.Fatalf("hit requests %+v", back.Match)
+	}
+	if !strings.Contains(string(rawJob), `"provider"`) {
+		t.Fatalf("hit json %s", rawJob)
 	}
 	raw, err := json.Marshal(job.Match)
 	if err != nil {

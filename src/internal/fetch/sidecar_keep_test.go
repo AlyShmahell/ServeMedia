@@ -145,7 +145,7 @@ func TestChangesFetchesShowMissingEpisodeNFO(t *testing.T) {
 	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: false, ScanMode: "changes"}); err != nil {
 		t.Fatal(err)
 	}
-	if meta.writes.Load() != 1 {
+	if meta.writes.Load() != 0 {
 		t.Fatalf("write calls %d", meta.writes.Load())
 	}
 	got, err := os.ReadFile(nfoPath)
@@ -490,6 +490,10 @@ func (m *finishedSidecarMeta) Write(context.Context, string, []matchmedia.Job) (
 
 func (m *finishedSidecarMeta) Match(context.Context, []matchmedia.Job, func(int, int, string), func(matchmedia.Job)) ([]matchmedia.Job, error) {
 	return nil, errMatchNotExpected
+}
+
+func (m *finishedSidecarMeta) SelectStored(context.Context, matchmedia.Job, string, string) (matchmedia.Job, error) {
+	return matchmedia.Job{}, errMatchNotExpected
 }
 
 func (m *finishedSidecarMeta) Run(context.Context, string, string, func(int, int, string)) ([]matchmedia.Job, string, error) {

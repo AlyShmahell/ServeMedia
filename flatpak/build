@@ -15,6 +15,7 @@ YML="$DIR/${APP_ID}.yml"
 META="$DIR/${APP_ID}.metainfo.xml"
 IMAGE="localhost/servemedia-flatpak-builder:latest"
 RUNTIME_VER="26.08"
+GNOME_VER="51"
 SM_REPO="${SERVEMEDIA_REPO:-AlyShmahell/ServeMedia}"
 UA="servemedia-flatpak-sync"
 
@@ -240,12 +241,12 @@ ref_installed() {
 
 ensure_runtimes() {
   local offline="${1:-}"
-  local plat="org.freedesktop.Platform//${RUNTIME_VER}"
-  local sdk="org.freedesktop.Sdk//${RUNTIME_VER}"
+  local plat="org.gnome.Platform//${GNOME_VER}"
+  local sdk="org.gnome.Sdk//${GNOME_VER}"
   local golang="org.freedesktop.Sdk.Extension.golang//${RUNTIME_VER}"
   if [[ -n "$offline" ]]; then
     if ! ref_installed "$plat" || ! ref_installed "$sdk" || ! ref_installed "$golang"; then
-      echo "error: Freedesktop ${RUNTIME_VER} Platform/SDK or golang extension missing from cache" >&2
+      echo "error: GNOME ${GNOME_VER} Platform/SDK or Freedesktop ${RUNTIME_VER} golang extension missing from cache" >&2
       exit 1
     fi
     return 0

@@ -51,7 +51,74 @@
     );
   }
 
+  function stopFinishedPolls() {
+    var flags = document.querySelectorAll('.library-card-status [data-poll="0"]');
+    for (var i = 0; i < flags.length; i++) {
+      var status = flags[i].closest('.library-card-status');
+      if (!status) continue;
+      status.setAttribute('data-poll', '0');
+      status.removeAttribute('hx-get');
+      status.removeAttribute('hx-trigger');
+    }
+  }
+
+  function posterSrc(img) {
+    return img.getAttribute('src') || '';
+  }
+
+  function patchCollage(collage, wanted) {
+    var imgs = collage.querySelectorAll('img');
+    var same = imgs.length === wanted.length;
+    for (var i = 0; same && i < imgs.length; i++) {
+      if (posterSrc(imgs[i]) !== wanted[i]) same = false;
+    }
+    if (same) return;
+    var pool = {};
+    for (var k = 0; k < imgs.length; k++) {
+      var src = posterSrc(imgs[k]);
+      if (src && !pool[src]) pool[src] = imgs[k];
+    }
+    while (collage.firstChild) collage.removeChild(collage.firstChild);
+    if (wanted.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'library-collage-empty muted';
+      empty.textContent = 'No posters yet';
+      collage.appendChild(empty);
+      return;
+    }
+    for (var n = 0; n < wanted.length; n++) {
+      var next = wanted[n];
+      var img = pool[next];
+      if (img) delete pool[next];
+      else {
+        img = document.createElement('img');
+        img.alt = '';
+        img.setAttribute('src', next);
+      }
+      collage.appendChild(img);
+    }
+  }
+
+  function syncCollages() {
+    var markers = document.querySelectorAll('.library-collage-next');
+    for (var i = 0; i < markers.length; i++) {
+      var card = markers[i].closest('article');
+      if (!card) continue;
+      var collage = card.querySelector('.library-collage');
+      if (!collage) continue;
+      var wanted = [];
+      var nodes = markers[i].querySelectorAll('[data-poster]');
+      for (var j = 0; j < nodes.length; j++) {
+        var src = nodes[j].getAttribute('data-poster') || '';
+        if (src) wanted.push(src);
+      }
+      patchCollage(collage, wanted);
+    }
+  }
+
   function scan() {
+    stopFinishedPolls();
+    syncCollages();
     var nodes = document.querySelectorAll('[data-scroll-key]');
     for (var i = 0; i < nodes.length; i++) {
       bind(nodes[i]);
@@ -749,6 +816,31 @@
     return '';
   }
 
+  var confirmRequest = null;
+  var confirmDialog = document.getElementById('confirm-dialog');
+  if (confirmDialog) {
+    confirmDialog.addEventListener('close', function () {
+      var go = confirmRequest;
+      confirmRequest = null;
+      if (confirmDialog.returnValue === 'ok' && typeof go === 'function') go(true);
+    });
+  }
+  document.addEventListener('htmx:confirm', function (e) {
+    var q = e.detail && e.detail.question;
+    var text = document.getElementById('confirm-dialog-text');
+    if (!q || !confirmDialog || !text || !e.detail || typeof e.detail.issueRequest !== 'function') return;
+    e.preventDefault();
+    text.textContent = q;
+    confirmRequest = e.detail.issueRequest;
+    confirmDialog.returnValue = '';
+    if (confirmDialog.open) return;
+    try {
+      confirmDialog.showModal();
+    } catch (err) {
+      confirmDialog.show();
+    }
+  });
+
   // htmx fires beforeSwap on the swap target. Remember the element that sent
   // the request so a scan dialog can update the library card behind it.
   var requestSource = new WeakMap();
@@ -962,16 +1054,35 @@
     document.head.appendChild(link);
   }
 
+  function editorFor(ta) {
+    var sib = ta.previousElementSibling;
+    if (sib && sib.CodeMirror) return sib.CodeMirror;
+    sib = ta.nextElementSibling;
+    if (sib && sib.CodeMirror) return sib.CodeMirror;
+    return null;
+  }
+
   function initCM() {
     var ta = document.getElementById('overlay-yaml');
     if (!ta || typeof CodeMirror === 'undefined') return;
-    if (ta.getAttribute('data-cm-ready') === '1') {
-      if (cm) cm.refresh();
+    var existing = editorFor(ta);
+    if (existing) {
+      cm = existing;
+      ta.setAttribute('data-cm-ready', '1');
+      cm.refresh();
+      return;
+    }
+    if (ta.getAttribute('data-cm-ready') === '1' && cm && cm.getTextArea && cm.getTextArea() === ta) {
+      cm.refresh();
       return;
     }
     cm = CodeMirror.fromTextArea(ta, { mode: 'yaml', lineNumbers: true, lineWrapping: true, theme: 'servemedia' });
     ta.setAttribute('data-cm-ready', '1');
     cm.refresh();
+  }
+
+  function saveCM() {
+    if (cm && cm.save) cm.save();
   }
 
   function ensureCM() {
@@ -990,8 +1101,15 @@
   }
 
   document.addEventListener('htmx:afterSwap', ensureCM);
+  document.addEventListener('htmx:configRequest', function (e) {
+    var elt = e.detail && e.detail.elt;
+    if (!elt || !elt.closest) return;
+    if (elt.id === 'engines-matchmedia-form' || elt.closest('#engines-matchmedia-form') || elt.id === 'engines-save' || elt.id === 'engines-restore') {
+      saveCM();
+    }
+  });
   document.addEventListener('submit', function (e) {
-    if (e.target && e.target.id === 'engines-matchmedia-form' && cm) cm.save();
+    if (e.target && e.target.id === 'engines-matchmedia-form') saveCM();
   }, true);
 
   document.addEventListener('click', function (e) {

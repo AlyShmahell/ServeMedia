@@ -146,6 +146,10 @@ func (m *overlapMeta) Match(ctx context.Context, jobs []matchmedia.Job, report f
 	return []matchmedia.Job{movie, parent}, nil
 }
 
+func (m *overlapMeta) SelectStored(context.Context, matchmedia.Job, string, string) (matchmedia.Job, error) {
+	return matchmedia.Job{}, fmt.Errorf("unused")
+}
+
 func (m *overlapMeta) Run(context.Context, string, string, func(int, int, string)) ([]matchmedia.Job, string, error) {
 	return nil, "", fmt.Errorf("unused")
 }

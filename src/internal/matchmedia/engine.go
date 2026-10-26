@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	mmconfig "github.com/alyshmahell/matchmedia/src/mod/config"
-	"github.com/alyshmahell/matchmedia/src/mod/engine/rank"
 	mmfetch "github.com/alyshmahell/matchmedia/src/mod/fetch"
 	"github.com/alyshmahell/matchmedia/src/mod/ingest"
 	"github.com/alyshmahell/matchmedia/src/mod/match"
@@ -129,9 +128,13 @@ func (e *Engine) Scan(ctx context.Context, path, mode string, report func(done, 
 	if err != nil {
 		return nil, err
 	}
-	local := convertJobs(jobs)
-	e.remember(local)
-	return local, nil
+	for i := range jobs {
+		if jobs[i].ID == "" {
+			jobs[i].ID = stableJobID(jobs[i].Path)
+		}
+	}
+	e.remember(jobs)
+	return jobs, nil
 }
 
 // Match searches jobs that are still pending or in error. onJob runs for each finished job.
@@ -140,11 +143,7 @@ func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total 
 	if cfg == nil {
 		return nil, fmt.Errorf("metadata service unavailable")
 	}
-	in := make([]match.Job, len(jobs))
-	for i := range jobs {
-		in[i] = toMM(jobs[i])
-	}
-	if !needsProviderMatch(in) {
+	if !needsProviderMatch(jobs) {
 		return jobs, nil
 	}
 	client := e.fetcher()
@@ -155,10 +154,9 @@ func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total 
 	var matched, sidecar, replay, manual, unmatched, errored int
 	var lastDone, lastTotal int
 	var lastTitle string
-	out := match.Collect(match.RunProgress(ctx, client, in, func(done, total int, j match.Job) {
-		local := fromMM(j)
+	out := match.Collect(match.RunProgress(ctx, client, jobs, func(done, total int, j match.Job) {
 		if onJob != nil {
-			onJob(local)
+			onJob(j)
 		}
 		if report == nil {
 			return
@@ -171,7 +169,6 @@ func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total 
 		mu.Unlock()
 		report(done, total, msg)
 	}, nil))
-	local := convertJobs(out)
 	if report != nil && lastTotal > 0 {
 		folded := 0
 		if lastTotal > len(out) {
@@ -179,8 +176,8 @@ func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total 
 		}
 		report(lastDone, lastTotal, matchProgress(lastDone, lastTotal, matched, manual, unmatched, errored, sidecar, replay, folded, lastTitle))
 	}
-	e.remember(local)
-	return local, nil
+	e.remember(out)
+	return out, nil
 }
 
 func tallyMatch(j match.Job, matched, sidecar, replay, manual, unmatched, errored *int) {
@@ -213,38 +210,6 @@ func matchProgress(done, total, matched, manual, unmatched, errored, sidecar, re
 	return fmt.Sprintf("match %d/%d matched:%d manual:%d unmatched:%d error:%d sidecar:%d replay:%d folded:%d %s", done, total, matched, manual, unmatched, errored, sidecar, replay, folded, title)
 }
 
-// SidecarStats counts files MatchMedia wrote. An existing file left in place is not counted.
-type SidecarStats struct {
-	TitleNFO   int
-	EpisodeNFO int
-	Posters    int
-}
-
-// Write stores sidecars beside the media and returns the jobs with those paths set.
-func (e *Engine) Write(ctx context.Context, mode string, jobs []Job) ([]Job, error) {
-	out, _, err := e.WriteStats(ctx, mode, jobs)
-	return out, err
-}
-
-// WriteStats stores sidecars and returns how many title NFOs, episode NFOs, and posters were written.
-func (e *Engine) WriteStats(ctx context.Context, mode string, jobs []Job) ([]Job, SidecarStats, error) {
-	client := e.fetcher()
-	if client == nil {
-		return nil, SidecarStats{}, fmt.Errorf("metadata service unavailable")
-	}
-	in := make([]match.Job, len(jobs))
-	for i := range jobs {
-		in[i] = toMM(jobs[i])
-	}
-	out, st, err := sidecar.WriteProgress(ctx, client, mode, in, nil)
-	if err != nil {
-		return nil, SidecarStats{}, err
-	}
-	local := convertJobs(out)
-	e.remember(local)
-	return local, SidecarStats{TitleNFO: st.TitleNFO, EpisodeNFO: st.EpisodeNFO, Posters: st.Posters}, nil
-}
-
 func (e *Engine) RunIngest(ctx context.Context, rows []IngestRow, report func(done, total int, name string)) ([]Job, string, error) {
 	cfg := e.config()
 	if cfg == nil {
@@ -264,9 +229,8 @@ func (e *Engine) RunIngest(ctx context.Context, rows []IngestRow, report func(do
 			report(done, total, j.Title)
 		}
 	}, nil))
-	local := convertJobs(out)
-	e.remember(local)
-	return local, "", nil
+	e.remember(out)
+	return out, "", nil
 }
 
 func (e *Engine) Select(session, jobID, provider, id string) (Job, error) {
@@ -285,13 +249,12 @@ func (e *Engine) SelectStored(ctx context.Context, hint Job, provider, id string
 	if client == nil {
 		return Job{}, fmt.Errorf("metadata service unavailable")
 	}
-	out, err := match.Select(ctx, client, toMM(hint), provider, id)
+	out, err := match.Select(ctx, client, hint, provider, id)
 	if err != nil {
 		return Job{}, err
 	}
-	j := fromMM(out)
-	e.remember([]Job{j})
-	return j, nil
+	e.remember([]Job{out})
+	return out, nil
 }
 
 func (e *Engine) Job(session, id string) (Job, error) {
@@ -458,189 +421,10 @@ func mapMode(mode string) string {
 	}
 }
 
-func convertJobs(in []match.Job) []Job {
-	out := make([]Job, len(in))
-	for i := range in {
-		out[i] = fromMM(in[i])
-	}
-	return out
-}
-
-func fromMM(j match.Job) Job {
-	out := Job{
-		ID:         j.ID,
-		Source:     j.Source,
-		Title:      j.Title,
-		Year:       j.Year,
-		Parent:     j.Parent,
-		Path:       j.Path,
-		NFOPath:    j.NFOPath,
-		PosterPath: j.PosterPath,
-		Kind:       j.Kind,
-		Role:       j.Role,
-		CatalogFor: j.CatalogFor,
-		Status:     j.Status,
-		Error:      j.Error,
-		Ranker:     j.Ranker,
-		Ngrams:     j.Ngrams,
-		Requests:   fromRequests(j.Requests),
-	}
-	if out.ID == "" {
-		out.ID = stableJobID(j.Path)
-	}
-	out.Files = make([]JobFile, len(j.Files))
-	for i, f := range j.Files {
-		out.Files[i] = JobFile{Path: f.Path, Season: f.Season, Episode: f.Episode, NFOPath: f.NFOPath, PosterPath: f.PosterPath}
-	}
-	if j.Match != nil {
-		c := fromHit(*j.Match)
-		out.Match = &c
-	}
-	out.Candidates = make([]Candidate, len(j.Candidates))
-	for i, c := range j.Candidates {
-		out.Candidates[i] = fromHit(c)
-	}
-	out.Catalog = make([]Season, len(j.Catalog))
-	for i, s := range j.Catalog {
-		out.Catalog[i] = fromSeason(s)
-	}
-	return out
-}
-
-func toMM(j Job) match.Job {
-	out := match.Job{
-		ID:         j.ID,
-		Source:     j.Source,
-		Title:      j.Title,
-		Year:       j.Year,
-		Parent:     j.Parent,
-		Path:       j.Path,
-		NFOPath:    j.NFOPath,
-		PosterPath: j.PosterPath,
-		Kind:       j.Kind,
-		Role:       j.Role,
-		CatalogFor: j.CatalogFor,
-		Status:     j.Status,
-		Error:      j.Error,
-		Ranker:     j.Ranker,
-		Ngrams:     j.Ngrams,
-		Requests:   toRequests(j.Requests),
-	}
-	out.Files = make([]match.JobFile, len(j.Files))
-	for i, f := range j.Files {
-		out.Files[i] = match.JobFile{Path: f.Path, Season: f.Season, Episode: f.Episode, NFOPath: f.NFOPath, PosterPath: f.PosterPath}
-	}
-	if j.Match != nil {
-		h := toHit(*j.Match)
-		out.Match = &h
-	}
-	out.Candidates = make([]match.Candidate, len(j.Candidates))
-	for i, c := range j.Candidates {
-		out.Candidates[i] = toHit(c)
-	}
-	out.Catalog = make([]match.CatalogSeason, len(j.Catalog))
-	for i, s := range j.Catalog {
-		out.Catalog[i] = toSeason(s)
-	}
-	return out
-}
-
-func fromHit(h match.Candidate) Candidate {
-	return Candidate{
-		Provider: h.Provider,
-		ID:       h.ID,
-		Title:    h.Title,
-		Year:     h.Year,
-		Score:    h.Score,
-		Synopsis: h.Synopsis,
-		Poster:   h.Poster,
-		Jaccard:  h.Jaccard,
-		Attrs:    copyAttrs(h.Attrs),
-		Requests: fromRequests(h.Requests),
-	}
-}
-
-func toHit(c Candidate) match.Candidate {
-	return match.Candidate{
-		Provider: c.Provider,
-		ID:       c.ID,
-		Title:    c.Title,
-		Year:     c.Year,
-		Score:    c.Score,
-		Synopsis: c.Synopsis,
-		Poster:   c.Poster,
-		Jaccard:  c.Jaccard,
-		Attrs:    copyAttrs(c.Attrs),
-		Requests: toRequests(c.Requests),
-	}
-}
-
-func fromRequests(in []rank.Request) []Request {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]Request, len(in))
-	for i, r := range in {
-		out[i] = Request{
-			Section: r.Section, Provider: r.Provider, NFO: r.NFO,
-			URL: r.URL, Query: r.Query, Season: r.Season,
-		}
-	}
-	return out
-}
-
-func toRequests(in []Request) []rank.Request {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]rank.Request, len(in))
-	for i, r := range in {
-		out[i] = rank.Request{
-			Section: r.Section, Provider: r.Provider, NFO: r.NFO,
-			URL: r.URL, Query: r.Query, Season: r.Season,
-		}
-	}
-	return out
-}
-
 // SidecarComplete reports a Changes job that already has its title NFO, poster,
 // and, for a show, an NFO beside every episode. Those jobs are not fetched.
 func SidecarComplete(j Job) bool {
-	return sidecar.Complete(toMM(j), true)
-}
-
-func fromSeason(s match.CatalogSeason) Season {
-	out := Season{
-		Number:   s.Number,
-		Title:    s.Title,
-		Synopsis: s.Synopsis,
-		Poster:   s.Poster,
-		Year:     s.Year,
-	}
-	out.Episodes = make([]Episode, len(s.Episodes))
-	for i, e := range s.Episodes {
-		out.Episodes[i] = Episode{
-			Number: e.Number, Title: e.Title, Synopsis: e.Synopsis,
-			Poster: e.Poster, Year: e.Year, Runtime: e.Runtime, Aired: e.Aired,
-			Path: e.Path, Paths: append([]string(nil), e.Paths...),
-		}
-	}
-	return out
-}
-
-func toSeason(s Season) match.CatalogSeason {
-	out := match.CatalogSeason{
-		Number: s.Number, Title: s.Title, Synopsis: s.Synopsis, Poster: s.Poster, Year: s.Year,
-	}
-	out.Episodes = make([]match.CatalogEpisode, len(s.Episodes))
-	for i, e := range s.Episodes {
-		out.Episodes[i] = match.CatalogEpisode{
-			Number: e.Number, Title: e.Title, Synopsis: e.Synopsis,
-			Poster: e.Poster, Year: e.Year, Runtime: e.Runtime, Aired: e.Aired,
-			Path: e.Path, Paths: append([]string(nil), e.Paths...),
-		}
-	}
-	return out
+	return sidecar.Complete(j, true)
 }
 
 func catalogFromJob(j Job) Catalog {

@@ -38,7 +38,7 @@
         {{if .Version}}<span class="topbar-logo-version">{{.Version}}</span>{{end}}
       </span>
     </a>
-    {{if .User}}
+    {{if and .User (not .Overlord)}}
     <form method="post" action="/logout" class="topbar-logout">
       <button type="submit" class="topbar-pill topbar-signout" aria-label="Sign out ({{.User.Username}})" title="Sign out ({{.User.Username}})">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -138,6 +138,15 @@
 {{end}}
 <dialog id="about-modal" class="modal about-modal">
   <div id="about-modal-body"></div>
+</dialog>
+<dialog id="confirm-dialog" class="modal">
+  <form method="dialog" class="modal-form">
+    <p id="confirm-dialog-text"></p>
+    <footer class="modal-foot">
+      <button type="submit" class="secondary" value="cancel">Cancel</button>
+      <button type="submit" value="ok">OK</button>
+    </footer>
+  </form>
 </dialog>
 <script>
 (function () {

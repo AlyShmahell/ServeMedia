@@ -20,7 +20,7 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func enginesTestServer(t *testing.T, meta *matchmedia.Client) (*Server, *db.User) {
+func enginesTestServer(t *testing.T, meta matchmedia.Service) (*Server, *db.User) {
 	t.Helper()
 	ctx := context.Background()
 	d, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
@@ -177,25 +177,14 @@ func TestHandleSettingsEnginesTabs(t *testing.T) {
 }
 
 func TestHandleSaveEnginesSecretsAndConfig(t *testing.T) {
-	var secrets map[string]string
 	var posted map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"healthy":true}`))
 	})
-	mux.HandleFunc("/v1/secrets", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{"omdb":false}`))
-			return
-		}
-		if err := json.NewDecoder(r.Body).Decode(&secrets); err != nil {
-			t.Fatal(err)
-		}
-		w.WriteHeader(http.StatusOK)
-	})
 	mux.HandleFunc("/v1/config", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			_, _ = w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{"providers":{"omdb":{"api_key":"keep"}}}`))
 			return
 		}
 		if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
@@ -207,8 +196,8 @@ func TestHandleSaveEnginesSecretsAndConfig(t *testing.T) {
 	t.Cleanup(stub.Close)
 	s, u := enginesTestServer(t, &matchmedia.Client{Base: stub.URL, HTTP: stub.Client()})
 	form := url.Values{}
-	form.Set("secret_omdb", "k")
-	form.Set("overlay_yaml", "match:\n  min_score: 0.8\n")
+	form.Set("secret_tmdb", "new-tmdb")
+	form.Set("overlay_yaml", "match:\n  min_score: 0.8\nproviders:\n  tmdb:\n    url: https://api.themoviedb.org/3\n  omdb:\n    url: https://www.omdbapi.com/\n")
 	req := httptest.NewRequest(http.MethodPost, "/settings/engines", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
@@ -217,12 +206,66 @@ func TestHandleSaveEnginesSecretsAndConfig(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
-	if secrets["omdb"] != "k" {
-		t.Fatalf("secrets %#v", secrets)
-	}
 	match, _ := posted["match"].(map[string]any)
 	if match["min_score"] != 0.8 {
 		t.Fatalf("posted %#v", posted)
+	}
+	providers, _ := posted["providers"].(map[string]any)
+	tmdb, _ := providers["tmdb"].(map[string]any)
+	omdb, _ := providers["omdb"].(map[string]any)
+	if tmdb["api_key"] != "new-tmdb" || omdb["api_key"] != "keep" {
+		t.Fatalf("keys dropped %#v", posted)
+	}
+}
+
+func TestHandleSaveEnginesTMDBKeySurvivesYAML(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "share"))
+	t.Setenv("SERVEMEDIA_HOME", "")
+	t.Setenv("SERVEMEDIA_MATCHMEDIA_OVERLAY", "")
+	engine, err := matchmedia.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.SetSecrets(map[string]string{"omdb": "keep-me"}); err != nil {
+		t.Fatal(err)
+	}
+	s, u := enginesTestServer(t, engine)
+	form := url.Values{}
+	form.Set("secret_tmdb", "new-tmdb")
+	form.Set("overlay_yaml", "providers:\n  tmdb:\n    url: https://api.themoviedb.org/3\n  omdb:\n    url: https://www.omdbapi.com/\n")
+	req := httptest.NewRequest(http.MethodPost, "/settings/engines", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "settings-panel")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	s.handleSaveEngines(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "(set)") {
+		t.Fatalf("key not shown set: %s", w.Body.String())
+	}
+	status, err := engine.SecretsStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status["tmdb"] || !status["omdb"] {
+		t.Fatalf("secrets %#v", status)
+	}
+	dir, err := config.MatchMediaDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "overlay.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "new-tmdb") || !strings.Contains(text, "keep-me") {
+		t.Fatalf("overlay:\n%s", text)
 	}
 }
 
