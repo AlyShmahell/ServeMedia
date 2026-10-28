@@ -43,7 +43,7 @@ modules:
       - install -m644 src/web/static/app.css src/web/static/app.js src/web/static/controls.js src/web/static/logo.svg src/web/static/placeholder.svg /app/public/
       - install -Dm644 LICENSE /app/LICENSE
       - install -Dm644 LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/LICENSE
-      - install -Dm644 src/vendor/github.com/alyshmahell/matchmedia/src/LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/MatchMedia.LICENSE
+      - install -Dm644 src/vendor/github.com/alyshmahell/matchmedia/LICENSE /app/share/licenses/eu.alyshmahell.ServeMedia/MatchMedia.LICENSE
       - install -Dm644 src/share/applications/servemedia.desktop /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - sed -i 's|^Icon=.*|Icon=eu.alyshmahell.ServeMedia|' /app/share/applications/eu.alyshmahell.ServeMedia.desktop
       - install -Dm644 src/web/static/logo.svg /app/share/icons/hicolor/scalable/apps/eu.alyshmahell.ServeMedia.svg
@@ -68,8 +68,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/AlyShmahell/ServeMedia.git
-        tag: v0.1.0
-        commit: db2f542ebb36bb28989faf9bae94dbe0c0685ae1
+        tag: v0.2.0
+        commit: 6971793b86f727d6ba8040df6c97065d89f80977
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$

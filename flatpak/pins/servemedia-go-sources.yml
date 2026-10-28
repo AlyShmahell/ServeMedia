@@ -3,11 +3,11 @@
   dest-filename: modules.txt
   path: pins/servemedia.modules.txt
   type: file
-- dest: src/vendor/github.com/alyshmahell/matchmedia/src
-  sha256: 447e7395a57592b00e72fcb600240e43f9897cbd2e8a3738a6c03f1b522d6ab6
-  strip-components: 4
+- dest: src/vendor/github.com/alyshmahell/matchmedia
+  sha256: 8dd76228217c077d8437db85c12f525996601f89127e464b208950a50b0c0e54
+  strip-components: 3
   type: archive
-  url: https://proxy.golang.org/github.com/alyshmahell/matchmedia/src/@v/v0.2.0.zip
+  url: https://proxy.golang.org/github.com/alyshmahell/matchmedia/@v/v0.2.0.zip
 - dest: src/vendor/github.com/ebitengine/purego
   sha256: 7e2ff99dfccb8b74a35fbe06da88c2ec47f280cd20ca50f8f3233e1b086990f5
   strip-components: 3
