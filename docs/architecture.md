@@ -36,7 +36,7 @@ flowchart LR
 | `{payload}/vendor` | Third-party only: htmx, video.js, hls.js, ffmpeg (+ licenses) |
 | `tests/` | Podman unit + Playwright smoke against bind-mounted dist |
 
-`vendor/` is third-party only. MatchMedia is the Go module `github.com/alyshmahell/matchmedia/src`, pinned in [`flatpak/pins/servemedia-go-sources.yml`](../flatpak/pins/servemedia-go-sources.yml).
+`vendor/` is third-party only. MatchMedia is the Go module `github.com/alyshmahell/matchmedia`, pinned in [`flatpak/pins/servemedia-go-sources.yml`](../flatpak/pins/servemedia-go-sources.yml).
 
 ## Rules
 

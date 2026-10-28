@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"os"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -301,9 +303,67 @@ func versionHigher(a, b []int) bool {
 	return false
 }
 
+// flatpakProgramName is the program name WebKit should adopt inside Flatpak.
+// An empty result means the environment is not a Flatpak app, or FLATPAK_ID
+// would not pass g_application_id_is_valid and WebKit would ignore it.
+func flatpakProgramName(flatpakID string) string {
+	id := strings.TrimSpace(flatpakID)
+	if !applicationIDValid(id) {
+		return ""
+	}
+	return id
+}
+
+// applicationIDValid matches g_application_id_is_valid: a D-Bus well-known
+// name, not a unique name. WebKit uses that check before accepting g_get_prgname.
+func applicationIDValid(id string) bool {
+	if id == "" || len(id) > 255 || id[0] == ':' || id[0] == '.' || (id[0] >= '0' && id[0] <= '9') {
+		return false
+	}
+	hasDot := false
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if c == '.' {
+			if i+1 >= len(id) || id[i+1] == '.' || (id[i+1] >= '0' && id[i+1] <= '9') {
+				return false
+			}
+			hasDot = true
+			continue
+		}
+		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' && c != '-' {
+			return false
+		}
+	}
+	return hasDot
+}
+
+func setFlatpakProgramName(glib uintptr) error {
+	id := flatpakProgramName(os.Getenv("FLATPAK_ID"))
+	if id == "" {
+		if strings.TrimSpace(os.Getenv("FLATPAK_ID")) != "" {
+			log.Printf("webkit: FLATPAK_ID %q is not a valid application id", os.Getenv("FLATPAK_ID"))
+		}
+		return nil
+	}
+	var setPrgname func(string)
+	if err := registerLibFunc(&setPrgname, glib, "g_set_prgname"); err != nil {
+		return err
+	}
+	setPrgname(id)
+	return nil
+}
+
 func loadWebKit() error {
 	glib, err := openShared("libglib-2.0.so.0")
 	if err != nil {
+		return err
+	}
+	// WebKit caches its application id on first use. Inside Flatpak that id
+	// becomes the accessibility bus name of the sandboxed web process, and
+	// the portal aborts the UI process unless the name starts with FLATPAK_ID.
+	// The default program name, "servemedia", is not a valid application id,
+	// so WebKit would otherwise fall back to org.webkit.app-<hash>.
+	if err := setFlatpakProgramName(glib); err != nil {
 		return err
 	}
 	gobject, err := openShared("libgobject-2.0.so.0")
