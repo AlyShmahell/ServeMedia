@@ -4,10 +4,10 @@
   path: pins/servemedia.modules.txt
   type: file
 - dest: src/vendor/github.com/alyshmahell/matchmedia
-  sha256: 8dd76228217c077d8437db85c12f525996601f89127e464b208950a50b0c0e54
+  sha256: e7c7130d169adbbce0e2ebee1e78a5e18711014028d39c900ad676b2a4d4f5a8
   strip-components: 3
   type: archive
-  url: https://proxy.golang.org/github.com/alyshmahell/matchmedia/@v/v0.2.0.zip
+  url: https://proxy.golang.org/github.com/alyshmahell/matchmedia/@v/v0.2.4.zip
 - dest: src/vendor/github.com/ebitengine/purego
   sha256: 7e2ff99dfccb8b74a35fbe06da88c2ec47f280cd20ca50f8f3233e1b086990f5
   strip-components: 3

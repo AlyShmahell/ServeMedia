@@ -340,7 +340,7 @@ func TestOpenUsesMatchMediaDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc["version"] != "0.2.0" {
+	if doc["version"] != "0.2.4" {
 		t.Fatalf("version %#v", doc["version"])
 	}
 	if _, ok := doc["data_dir"]; ok {
@@ -397,7 +397,7 @@ func TestOpenKeepsOverlayDelta(t *testing.T) {
 	if !numIs(match["min_score"], 0.81) {
 		t.Fatalf("min_score %#v", match["min_score"])
 	}
-	if doc["version"] != "0.2.0" {
+	if doc["version"] != "0.2.4" {
 		t.Fatalf("default version missing %#v", doc["version"])
 	}
 	providers, _ := doc["providers"].(map[string]any)

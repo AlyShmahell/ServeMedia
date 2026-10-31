@@ -94,6 +94,9 @@ type WatchProgress struct {
 	Kind            string
 	PlayURL         string
 	ProgressPct     int
+	NodeRelPath     sql.NullString
+	LibraryPath     sql.NullString
+	ItemNFOPath     sql.NullString
 }
 
 type ScanJob struct {
@@ -895,10 +898,11 @@ func (d *DB) libraryStillPaths(ctx context.Context, libraryID int64) (map[string
 func (d *DB) ListMediaItems(ctx context.Context, libraryID int64, sort, q string) ([]MediaItem, error) {
 	order := `title COLLATE NOCASE`
 	switch sort {
-	case "date_added":
-		order = `date_added DESC`
-	case "year":
-		order = `year DESC, title COLLATE NOCASE`
+	case "date_added", "added":
+		order = `datetime(date_added) DESC, title COLLATE NOCASE`
+	case "year", "released":
+		// Legacy media_items path: year column only (tree nodes use mm_premiered).
+		order = `CAST(year AS INTEGER) DESC, title COLLATE NOCASE`
 	}
 	query := `SELECT id, library_id, kind, title, COALESCE(sort_title,''), year, path, runtime_seconds, plot, ` + showPosterSQL("") + `, backdrop_path, nfo_path,
 			meta_provider, meta_id, matchmedia_session_id, matchmedia_job_id, match_status, match_error, mtime, date_added, parent_id
@@ -1428,7 +1432,8 @@ func (d *DB) ContinueWatching(ctx context.Context, userID int64, limit int) ([]W
 		SELECT wp.id, wp.user_id, wp.media_item_id, wp.episode_id, wp.node_id, wp.position_seconds, wp.duration_seconds, wp.completed, wp.updated_at,
 			COALESCE(NULLIF(m.title,''), NULLIF(e.title,''), NULLIF(n.file_title,''), NULLIF(n.mm_title,''), NULLIF(g.mm_title,''), NULLIF(n.name,''), 'Item'),
 			COALESCE(NULLIF(m.poster_path,''), NULLIF(sm.poster_path,''), NULLIF(n.still_path,''), NULLIF(n.poster_path,''), NULLIF(g.poster_path,''), NULLIF(parent.poster_path,''), ''),
-			COALESCE(m.kind, CASE WHEN wp.node_id IS NOT NULL THEN 'file' ELSE 'episode' END)
+			COALESCE(m.kind, CASE WHEN wp.node_id IS NOT NULL THEN 'file' ELSE 'episode' END),
+			n.rel_path, ln.path, COALESCE(m.nfo_path, e.nfo_path)
 		FROM watch_progress wp
 		LEFT JOIN media_items m ON m.id = wp.media_item_id
 		LEFT JOIN libraries lm ON lm.id = m.library_id AND lm.user_id = wp.user_id
@@ -1454,7 +1459,7 @@ func (d *DB) ContinueWatching(ctx context.Context, userID int64, limit int) ([]W
 	for rows.Next() {
 		var w WatchProgress
 		var completed int
-		if err := rows.Scan(&w.ID, &w.UserID, &w.MediaItemID, &w.EpisodeID, &w.NodeID, &w.PositionSeconds, &w.DurationSeconds, &completed, &w.UpdatedAt, &w.Title, &w.PosterPath, &w.Kind); err != nil {
+		if err := rows.Scan(&w.ID, &w.UserID, &w.MediaItemID, &w.EpisodeID, &w.NodeID, &w.PositionSeconds, &w.DurationSeconds, &completed, &w.UpdatedAt, &w.Title, &w.PosterPath, &w.Kind, &w.NodeRelPath, &w.LibraryPath, &w.ItemNFOPath); err != nil {
 			return nil, err
 		}
 		w.Completed = completed == 1

@@ -7,11 +7,12 @@
 <script src="/static/kpa.js"></script>
 <script src="/static/vendor/video.js/video.min.js"></script>
 <script src="/static/vendor/hls.min.js"></script>
+<script src="/static/vendor/htmx.min.js" defer></script>
 <script src="/static/controls.js" defer></script>
 <script src="/static/app.js" defer></script>
 </head>
 <body><div class="shell">{{template "nav" .}}
-<main class="content">
+<main class="content player-page">
   <div class="player-stage" id="stage">
     <video id="v" class="video-js vjs-big-play-centered servemedia-player" playsinline crossorigin="anonymous"></video>
   </div>
@@ -224,6 +225,129 @@
     player.el().focus();
   }
 
+  // Fullscreen: double-tap on touch, double-click on desktop (video.js already
+  // binds dblclick on the tech). Fall back to a CSS full-viewport stage when the
+  // Fullscreen API is missing or rejects (e.g. iOS container fullscreen).
+  const stage = document.getElementById('stage');
+  let suppressPointerUntil = 0;
+  let lastTap = null;
+
+  function nativeFullscreenElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+  function isFullscreen() {
+    if (document.body.classList.contains('player-faux-fullscreen')) return true;
+    if (typeof player.isFullscreen === 'function' && player.isFullscreen()) return true;
+    return !!nativeFullscreenElement();
+  }
+  function fullscreenMediaEl() {
+    return videoEl() || document.getElementById('v');
+  }
+  async function enterFullscreen() {
+    try {
+      if (typeof player.requestFullscreen === 'function') {
+        await player.requestFullscreen();
+        return;
+      }
+    } catch (err) {}
+    const wrap = player.el();
+    try {
+      if (wrap && typeof wrap.requestFullscreen === 'function') {
+        await wrap.requestFullscreen();
+        return;
+      }
+    } catch (err) {}
+    try {
+      const media = fullscreenMediaEl();
+      if (media && typeof media.webkitEnterFullscreen === 'function') {
+        media.webkitEnterFullscreen();
+        return;
+      }
+    } catch (err) {}
+    document.body.classList.add('player-faux-fullscreen');
+  }
+  async function exitFullscreen() {
+    document.body.classList.remove('player-faux-fullscreen');
+    try {
+      const media = fullscreenMediaEl();
+      if (media && media.webkitDisplayingFullscreen && typeof media.webkitExitFullscreen === 'function') {
+        media.webkitExitFullscreen();
+        return;
+      }
+    } catch (err) {}
+    try {
+      if (typeof player.exitFullscreen === 'function' && isFullscreen()) {
+        await player.exitFullscreen();
+        return;
+      }
+    } catch (err) {}
+    try {
+      if (nativeFullscreenElement() && typeof document.exitFullscreen === 'function') {
+        await document.exitFullscreen();
+      }
+    } catch (err) {}
+  }
+  async function toggleFullscreen() {
+    try {
+      if (isFullscreen()) await exitFullscreen();
+      else await enterFullscreen();
+    } catch (err) {}
+  }
+
+  if (stage) {
+    stage.addEventListener('pointerup', (event) => {
+      if (event.pointerType === 'mouse') return;
+      if (event.target.closest && event.target.closest('.vjs-control-bar')) return;
+      const now = Date.now();
+      const tap = {
+        t: now,
+        x: event.clientX,
+        y: event.clientY,
+        paused: typeof player.paused === 'function' ? player.paused() : false
+      };
+      if (
+        lastTap &&
+        now - lastTap.t <= 320 &&
+        Math.abs(tap.x - lastTap.x) <= 24 &&
+        Math.abs(tap.y - lastTap.y) <= 24
+      ) {
+        const pausedAtFirstTap = lastTap.paused;
+        lastTap = null;
+        suppressPointerUntil = now + 400;
+        event.preventDefault();
+        if (typeof player.paused === 'function' && player.paused() !== pausedAtFirstTap) {
+          if (pausedAtFirstTap) player.pause();
+          else player.play().catch(() => {});
+        }
+        toggleFullscreen();
+        return;
+      }
+      lastTap = tap;
+    }, { passive: false });
+
+    const swallowGestureFollowUp = (event) => {
+      if (Date.now() > suppressPointerUntil) return;
+      if (event.target.closest && event.target.closest('.vjs-control-bar')) return;
+      event.stopPropagation();
+      event.preventDefault();
+    };
+    stage.addEventListener('click', swallowGestureFollowUp, true);
+    stage.addEventListener('dblclick', swallowGestureFollowUp, true);
+  }
+
+  function clearFauxFullscreen() {
+    if (nativeFullscreenElement()) return;
+    if (typeof player.isFullscreen === 'function' && player.isFullscreen()) return;
+    document.body.classList.remove('player-faux-fullscreen');
+  }
+  player.on('fullscreenchange', clearFauxFullscreen);
+  document.addEventListener('fullscreenchange', clearFauxFullscreen);
+  document.addEventListener('webkitfullscreenchange', clearFauxFullscreen);
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    document.body.classList.remove('player-faux-fullscreen');
+  });
+
   const bar = player.getChild('controlBar');
   const prevBtn = bar && bar.getChild('PrevEpisodeButton');
   const nextBtn = bar && bar.getChild('NextEpisodeButton');
@@ -370,6 +494,14 @@
     const m = String(src).match(/\/sub\/([^/?#]+)\.vtt/);
     return m ? decodeURIComponent(m[1]) : '';
   }
+  function subtitleTracksMounted() {
+    const tracks = player.textTracks();
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      if (t.kind === 'subtitles' || t.kind === 'captions') return true;
+    }
+    return false;
+  }
   function currentSubtitleKey() {
     const tracks = player.textTracks();
     for (let i = 0; i < tracks.length; i++) {
@@ -378,7 +510,8 @@
         return trackKey(t);
       }
     }
-    return textTrackSnapshot.key || '';
+    if (ignoreSubChange || !subtitleTracksMounted()) return textTrackSnapshot.key || '';
+    return '';
   }
   function setSubtitleModes(key) {
     const tracks = player.textTracks();
@@ -394,13 +527,15 @@
     clearSubtitleTracks();
     const list = textTrackSnapshot.tracks || [];
     list.forEach((t) => {
+      let src = '/play/' + kind + '/' + id + '/sub/' + encodeURIComponent(subTrackKey(t)) + '.vtt';
+      if (timelineOffset > 0) src += '?shift=' + encodeURIComponent(String(timelineOffset));
       player.addRemoteTextTrack({
         kind: 'subtitles',
         id: 'sub-' + subTrackKey(t),
         label: trackLabel(t, 'Subtitle'),
         srclang: t.lang || 'und',
         language: t.lang || 'und',
-        src: '/play/' + kind + '/' + id + '/sub/' + encodeURIComponent(subTrackKey(t)) + '.vtt',
+        src: src,
         default: false
       }, false);
     });
@@ -417,6 +552,14 @@
       key: preferredKey == null ? '' : preferredKey
     };
     applyTextTrackSnapshot();
+    armTrackSelection();
+  }
+  let tracksArmed = false;
+  let tracksArmTimer = null;
+  function armTrackSelection() {
+    tracksArmed = false;
+    clearTimeout(tracksArmTimer);
+    tracksArmTimer = setTimeout(() => { tracksArmed = true; }, 2000);
   }
   function updateMenus() {
     if (qualityBtn) qualityBtn.update();
@@ -582,6 +725,38 @@
     if (p.subtitleLang === '') return '';
     return matchSubIndexByLang(cfg, p.subtitleLang);
   }
+  function trackMemoryKey() {
+    return 'servemedia.tracks:' + kind + ':' + id;
+  }
+  function readTrackMemory() {
+    try {
+      const raw = localStorage.getItem(trackMemoryKey());
+      return raw ? (JSON.parse(raw) || {}) : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function rememberTracks(patch) {
+    try {
+      const cur = readTrackMemory();
+      Object.assign(cur, patch);
+      localStorage.setItem(trackMemoryKey(), JSON.stringify(cur));
+    } catch (e) {}
+  }
+  function rememberedSubtitleKey(cfg, memory) {
+    const want = memory && memory.sub;
+    if (want === undefined || want === null) return null;
+    if (want === '') return '';
+    const tracks = (cfg && cfg.subtitleTracks) || [];
+    for (let i = 0; i < tracks.length; i++) {
+      if (subTrackKey(tracks[i]) === String(want)) return String(want);
+    }
+    return null;
+  }
+  function rememberedAudioIndex(memory) {
+    const want = memory && memory.audio;
+    return Number.isInteger(want) && want >= 0 ? want : null;
+  }
   function applyVolumePrefs(cfg) {
     const p = cfg && cfg.prefs;
     if (!p) return;
@@ -650,15 +825,17 @@
     timelineOffset = 0;
     av110Retried = false;
     clearSubtitleTracks();
+    const nextMemory = readTrackMemory();
     try {
-      const nextCfg = await fetchSession(null, undefined, 0);
+      const nextCfg = await fetchSession(rememberedAudioIndex(nextMemory), undefined, 0);
       if (push !== false) {
         history.pushState({ episodeId: id }, '', '/play/' + kind + '/' + id);
       }
       populateTrackUI(nextCfg);
       await applyPlayback(nextCfg, 0);
       applyVolumePrefs(nextCfg);
-      const prefKey = subtitleKeyFromPrefs(nextCfg);
+      const memNext = rememberedSubtitleKey(nextCfg, nextMemory);
+      const prefKey = memNext == null ? subtitleKeyFromPrefs(nextCfg) : memNext;
       refreshTextTracks(nextCfg, prefKey == null ? '' : prefKey);
       player.play().catch(() => {});
     } catch (e) {
@@ -673,21 +850,35 @@
   function onTextTrackChange() {
     if (ignoreSubChange) return;
     const key = currentSubtitleKey();
+    const applied = textTrackSnapshot.key || '';
     textTrackSnapshot.key = key;
-    if (!key) {
-      savePrefs({ subtitle_lang: '' });
+    if (key === applied) return;
+    if (key) {
+      rememberTracks({ sub: key });
+      savePrefs({ subtitle_lang: langForSubIndex(lastSessionCfg, key) });
       return;
     }
-    savePrefs({ subtitle_lang: langForSubIndex(lastSessionCfg, key) });
+    if (!tracksArmed) return;
+    rememberTracks({ sub: '' });
+    savePrefs({ subtitle_lang: '' });
   }
   player.textTracks().addEventListener('change', onTextTrackChange);
   player.on('loadedmetadata', () => {
     if ((textTrackSnapshot.tracks || []).length) applyTextTrackSnapshot();
   });
+  let lastSubtitleSeen = '';
+  player.on('timeupdate', () => {
+    if (!tracksArmed) return;
+    const key = currentSubtitleKey();
+    if (key === lastSubtitleSeen) return;
+    lastSubtitleSeen = key;
+    if (key) rememberTracks({ sub: key });
+  });
 
   let cfg;
+  const trackMemory = readTrackMemory();
   try {
-    cfg = await fetchSession(null, undefined, resume > 0 ? resume : 0);
+    cfg = await fetchSession(rememberedAudioIndex(trackMemory), undefined, resume > 0 ? resume : 0);
   } catch (e) {
     status.textContent = 'Could not start playback';
     return;
@@ -695,7 +886,8 @@
   populateTrackUI(cfg);
   await applyPlayback(cfg, cfg.mode === 'direct' ? resume : 0);
   applyVolumePrefs(cfg);
-  const initialSub = subtitleKeyFromPrefs(cfg);
+  const memSub = rememberedSubtitleKey(cfg, trackMemory);
+  const initialSub = memSub == null ? subtitleKeyFromPrefs(cfg) : memSub;
   refreshTextTracks(cfg, initialSub == null ? '' : initialSub);
   if (kind === 'episode') {
     history.replaceState({ episodeId: id }, '', location.pathname + location.search);
@@ -738,6 +930,7 @@
   actions.selectAudio = (index) => {
     const next = Number(index);
     if (!(next >= 0) || next === currentAudio) return;
+    rememberTracks({ audio: next });
     savePrefs({ audio_lang: langForAudioIndex(lastSessionCfg, next) });
     switchSession(next, currentHeight);
   };

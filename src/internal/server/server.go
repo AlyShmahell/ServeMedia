@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -623,7 +624,7 @@ func (s *Server) libraryGridPolling(ctx context.Context, libraryID int64) bool {
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
-	cont, _ := s.DB.ContinueWatching(r.Context(), u.ID, 12)
+	cont, _ := s.continueWatching(r.Context(), u.ID, 12)
 	recent, _ := s.DB.RecentlyAdded(r.Context(), u.ID, 24)
 	libs, _ := s.DB.ListLibraries(r.Context(), u.ID)
 	scanID, _ := strconv.ParseInt(r.URL.Query().Get("scan"), 10, 64)
@@ -703,7 +704,7 @@ func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Librar
 	rel = strings.Trim(strings.ReplaceAll(rel, "\\", "/"), "/")
 	n, _ := s.DB.CountLibraryNodes(ctx, lib.ID)
 	if n > 0 {
-		nodes, _ := s.DB.ListChildNodes(ctx, lib.ID, rel)
+		nodes, _ := s.DB.ListChildNodes(ctx, lib.ID, rel, sort)
 		qn := strings.TrimSpace(q)
 		if qn != "" {
 			under, _ := s.DB.ListNodesUnder(ctx, lib.ID, rel)
@@ -1068,9 +1069,48 @@ func (s *Server) handleHXItems(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "partials/items_live.html", s.libraryPageData(r.Context(), u, lib, r.URL.Query().Get("sort"), r.URL.Query().Get("q"), r.URL.Query().Get("path"), true))
 }
 
+// continueWatching applies an NFO title read-through to the bounded home strip:
+// rows are small in number and may be stale until the next rescan.
+func (s *Server) continueWatching(ctx context.Context, userID int64, limit int) ([]db.WatchProgress, error) {
+	rows, err := s.DB.ContinueWatching(ctx, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		if t := continueNFOtitle(&rows[i]); t != "" {
+			rows[i].Title = t
+		}
+	}
+	return rows, nil
+}
+
+func continueNFOtitle(w *db.WatchProgress) string {
+	if w == nil {
+		return ""
+	}
+	if w.NodeID.Valid && w.LibraryPath.Valid && w.NodeRelPath.Valid {
+		lib := strings.TrimSpace(w.LibraryPath.String)
+		rel := strings.TrimSpace(w.NodeRelPath.String)
+		if lib != "" && rel != "" {
+			abs := filepath.Join(lib, filepath.FromSlash(rel))
+			if t := metadata.VideoTitle(abs); t != "" {
+				return t
+			}
+		}
+	}
+	if w.ItemNFOPath.Valid {
+		if p := strings.TrimSpace(w.ItemNFOPath.String); filepath.IsAbs(p) {
+			if t := metadata.NFOTitle(p); t != "" {
+				return t
+			}
+		}
+	}
+	return ""
+}
+
 func (s *Server) handleHXContinue(w http.ResponseWriter, r *http.Request) {
 	u := userFrom(r)
-	cont, _ := s.DB.ContinueWatching(r.Context(), u.ID, 12)
+	cont, _ := s.continueWatching(r.Context(), u.ID, 12)
 	s.render(w, r, "partials/continue.html", map[string]any{"Continue": cont})
 }
 
@@ -1129,8 +1169,12 @@ func (s *Server) handlePlayMovie(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	title := it.Title
+	if t := metadata.NFOTitle(it.NFOPath.String); t != "" {
+		title = t
+	}
 	s.render(w, r, "player.html", map[string]any{
-		"Kind": "movie", "ID": id, "Title": it.Title,
+		"Kind": "movie", "ID": id, "Title": title,
 		"NavBack":    s.showFolderBack(r.Context(), it),
 		"SessionURL": fmt.Sprintf("/play/movie/%d/session", id),
 	})
@@ -1189,6 +1233,9 @@ func (s *Server) handlePlayEpisode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	title := ep.Title.String
+	if t := metadata.NFOTitle(ep.NFOPath.String); t != "" {
+		title = t
+	}
 	var show *db.MediaItem
 	if ep.ShowID > 0 {
 		show, _ = s.DB.GetMediaItem(r.Context(), ep.ShowID)
@@ -1313,52 +1360,15 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	} else if resolved.Height != nil {
 		wantHeight = *resolved.Height
 	}
-	if wantHeight > 0 && sourceHeight > 0 && wantHeight > sourceHeight {
-		wantHeight = sourceHeight
-	}
-	if wantHeight > 0 && sourceHeight > 0 && wantHeight == sourceHeight {
-		wantHeight = 0
-	}
-	// Drop preferred height if not in offered qualities (except 0/source).
-	if !heightExplicit && wantHeight > 0 {
-		okH := false
-		for _, q := range media.QualityOptions(sourceHeight) {
-			if q.Height == wantHeight {
-				okH = true
-				break
-			}
-		}
-		if !okH {
-			wantHeight = 0
-		}
-	}
+	heights := s.Cfg.Transcode.Heights
+	encodeHeight, forceEncode := media.ResolvePlaybackHeight(sourceHeight, wantHeight, heights, heightExplicit)
 
 	// Switching away from the default audio on a direct-playable file needs HLS.
 	if direct && audioIndex >= 0 && probe != nil && audioIndex != probe.DefaultAudioIndex() {
 		direct = false
 	}
-	// Explicit quality below source forces transcode.
-	if wantHeight > 0 {
+	if forceEncode {
 		direct = false
-	}
-
-	maxH := s.Cfg.Transcode.MaxHeight
-	if maxH <= 0 {
-		maxH = 2160
-	}
-	encodeHeight := 0
-	if !direct {
-		if wantHeight > 0 {
-			encodeHeight = wantHeight
-		} else if sourceHeight > 0 {
-			target := sourceHeight
-			if maxH > 0 && maxH < target {
-				target = maxH
-			}
-			if target < sourceHeight {
-				encodeHeight = target
-			}
-		}
 	}
 
 	startAt := 0.0
@@ -1438,8 +1448,8 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	resp := playResp{
 		Title:          title,
 		Audio:          audioIndex,
-		Height:         wantHeight,
-		Qualities:      media.QualityOptions(sourceHeight),
+		Height:         encodeHeight,
+		Qualities:      media.QualityOptions(sourceHeight, heights),
 		AudioTracks:    audioTracks,
 		SubtitleTracks: subTracks,
 		Chapters:       chapters,
@@ -1526,9 +1536,7 @@ func (s *Server) handleSubtitleVTT(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "subtitle convert failed", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-		w.Header().Set("Cache-Control", "private, max-age=86400")
-		http.ServeFile(w, r, out)
+		s.serveSubtitleVTT(w, r, out)
 		return
 	}
 	idx, err := strconv.Atoi(key)
@@ -1547,9 +1555,41 @@ func (s *Server) handleSubtitleVTT(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "subtitle extract failed", http.StatusInternalServerError)
 		return
 	}
+	s.serveSubtitleVTT(w, r, out)
+}
+
+// serveSubtitleVTT writes a cached WebVTT file. When the player resumes a
+// transcode job mid-file it passes ?shift=, the offset its timeline starts at,
+// so cue times are moved back to match the replayed media timeline.
+func (s *Server) serveSubtitleVTT(w http.ResponseWriter, r *http.Request, file string) {
+	shift := 0.0
+	if v := r.URL.Query().Get("shift"); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 {
+			shift = n
+		}
+	}
+	if shift > 0 {
+		f, err := os.Open(file)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		defer f.Close()
+		var buf bytes.Buffer
+		if err := media.WriteShiftedVTT(&buf, f, shift); err != nil {
+			log.Printf("shift vtt %s: %v", file, err)
+			http.Error(w, "subtitle shift failed", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf.Bytes())
+		return
+	}
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 	w.Header().Set("Cache-Control", "private, max-age=86400")
-	http.ServeFile(w, r, out)
+	http.ServeFile(w, r, file)
 }
 
 func (s *Server) handleHLSMaster(w http.ResponseWriter, r *http.Request) {
@@ -1846,6 +1886,11 @@ func (s *Server) finishSettings(w http.ResponseWriter, r *http.Request, tab stri
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["Notice"] = "Saved"
+	data["NoticeLevel"] = "ok"
 	r.Header.Set("HX-Target", "settings-panel")
 	s.renderSettings(w, r, tab, data)
 }
@@ -1971,10 +2016,13 @@ func (s *Server) handleSaveServer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSaveBackup(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
-	if v := r.FormValue("backup_interval"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			s.Cfg.Backup.Interval = d
+	if v := strings.TrimSpace(r.FormValue("backup_interval")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			http.Error(w, "backup interval must be a positive duration", http.StatusBadRequest)
+			return
 		}
+		s.Cfg.Backup.Interval = d
 	}
 	if v := r.FormValue("backup_retain"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -2213,7 +2261,7 @@ func (s *Server) handleDeleteLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// OOB strips only. The leftover empty body removes the card (outerHTML). 204 would not swap.
-	cont, _ := s.DB.ContinueWatching(r.Context(), u.ID, 12)
+	cont, _ := s.continueWatching(r.Context(), u.ID, 12)
 	recent, _ := s.DB.RecentlyAdded(r.Context(), u.ID, 24)
 	s.render(w, r, "partials/library_deleted.html", map[string]any{
 		"Continue":      cont,

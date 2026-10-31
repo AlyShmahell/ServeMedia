@@ -11,6 +11,24 @@ import (
 	"github.com/alyshmahell/servemedia/src/web"
 )
 
+func TestPlayerPageLoadsHTMX(t *testing.T) {
+	tplFS, err := fs.Sub(web.FS, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := MustParseTemplates(tplFS)
+	var buf bytes.Buffer
+	err = tpl.ExecuteTemplate(&buf, "player.html", map[string]any{
+		"Title": "Pilot", "Kind": "file", "ID": int64(1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `/static/vendor/htmx.min.js`) {
+		t.Fatal("player page does not load htmx")
+	}
+}
+
 func TestMustParseTemplates(t *testing.T) {
 	tplFS, err := fs.Sub(web.FS, "templates")
 	if err != nil {

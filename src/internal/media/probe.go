@@ -3,6 +3,7 @@ package media
 import (
 	"encoding/json"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -136,23 +137,134 @@ func MatchTrackByLang(tracks []Track, lang string) int {
 	return -1
 }
 
-// QualityOptions returns the source option (height 0) plus discrete caps at or below
-// source height (excluding source height itself).
-func QualityOptions(sourceHeight int) []QualityOption {
-	label := "Source"
-	if sourceHeight > 0 {
-		label = strconv.Itoa(sourceHeight) + "p"
-	}
-	out := []QualityOption{{Height: 0, Label: label}}
+// QualityOptions returns playback heights for a file.
+// Height 0 is the file itself. enabled is the allowlist, highest first after
+// normalization. The file is offered when its height is enabled, when it is
+// shorter than every enabled height, or when the allowlist is empty. Otherwise
+// the top entry is the highest enabled height at or below the file.
+func QualityOptions(sourceHeight int, enabled []int) []QualityOption {
 	if sourceHeight <= 0 {
+		return []QualityOption{{Height: 0, Label: "Source"}}
+	}
+	allowed := normalizeHeights(enabled)
+	if sourcePlayable(sourceHeight, allowed) {
+		out := []QualityOption{{Height: 0, Label: strconv.Itoa(sourceHeight) + "p"}}
+		for _, h := range allowed {
+			if h < sourceHeight {
+				out = append(out, QualityOption{Height: h, Label: strconv.Itoa(h) + "p"})
+			}
+		}
 		return out
 	}
-	for _, h := range []int{2160, 1440, 1080, 720, 480} {
-		if h <= sourceHeight && h != sourceHeight {
+	top := highestAtOrBelow(sourceHeight, allowed)
+	if top == 0 {
+		return []QualityOption{{Height: 0, Label: strconv.Itoa(sourceHeight) + "p"}}
+	}
+	out := []QualityOption{{Height: top, Label: strconv.Itoa(top) + "p"}}
+	for _, h := range allowed {
+		if h < top {
 			out = append(out, QualityOption{Height: h, Label: strconv.Itoa(h) + "p"})
 		}
 	}
 	return out
+}
+
+// ResolvePlaybackHeight is the encode height for the next play session.
+// encodeHeight 0 means the file's own height. A file whose height is not
+// enabled encodes at the highest enabled height at or below it. A requested
+// height that is not enabled is lowered the same way.
+func ResolvePlaybackHeight(sourceHeight, wantHeight int, enabled []int, explicit bool) (encodeHeight int, forceTranscode bool) {
+	allowed := normalizeHeights(enabled)
+	if wantHeight > 0 && sourceHeight > 0 && wantHeight > sourceHeight {
+		wantHeight = sourceHeight
+	}
+	playable := sourcePlayable(sourceHeight, allowed)
+	if playable && wantHeight > 0 && sourceHeight > 0 && wantHeight == sourceHeight {
+		wantHeight = 0
+	}
+	if !explicit && wantHeight > 0 {
+		offered := false
+		for _, q := range QualityOptions(sourceHeight, allowed) {
+			if q.Height == wantHeight {
+				offered = true
+				break
+			}
+		}
+		if !offered {
+			wantHeight = 0
+		}
+	}
+	if wantHeight > 0 && !heightEnabled(wantHeight, allowed) {
+		lowered := highestAtOrBelow(wantHeight, allowed)
+		if lowered > 0 {
+			wantHeight = lowered
+		} else if playable {
+			wantHeight = 0
+		} else {
+			wantHeight = highestAtOrBelow(sourceHeight, allowed)
+		}
+	}
+	if !playable && wantHeight <= 0 {
+		if top := highestAtOrBelow(sourceHeight, allowed); top > 0 {
+			return top, true
+		}
+	}
+	if wantHeight > 0 {
+		return wantHeight, true
+	}
+	return 0, false
+}
+
+func normalizeHeights(in []int) []int {
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(in))
+	for _, h := range in {
+		if h <= 0 {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
+	return out
+}
+
+func sourcePlayable(source int, allowed []int) bool {
+	if source <= 0 || len(allowed) == 0 {
+		return true
+	}
+	min := allowed[0]
+	for _, h := range allowed {
+		if h == source {
+			return true
+		}
+		if h < min {
+			min = h
+		}
+	}
+	return source < min
+}
+
+func heightEnabled(height int, allowed []int) bool {
+	for _, h := range allowed {
+		if h == height {
+			return true
+		}
+	}
+	return false
+}
+
+func highestAtOrBelow(limit int, allowed []int) int {
+	top := 0
+	for _, h := range allowed {
+		if h <= limit && h > top {
+			top = h
+		}
+	}
+	return top
 }
 
 func (p *Probe) AudioTracks() []Track {

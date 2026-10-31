@@ -16,6 +16,7 @@ finish-args:
   - --share=ipc
   - --socket=wayland
   - --socket=fallback-x11
+  - --socket=pulseaudio
   - --device=dri
   - --filesystem=/media
   - --filesystem=/mnt
@@ -68,8 +69,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/AlyShmahell/ServeMedia.git
-        tag: v0.2.0
-        commit: 6971793b86f727d6ba8040df6c97065d89f80977
+        tag: v0.2.4
+        commit: 655a1472b72336a45ec0864839358def00d7f96d
         x-checker-data:
           type: git
           tag-pattern: ^v([\d.]+)$

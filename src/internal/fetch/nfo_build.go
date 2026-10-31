@@ -11,7 +11,7 @@ func movieNFOFromCatalog(title string, year int, plot string, attrs map[string]s
 	nfo := metadata.MovieNFO{Title: title, Year: year, Plot: plot}
 	if prev != nil {
 		nfo = *prev
-		if strings.TrimSpace(title) != "" {
+		if strings.TrimSpace(nfo.Title) == "" && strings.TrimSpace(title) != "" {
 			nfo.Title = title
 		}
 		if year > 0 {
@@ -29,7 +29,7 @@ func showNFOFromCatalog(title string, year int, plot string, attrs map[string]st
 	nfo := metadata.TVShowNFO{Title: title, Year: year, Plot: plot}
 	if prev != nil {
 		nfo = *prev
-		if strings.TrimSpace(title) != "" {
+		if strings.TrimSpace(nfo.Title) == "" && strings.TrimSpace(title) != "" {
 			nfo.Title = title
 		}
 		if year > 0 {
@@ -49,6 +49,9 @@ func episodeNFOFromCatalog(title string, season, episode int, ce *matchmedia.Epi
 		nfo.Plot = prev.Plot
 		nfo.Runtime = prev.Runtime
 		nfo.Aired = prev.Aired
+		if strings.TrimSpace(nfo.Title) == "" && strings.TrimSpace(prev.Title) != "" {
+			nfo.Title = strings.TrimSpace(prev.Title)
+		}
 	}
 	if ce == nil {
 		return nfo

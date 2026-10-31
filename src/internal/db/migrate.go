@@ -350,6 +350,10 @@ ALTER TABLE media_items ADD COLUMN node_id INTEGER REFERENCES library_nodes(id) 
 ALTER TABLE watch_progress ADD COLUMN node_id INTEGER REFERENCES library_nodes(id) ON DELETE SET NULL;
 `
 
+const migrationV20 = `
+ALTER TABLE library_nodes ADD COLUMN mm_premiered TEXT;
+`
+
 const migrationV19 = `
 CREATE TABLE watch_progress_v19 (
   id INTEGER PRIMARY KEY,
@@ -579,6 +583,16 @@ func (d *DB) Migrate(ctx context.Context) error {
 		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (19, ?)`, now()); err != nil {
 			return err
 		}
+		ver = 19
+	}
+	if ver < 20 {
+		if _, err := d.SQL.ExecContext(ctx, migrationV20); err != nil {
+			return fmt.Errorf("migration v20: %w", err)
+		}
+		if _, err := d.SQL.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES (20, ?)`, now()); err != nil {
+			return err
+		}
+		ver = 20
 	}
 	return nil
 }

@@ -12,8 +12,8 @@
         <p class="muted match-entry-path"><code>{{.Item.Path}}</code></p>
       </div>
     </div>
+    <p id="match-pick-error" class="error"{{if not .Error}} hidden{{end}}>{{if .Error}}{{.Error}}{{end}}</p>
     {{if .Error}}
-    <p class="muted">{{.Error}}</p>
     {{else if not .Candidates}}
     <p class="muted match-empty">No candidates. <button type="button" class="card-action card-action-scan match-empty-scan" title="Scan" aria-label="Scan" onclick="event.preventDefault(); (function(){ var d=document.getElementById('match-pick-dialog'); if(d){ if(d.close) d.close(); } openEntryScanModal({{.Item.ID}}, {{js .Item.Title}}); })()"><span class="card-action-icon" aria-hidden="true">{{template "partials/icon_scan.html"}}</span><span class="card-action-label">Scan</span></button> this title to try again.</p>
     {{else}}

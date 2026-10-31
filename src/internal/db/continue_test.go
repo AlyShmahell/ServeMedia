@@ -57,6 +57,14 @@ func TestContinueWatchingFileTitleAndPoster(t *testing.T) {
 	got := map[string]string{}
 	for _, row := range rows {
 		got[row.PosterPath] = row.Title
+		if row.PosterPath == "metadata/movies/Film/poster.jpg" {
+			if row.LibraryPath.String != "/media/m" || row.NodeRelPath.String != "Film/Film.mkv" {
+				t.Fatalf("node path columns %#v", row)
+			}
+			if row.ItemNFOPath.Valid {
+				t.Fatalf("node row nfo path %#v", row.ItemNFOPath)
+			}
+		}
 	}
 	if got["metadata/movies/Film/poster.jpg"] != "The Film" {
 		t.Fatalf("film card: %#v", got)

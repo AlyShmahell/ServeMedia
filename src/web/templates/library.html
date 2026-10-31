@@ -13,9 +13,9 @@
     </div>
     <input type="hidden" name="path" value="{{.Path}}">
     <select name="sort">
-      <option value="name" {{if eq .Sort "name"}}selected{{end}}>Name</option>
-      <option value="date_added" {{if eq .Sort "date_added"}}selected{{end}}>Date added</option>
-      <option value="year" {{if eq .Sort "year"}}selected{{end}}>Year</option>
+      <option value="name" {{if eq .Sort "name"}}selected{{end}}>Title</option>
+      <option value="year" {{if or (eq .Sort "year") (eq .Sort "released")}}selected{{end}}>Released On</option>
+      <option value="date_added" {{if or (eq .Sort "date_added") (eq .Sort "added")}}selected{{end}}>Added On</option>
     </select>
   </form>
   <div class="library-main-card">

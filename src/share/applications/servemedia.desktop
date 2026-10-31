@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=ServeMedia
-Comment=Self-hosted media library
+Comment=Personal media center and home theater
 Exec=servemedia --webkit
 Icon=eu.alyshmahell.ServeMedia
 StartupWMClass=eu.alyshmahell.ServeMedia

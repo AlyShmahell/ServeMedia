@@ -192,6 +192,67 @@ func TestReleaseTabSharedJob(t *testing.T) {
 	}
 }
 
+func TestStartJobDoesNotReuseWhenEncodeSettingsChange(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Defaults()
+	cfg.Transcode.Path = dir
+	cfg.Transcode.CRF = 23
+	cfg.Transcode.SegmentSeconds = 6
+	cfg.Transcode.HWAccel = "auto"
+	m := &Manager{
+		Cfg:         cfg,
+		jobs:        map[string]*Job{},
+		activeByKey: map[string]string{},
+	}
+	old := &Job{
+		ID: "old", Source: "/v.mkv", Height: 720, Status: "ready",
+		CRF: 23, SegmentSec: 6, HWAccel: "auto",
+		Tabs:   map[string]struct{}{"tab": {}},
+		cancel: func() {},
+	}
+	m.jobs["old"] = old
+	m.activeByKey["tab"] = "old"
+
+	got, err := m.startJob("/v.mkv", 0, 720, 0, "tab", PipelineSoftware)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != old {
+		t.Fatal("matching encode settings were not reused")
+	}
+
+	m.Cfg.Transcode.CRF = 18
+	got, err = m.startJob("/v.mkv", 0, 720, 0, "other", PipelineSoftware)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == old {
+		t.Fatal("reused job after CRF change")
+	}
+	if _, ok := m.jobs["old"]; !ok {
+		t.Fatal("CRF change removed the job already serving a player")
+	}
+	m.mu.Lock()
+	m.removeJobLocked(got.ID)
+	m.mu.Unlock()
+
+	m.Cfg.Transcode.CRF = 23
+	m.Cfg.Transcode.HWAccel = "none"
+	got, err = m.startJob("/v.mkv", 0, 720, 0, "other", PipelineSoftware)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == old {
+		t.Fatal("reused job after hardware mode change")
+	}
+	if _, ok := m.jobs["old"]; !ok {
+		t.Fatal("hardware mode change removed the job already serving a player")
+	}
+	m.mu.Lock()
+	m.removeJobLocked(got.ID)
+	m.mu.Unlock()
+}
+
 func TestFallbackPipeline(t *testing.T) {
 	if got := fallbackPipeline(PipelineVAAPIFullAV110, "yuv420p10le"); got != PipelineVAAPIFull {
 		t.Fatalf("av1 10-bit fallback: got %v want vaapi_full", got)

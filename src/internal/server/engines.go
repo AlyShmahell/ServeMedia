@@ -1,11 +1,13 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/alyshmahell/servemedia/src/internal/config"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 	"gopkg.in/yaml.v3"
 )
@@ -84,7 +86,50 @@ func (s *Server) enginesSettingsData() map[string]any {
 		"TranscodeHW":     hw,
 		"TranscodeHWOn":   hwOn,
 		"ActiveTranscode": active,
+		"HeightChips":     heightChips(s.Cfg.Transcode.Heights),
 	}
+}
+
+type heightChip struct {
+	Height int
+	On     bool
+	Custom bool
+}
+
+func heightChips(heights []int) []heightChip {
+	on := map[int]bool{}
+	for _, h := range config.NormalizeHeights(heights) {
+		on[h] = true
+	}
+	standard := map[int]bool{}
+	var chips []heightChip
+	for _, h := range config.StandardHeights() {
+		standard[h] = true
+		chips = append(chips, heightChip{Height: h, On: on[h]})
+	}
+	for _, h := range config.NormalizeHeights(heights) {
+		if standard[h] {
+			continue
+		}
+		chips = append(chips, heightChip{Height: h, On: true, Custom: true})
+	}
+	return chips
+}
+
+func parseHeights(values []string) ([]int, error) {
+	out := make([]int, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("bad height")
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func (s *Server) handleSettingsEngines(w http.ResponseWriter, r *http.Request) {
@@ -199,10 +244,18 @@ func (s *Server) saveFFmpegSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "crf must be a positive number", http.StatusBadRequest)
 		return
 	}
-	height, err := strconv.Atoi(strings.TrimSpace(r.FormValue("max_height")))
-	if err != nil || height <= 0 {
-		http.Error(w, "max height must be a positive number", http.StatusBadRequest)
+	heights, err := parseHeights(r.Form["heights"])
+	if err != nil {
+		http.Error(w, "heights must be positive numbers", http.StatusBadRequest)
 		return
+	}
+	if v := strings.TrimSpace(r.FormValue("height_custom")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			http.Error(w, "heights must be positive numbers", http.StatusBadRequest)
+			return
+		}
+		heights = append(heights, n)
 	}
 	segment, err := strconv.Atoi(strings.TrimSpace(r.FormValue("segment_seconds")))
 	if err != nil || segment <= 0 {
@@ -222,7 +275,7 @@ func (s *Server) saveFFmpegSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Cfg.Transcode.CRF = crf
-	s.Cfg.Transcode.MaxHeight = height
+	s.Cfg.Transcode.Heights = config.NormalizeHeights(heights)
 	s.Cfg.Transcode.SegmentSeconds = segment
 	s.Cfg.Transcode.CleanupHours = cleanup
 	s.Cfg.Transcode.HWAccel = hw

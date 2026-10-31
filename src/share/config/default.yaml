@@ -1,4 +1,4 @@
-version: "0.2.0"
+version: "0.2.4"
 media:
   # Comma-separated roots; the library picker shows them as one folder tree.
   path: "/mnt,/media,$XDG_VIDEOS_DIR,$XDG_MUSIC_DIR"
