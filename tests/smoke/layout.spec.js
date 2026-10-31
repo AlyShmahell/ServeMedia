@@ -392,3 +392,61 @@ test('library main card scrolls items', async ({ page }) => {
   await expect(page.locator('.library-main-card')).toBeVisible();
   await expect(page.locator('#items .poster-progress').first()).toBeVisible();
 });
+
+test.describe('phone home layout', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('home feed scrolls as one column without horizontal clipping', async ({ page }) => {
+    await ensureAdmin(page);
+    await ensureTVLibrary(page);
+    await page.goto('/');
+    await expect(page.locator('.home-section-libraries .library-card').first()).toBeVisible({
+      timeout: 30000,
+    });
+
+    const metrics = await page.evaluate(() => {
+      const page_ = document.querySelector('.home-page');
+      const section = document.querySelector('.home-section-libraries');
+      const card = section && section.querySelector('.library-card');
+      const signout = document.querySelector('.topbar-signout');
+      const style = page_ && getComputedStyle(page_);
+      return {
+        overflowY: style ? style.overflowY : '',
+        sectionScrollSlack: section ? section.scrollHeight - section.clientHeight : -1,
+        cardWidth: card ? card.getBoundingClientRect().width : 0,
+        signoutRight: signout ? signout.getBoundingClientRect().right : 0,
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      };
+    });
+
+    expect(metrics.overflowY).toBe('auto');
+    expect(Math.abs(metrics.sectionScrollSlack)).toBeLessThanOrEqual(1);
+    expect(metrics.cardWidth).toBeGreaterThanOrEqual(300);
+    expect(metrics.signoutRight).toBeLessThanOrEqual(metrics.innerWidth + 0.5);
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth);
+  });
+});
+
+test.describe('landscape phone home layout', () => {
+  test.use({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
+
+  test('short landscape viewport keeps the single scrolling feed', async ({ page }) => {
+    await ensureAdmin(page);
+    await page.goto('/');
+    await expect(page.locator('.home-section-libraries')).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
+      const page_ = document.querySelector('.home-page');
+      const style = page_ && getComputedStyle(page_);
+      return {
+        overflowY: style ? style.overflowY : '',
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      };
+    });
+
+    expect(metrics.overflowY).toBe('auto');
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth);
+  });
+});

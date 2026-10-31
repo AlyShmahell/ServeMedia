@@ -360,3 +360,109 @@ test('backward seek after forward seek lands near the target', async ({ page }) 
   }
   expect(back).toBeGreaterThan(0.05);
 });
+
+test.describe('phone player stage', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('stage is a centred 16:9 box', async ({ page }) => {
+    await ensureAdmin(page);
+    await ensureMovieLibrary(page);
+    await openSampleMoviePlayer(page);
+
+    const metrics = await page.evaluate(() => {
+      const stage = document.getElementById('stage');
+      if (!stage) return null;
+      const rect = stage.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, width: rect.width, height: rect.height, innerWidth: window.innerWidth };
+    });
+    expect(metrics).toBeTruthy();
+    expect(Math.abs(metrics.width * 9 / 16 - metrics.height)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics.left - (metrics.innerWidth - metrics.right))).toBeLessThanOrEqual(1);
+  });
+});
+
+async function stubFullscreen(page) {
+  await page.addInitScript(() => {
+    window.__fsCalls = [];
+    Element.prototype.requestFullscreen = function () {
+      window.__fsCalls.push('request');
+      return Promise.resolve();
+    };
+    Element.prototype.webkitRequestFullscreen = Element.prototype.requestFullscreen;
+    document.exitFullscreen = function () {
+      window.__fsCalls.push('exit');
+      return Promise.resolve();
+    };
+  });
+}
+
+async function dispatchTouchTap(page, x, y) {
+  await page.evaluate(({ x, y }) => {
+    const stage = document.getElementById('stage');
+    stage.dispatchEvent(new PointerEvent('pointerup', {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      pointerType: 'touch',
+      isPrimary: true,
+      clientX: x,
+      clientY: y,
+      button: 0,
+      buttons: 0,
+    }));
+  }, { x, y });
+}
+
+test.describe('player fullscreen gesture', () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test('double tap requests fullscreen once without toggling playback', async ({ page }) => {
+    await ensureAdmin(page);
+    await ensureMovieLibrary(page);
+    await stubFullscreen(page);
+    await openSampleMoviePlayer(page);
+
+    const box = await page.locator('#stage').boundingBox();
+    expect(box).toBeTruthy();
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const pausedBefore = await page.evaluate(() => document.getElementById('v').player.paused());
+
+    await dispatchTouchTap(page, x, y);
+    await page.evaluate(async () => {
+      const player = document.getElementById('v').player;
+      if (player.paused()) await player.play();
+      else player.pause();
+    });
+    await dispatchTouchTap(page, x, y);
+    await page.waitForTimeout(300);
+
+    const result = await page.evaluate(() => ({
+      requests: (window.__fsCalls || []).filter((call) => call === 'request').length,
+      paused: document.getElementById('v').player.paused(),
+    }));
+    expect(result.requests).toBe(1);
+    expect(result.paused).toBe(pausedBefore);
+  });
+});
+
+test('desktop double-click still toggles fullscreen through video.js', async ({ page }) => {
+  await ensureAdmin(page);
+  await ensureMovieLibrary(page);
+  await stubFullscreen(page);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await openSampleMoviePlayer(page);
+
+  const box = await page.locator('#stage').boundingBox();
+  expect(box).toBeTruthy();
+  const pausedBefore = await page.evaluate(() => document.getElementById('v').player.paused());
+  await page.mouse.dblclick(box.x + box.width * 0.2, box.y + box.height * 0.25);
+  await page.waitForTimeout(300);
+
+  const result = await page.evaluate(() => ({
+    requests: (window.__fsCalls || []).filter((call) => call === 'request').length,
+    paused: document.getElementById('v').player.paused(),
+  }));
+  expect(result.requests).toBe(1);
+  expect(result.paused).toBe(pausedBefore);
+});

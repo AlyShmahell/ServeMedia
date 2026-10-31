@@ -106,12 +106,6 @@ servemedia --host <address> --port <number>
 
 Start ServeMedia, add a library, open a title, and play.
 
-Create the admin account **(only for the Server release, not the Flatpak or AppImage)**
-
-<p align="center">
-  <img src="flatpak/screenshots/06-setup.png" alt="Create the admin account" width="640">
-</p>
-
 Home with libraries and recently added titles.
 
 <p align="center">
@@ -140,6 +134,12 @@ Browser playback.
 
 <p align="center">
   <img src="flatpak/screenshots/05-player.png" alt="Browser playback" width="640">
+</p>
+
+Settings.
+
+<p align="center">
+  <img src="flatpak/screenshots/06-settings.png" alt="Settings" width="640">
 </p>
 
 ## Controls

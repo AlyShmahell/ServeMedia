@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>eu.alyshmahell.ServeMedia</id>
   <name>ServeMedia</name>
-  <summary>The Self-hosted media center for Linux</summary>
+  <summary>Personal Media-Center &amp; Home-Theater</summary>
   <metadata_license>FSFAP</metadata_license>
   <project_license>BSD-3-Clause</project_license>
   <developer id="eu.alyshmahell">
@@ -36,8 +36,8 @@
     <keyword>media-streaming</keyword>
   </keywords>
   <branding>
-    <color type="primary" scheme_preference="dark">#0f1419</color>
-    <color type="primary" scheme_preference="light">#3d9cf0</color>
+    <color type="primary" scheme_preference="light">#F48BA8</color>
+    <color type="primary" scheme_preference="dark">#7A2348</color>
   </branding>
   <launchable type="desktop-id">eu.alyshmahell.ServeMedia.desktop</launchable>
   <provides>
@@ -74,12 +74,13 @@
       <caption>Browser playback</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/06-setup.png</image>
-      <caption>Create the admin account</caption>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/06-settings.png</image>
+      <caption>Settings</caption>
     </screenshot>
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.2.0" date="2026-10-28"/>
+    <release version="0.2.4" date="2026-10-31"/>
+    <release version="0.1.0" date="2026-10-01"/>
   </releases>
 </component>

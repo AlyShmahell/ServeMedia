@@ -2814,8 +2814,8 @@ func TestMatchPathUnnumberedFilesSkipEpisodeIngest(t *testing.T) {
 	}
 
 	showDir := filepath.Join(media, "Loose Show")
-	epPath := filepath.Join(showDir, "Season 1", "S01E02.mkv")
-	decoy := filepath.Join(showDir, "Season 1", "S01E99.mkv")
+	epPath := filepath.Join(showDir, "Season 1", "Pilot.mkv")
+	decoy := filepath.Join(showDir, "Season 1", "Decoy.mkv")
 	for _, p := range []string{epPath, decoy} {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)

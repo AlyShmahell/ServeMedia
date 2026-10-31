@@ -22,8 +22,21 @@
       <input type="hidden" name="ffmpeg_settings" value="1">
       <label>H.264 CRF</label>
       <input name="crf" type="number" min="1" value="{{.Config.Transcode.CRF}}">
-      <label>Max height</label>
-      <input name="max_height" type="number" min="1" value="{{.Config.Transcode.MaxHeight}}">
+      <label>Available heights</label>
+      <div class="height-chips" id="height-chips">
+        {{range .HeightChips}}
+        <label class="chip{{if .Custom}} chip-custom{{end}}">
+          <input type="checkbox" name="heights" value="{{.Height}}" {{if .On}}checked{{end}}>
+          <span>{{.Height}}p</span>
+          {{if .Custom}}<button type="button" class="chip-remove" aria-label="Remove {{.Height}}p">&times;</button>{{end}}
+        </label>
+        {{end}}
+      </div>
+      <div class="chip-add">
+        <input id="height-custom" name="height_custom" type="number" min="1" inputmode="numeric" placeholder="Add height">
+        <button type="button" id="height-add">Add</button>
+      </div>
+      <p class="muted">The next playback offers these heights. A file whose height is off is transcoded to the highest enabled height at or below it. Playback already running continues until the player asks for a new session.</p>
       <label>Segment seconds</label>
       <input name="segment_seconds" type="number" min="1" value="{{.Config.Transcode.SegmentSeconds}}">
       <label>Cleanup hours</label>

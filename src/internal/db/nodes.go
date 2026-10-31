@@ -215,7 +215,53 @@ func (d *DB) ListNodesUnder(ctx context.Context, libraryID int64, rel string) ([
 	return out, rows.Err()
 }
 
-func (d *DB) ListChildNodes(ctx context.Context, libraryID int64, rel string) ([]LibraryNode, error) {
+const nodeDisplayTitleSQL = `COALESCE(NULLIF(file_title,''), NULLIF(mm_title,''), name) COLLATE NOCASE`
+
+func childNodesOrder(sort string) string {
+	switch strings.TrimSpace(sort) {
+	case "date_added", "added":
+		// Full ingest timestamp (RFC3339); datetime() normalizes for ordering.
+		return `node_kind, datetime(date_added) DESC, ` + nodeDisplayTitleSQL
+	case "year", "released":
+		// Full premiere/release date from NFO; year-only titles use YYYY-01-01.
+		return `node_kind, COALESCE(NULLIF(mm_premiered,''), NULLIF(mm_year,'') || '-01-01') DESC, ` + nodeDisplayTitleSQL
+	default:
+		return `node_kind, ` + nodeDisplayTitleSQL
+	}
+}
+
+// NodeTitleFacts are NFO-backed fields cached on library_nodes for listing/sort.
+type NodeTitleFacts struct {
+	Title     string
+	Year      string
+	Premiered string
+	Plot      string
+	Rating    float64
+}
+
+// ApplyNodeTitleFacts updates non-empty NFO facts onto a directory node.
+func (d *DB) ApplyNodeTitleFacts(ctx context.Context, id int64, f NodeTitleFacts) error {
+	if id <= 0 {
+		return nil
+	}
+	_, err := d.SQL.ExecContext(ctx, `
+		UPDATE library_nodes SET
+			mm_title=CASE WHEN ?!='' THEN ? ELSE mm_title END,
+			mm_year=CASE WHEN ?!='' THEN ? ELSE mm_year END,
+			mm_premiered=CASE WHEN ?!='' THEN ? ELSE mm_premiered END,
+			plot=CASE WHEN ?!='' THEN ? ELSE plot END,
+			rating=CASE WHEN ?>0 THEN ? ELSE rating END
+		WHERE id=?`,
+		f.Title, f.Title,
+		f.Year, f.Year,
+		f.Premiered, f.Premiered,
+		f.Plot, f.Plot,
+		f.Rating, f.Rating,
+		id)
+	return err
+}
+
+func (d *DB) ListChildNodes(ctx context.Context, libraryID int64, rel, sort string) ([]LibraryNode, error) {
 	rel = strings.Trim(filepath.ToSlash(rel), "/")
 	var parentID int64
 	err := d.SQL.QueryRowContext(ctx, `SELECT id FROM library_nodes WHERE library_id=? AND rel_path=?`, libraryID, rel).Scan(&parentID)
@@ -228,7 +274,7 @@ func (d *DB) ListChildNodes(ctx context.Context, libraryID int64, rel string) ([
 	rows, err := d.SQL.QueryContext(ctx, `SELECT id, library_id, parent_id, rel_path, name, node_kind,
 		mm_kind, mm_title, mm_year, poster_path, match_status, meta_provider, meta_id, plot,
 		group_node_id, season_num, episode_num, file_title, file_plot, still_path, date_added
-		FROM library_nodes WHERE library_id=? AND parent_id=? ORDER BY node_kind, name COLLATE NOCASE`, libraryID, parentID)
+		FROM library_nodes WHERE library_id=? AND parent_id=? ORDER BY `+childNodesOrder(sort), libraryID, parentID)
 	if err != nil {
 		return nil, err
 	}

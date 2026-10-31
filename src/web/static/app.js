@@ -191,6 +191,8 @@
     var params = new URLSearchParams();
     params.set('q', fieldValue(form, 'q'));
     params.set('sort', fieldValue(form, 'sort'));
+    var path = fieldValue(form, 'path');
+    if (path) params.set('path', path);
     var sep = url.indexOf('?') >= 0 ? '&' : '?';
     htmx.ajax('GET', url + sep + params.toString(), {
       target: '#items-live',
@@ -295,6 +297,41 @@
     if (id && window.openMatchModal) openMatchModal(id);
   }, true);
 
+  function showMatchDialogError(msg) {
+    var el = document.getElementById('match-pick-error');
+    if (!el) return false;
+    el.textContent = msg || '';
+    if (msg) {
+      el.removeAttribute('hidden');
+    } else {
+      el.setAttribute('hidden', '');
+    }
+    return true;
+  }
+
+  function ensureMatchErrorDialog(msg) {
+    var host = matchHost();
+    if (!host) {
+      console.error(msg);
+      return;
+    }
+    host.innerHTML =
+      '<dialog id="match-pick-dialog" class="modal match-dialog" open>' +
+      '<form method="dialog" class="modal-form match-dialog-form">' +
+      '<header class="modal-head"><h2>Choose match</h2>' +
+      '<button type="button" class="btn-icon secondary" onclick="document.getElementById(\'match-pick-dialog\').close()" aria-label="Close">×</button></header>' +
+      '<p id="match-pick-error" class="error"></p>' +
+      '<footer class="modal-foot"><button type="button" class="secondary" onclick="document.getElementById(\'match-pick-dialog\').close()">Close</button></footer>' +
+      '</form></dialog>';
+    var dlg = document.getElementById('match-pick-dialog');
+    showMatchDialogError(msg);
+    if (dlg && dlg.showModal) {
+      try {
+        dlg.showModal();
+      } catch (e) {}
+    }
+  }
+
   window.openMatchModal = function (id) {
     fetch('/hx/media/' + id + '/match', { credentials: 'same-origin' })
       .then(function (r) {
@@ -314,7 +351,7 @@
         }
       })
       .catch(function (err) {
-        alert(err.message || String(err));
+        ensureMatchErrorDialog(err.message || String(err));
       });
   };
 
@@ -349,6 +386,7 @@
       var skip = document.getElementById('match-skip');
       if (skip) skip.disabled = on;
     }
+    showMatchDialogError('');
     setBusy(true);
     var body = new URLSearchParams();
     fill(body);
@@ -375,12 +413,17 @@
         }
         return r.text().then(function (t) {
           setBusy(false);
-          alert(t || r.statusText);
+          if (!showMatchDialogError(t || r.statusText)) {
+            console.error(t || r.statusText);
+          }
         });
       })
       .catch(function (err) {
         setBusy(false);
-        alert(err.message || String(err));
+        var msg = err.message || String(err);
+        if (!showMatchDialogError(msg)) {
+          console.error(msg);
+        }
       });
   };
 
@@ -1151,5 +1194,352 @@
     if (hc) hc.value = '1';
     destWrap.appendChild(clone);
     destCount.value = String(n + 1);
+  });
+
+  function heightNumber(raw) {
+    var text = String(raw == null ? '' : raw).trim();
+    if (!/^[1-9]\d*$/.test(text)) return 0;
+    var n = parseInt(text, 10);
+    if (!isFinite(n) || n <= 0) return 0;
+    return n;
+  }
+
+  function addHeightChip() {
+    var input = document.getElementById('height-custom');
+    var wrap = document.getElementById('height-chips');
+    if (!input || !wrap) return;
+    var n = heightNumber(input.value);
+    if (!n) return;
+    var existing = wrap.querySelectorAll('input[name="heights"]');
+    for (var i = 0; i < existing.length; i++) {
+      if (existing[i].value === String(n)) {
+        existing[i].checked = true;
+        input.value = '';
+        return;
+      }
+    }
+    var label = document.createElement('label');
+    label.className = 'chip chip-custom';
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.name = 'heights';
+    box.value = String(n);
+    box.checked = true;
+    var span = document.createElement('span');
+    span.textContent = n + 'p';
+    var remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'chip-remove';
+    remove.setAttribute('aria-label', 'Remove ' + n + 'p');
+    remove.textContent = '\u00d7';
+    label.appendChild(box);
+    label.appendChild(span);
+    label.appendChild(remove);
+    wrap.appendChild(label);
+    input.value = '';
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest('#height-add')) {
+      e.preventDefault();
+      addHeightChip();
+      return;
+    }
+    var remove = t.closest('.chip-remove');
+    if (!remove) return;
+    e.preventDefault();
+    var chip = remove.closest('.chip');
+    if (chip) chip.remove();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    var t = e.target;
+    if (!t || t.id !== 'height-custom') return;
+    e.preventDefault();
+    addHeightChip();
+  });
+
+  var contextField = null;
+  var textInputTypes = { text: 1, search: 1, email: 1, url: 1, tel: 1, password: 1, number: 1 };
+
+  function textFieldTarget(el) {
+    if (!el || !el.closest) return null;
+    if (el.closest('.CodeMirror')) return null;
+    var area = el.closest('textarea');
+    if (area) return area;
+    var input = el.closest('input');
+    if (input) {
+      var type = (input.getAttribute('type') || 'text').toLowerCase();
+      return textInputTypes[type] ? input : null;
+    }
+    var rich = el.closest('[contenteditable]');
+    if (!rich || rich.getAttribute('contenteditable') === 'false') return null;
+    return rich;
+  }
+
+  function fieldText(field) {
+    if (!field) return '';
+    if (field.isContentEditable) return field.textContent || '';
+    return field.value || '';
+  }
+
+  function fieldSelectedText(field) {
+    if (!field) return '';
+    if (field.isContentEditable) {
+      var sel = window.getSelection();
+      if (!sel || !sel.rangeCount || !field.contains(sel.anchorNode)) return '';
+      return sel.toString();
+    }
+    if (field.selectionStart == null || field.selectionEnd == null || field.selectionStart === field.selectionEnd) return '';
+    return String(field.value || '').slice(field.selectionStart, field.selectionEnd);
+  }
+
+  function fieldLocked(field) {
+    return !!(field && (field.readOnly || field.disabled));
+  }
+
+  function commandAvailable(name) {
+    try {
+      return document.queryCommandEnabled(name);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function commandEnabled(id, field) {
+    if (!field || field.disabled) return false;
+    var locked = fieldLocked(field);
+    if (id === 'selectall') return fieldText(field).length > 0;
+    if (id === 'copy') return fieldSelectedText(field).length > 0;
+    if (id === 'cut') return fieldSelectedText(field).length > 0 && !locked;
+    if (id === 'paste') return !locked;
+    if (id === 'undo') return !locked && commandAvailable('undo');
+    if (id === 'redo') return !locked && commandAvailable('redo');
+    return false;
+  }
+
+  function contextMenu() {
+    var menu = document.getElementById('app-context-menu');
+    if (menu) return menu;
+    menu = document.createElement('div');
+    menu.id = 'app-context-menu';
+    menu.hidden = true;
+    menu.setAttribute('role', 'menu');
+    var empty = document.createElement('p');
+    empty.className = 'app-context-menu-empty';
+    empty.textContent = '¯\_(ツ)_/¯';
+    menu.appendChild(empty);
+    var list = document.createElement('div');
+    list.className = 'app-context-menu-items';
+    list.hidden = true;
+    var cmds = [
+      ['selectall', 'Select all'],
+      ['copy', 'Copy'],
+      ['cut', 'Cut'],
+      ['paste', 'Paste'],
+      ['undo', 'Undo'],
+      ['redo', 'Redo']
+    ];
+    for (var i = 0; i < cmds.length; i++) {
+      var item = document.createElement('div');
+      item.setAttribute('role', 'menuitem');
+      item.setAttribute('data-cmd', cmds[i][0]);
+      item.textContent = cmds[i][1];
+      list.appendChild(item);
+    }
+    menu.appendChild(list);
+    menu.addEventListener('dragstart', function (e) {
+      e.preventDefault();
+    });
+    document.body.appendChild(menu);
+    return menu;
+  }
+
+  function menuHost() {
+    var dialogs = document.querySelectorAll('dialog[open]');
+    return dialogs.length ? dialogs[dialogs.length - 1] : document.body;
+  }
+
+  function menuItemFromEvent(e) {
+    var t = e.target;
+    if (!t || !t.closest) return null;
+    return t.closest('#app-context-menu [data-cmd]');
+  }
+
+  function hideContextMenu() {
+    var menu = document.getElementById('app-context-menu');
+    if (menu) menu.hidden = true;
+    contextField = null;
+  }
+
+  function placeContextMenu(menu, x, y) {
+    var host = menuHost();
+    if (menu.parentNode !== host) host.appendChild(menu);
+    menu.hidden = false;
+    var left = x;
+    var top = y;
+    if (host === document.body) {
+      menu.style.position = 'fixed';
+    } else {
+      var box = host.getBoundingClientRect();
+      var style = window.getComputedStyle(host);
+      var borderL = parseFloat(style.borderLeftWidth) || 0;
+      var borderT = parseFloat(style.borderTopWidth) || 0;
+      menu.style.position = 'absolute';
+      left = x - box.left - borderL + host.scrollLeft;
+      top = y - box.top - borderT + host.scrollTop;
+    }
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    var rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      menu.style.left = (left - (rect.right - window.innerWidth) - 4) + 'px';
+    }
+    if (rect.bottom > window.innerHeight) {
+      menu.style.top = (top - (rect.bottom - window.innerHeight) - 4) + 'px';
+    }
+  }
+
+  function showContextMenu(x, y, field) {
+    var menu = contextMenu();
+    contextField = field || null;
+    var empty = menu.querySelector('.app-context-menu-empty');
+    var list = menu.querySelector('.app-context-menu-items');
+    if (field) {
+      menu.classList.add('has-items');
+      if (empty) empty.hidden = true;
+      if (list) {
+        list.hidden = false;
+        var buttons = list.querySelectorAll('[data-cmd]');
+        for (var i = 0; i < buttons.length; i++) {
+          if (commandEnabled(buttons[i].getAttribute('data-cmd'), field)) buttons[i].removeAttribute('aria-disabled');
+          else buttons[i].setAttribute('aria-disabled', 'true');
+        }
+      }
+    } else {
+      menu.classList.remove('has-items');
+      if (empty) empty.hidden = false;
+      if (list) list.hidden = true;
+    }
+    placeContextMenu(menu, x, y);
+  }
+
+  function selectFieldAll(field) {
+    field.focus();
+    if (field.isContentEditable) {
+      document.execCommand('selectAll');
+      return;
+    }
+    var len = String(field.value || '').length;
+    try {
+      field.setSelectionRange(0, len);
+    } catch (err) {}
+  }
+
+  function deleteFieldSelection(field) {
+    field.focus();
+    if (document.execCommand('delete')) return;
+    if (typeof field.setRangeText === 'function' && field.selectionStart != null) {
+      field.setRangeText('', field.selectionStart, field.selectionEnd, 'end');
+    }
+  }
+
+  function insertFieldText(field, text) {
+    field.focus();
+    if (document.execCommand('insertText', false, text)) return;
+    if (typeof field.setRangeText === 'function') {
+      var start = field.selectionStart == null ? String(field.value || '').length : field.selectionStart;
+      var end = field.selectionEnd == null ? start : field.selectionEnd;
+      field.setRangeText(text, start, end, 'end');
+    }
+  }
+
+  function runFieldCommand(id, field) {
+    if (!field) return;
+    field.focus();
+    if (id === 'selectall') {
+      selectFieldAll(field);
+      return;
+    }
+    if (id === 'copy' || id === 'cut') {
+      var selected = fieldSelectedText(field);
+      if (!selected || !navigator.clipboard) return;
+      navigator.clipboard.writeText(selected).then(function () {
+        if (id === 'cut') deleteFieldSelection(field);
+      }).catch(function () {});
+      return;
+    }
+    if (id === 'paste') {
+      if (!navigator.clipboard || !navigator.clipboard.readText) return;
+      navigator.clipboard.readText().then(function (text) {
+        insertFieldText(field, text);
+      }).catch(function () {});
+      return;
+    }
+    if (id === 'undo') document.execCommand('undo');
+    if (id === 'redo') document.execCommand('redo');
+  }
+
+  document.addEventListener('contextmenu', function (e) {
+    if (e.target && e.target.closest && e.target.closest('select, .CodeMirror')) {
+      hideContextMenu();
+      return;
+    }
+    e.preventDefault();
+    var field = textFieldTarget(e.target);
+    if (field && document.activeElement !== field) field.focus();
+    showContextMenu(e.clientX, e.clientY, field);
+  }, true);
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') hideContextMenu();
+  });
+  document.addEventListener('pointerdown', function (e) {
+    var menu = document.getElementById('app-context-menu');
+    if (!menu || menu.hidden) return;
+    if (e.target && menu.contains(e.target)) {
+      e.preventDefault();
+      return;
+    }
+    hideContextMenu();
+  });
+  document.addEventListener('pointerup', function (e) {
+    var menu = document.getElementById('app-context-menu');
+    if (!menu || menu.hidden) return;
+    var item = menuItemFromEvent(e);
+    if (!item || item.getAttribute('aria-disabled') === 'true' || !contextField) return;
+    var field = contextField;
+    var id = item.getAttribute('data-cmd');
+    hideContextMenu();
+    runFieldCommand(id, field);
+  });
+  window.addEventListener('resize', hideContextMenu);
+  window.addEventListener('scroll', hideContextMenu, true);
+
+  document.body.addEventListener('htmx:responseError', function (e) {
+    var detail = e.detail;
+    if (!detail || !detail.xhr) return;
+    var elt = detail.elt;
+    var target = detail.target;
+    var aimed = target && target.id === 'settings-panel';
+    if (!aimed && elt && elt.getAttribute && elt.getAttribute('hx-target') === '#settings-panel') aimed = true;
+    if (!aimed && elt && elt.closest && elt.closest('#settings-panel')) aimed = true;
+    if (!aimed) return;
+    var panel = document.getElementById('settings-panel');
+    if (!panel) return;
+    var level = detail.xhr.status >= 500 ? 'error' : 'warn';
+    var text = String(detail.xhr.responseText || '').replace(/^\s+|\s+$/g, '');
+    if (!text) text = level === 'error' ? 'Save failed' : 'Could not save';
+    var note = panel.querySelector('.settings-notice');
+    if (!note) {
+      note = document.createElement('p');
+      note.setAttribute('role', 'status');
+      panel.insertBefore(note, panel.firstChild);
+    }
+    note.className = 'settings-notice settings-notice-' + level;
+    note.textContent = text;
   });
 })();

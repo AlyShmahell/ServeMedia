@@ -3,7 +3,7 @@ module github.com/alyshmahell/servemedia/src
 go 1.26
 
 require (
-	github.com/alyshmahell/matchmedia v0.2.0
+	github.com/alyshmahell/matchmedia v0.2.4
 	github.com/ebitengine/purego v0.11.2
 	github.com/go-chi/chi/v5 v5.2.1
 	github.com/google/uuid v1.6.0

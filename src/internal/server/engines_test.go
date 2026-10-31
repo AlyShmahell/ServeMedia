@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alyshmahell/servemedia/src/internal/backup"
 	"github.com/alyshmahell/servemedia/src/internal/config"
@@ -166,7 +167,7 @@ func TestHandleSettingsEnginesTabs(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("ffmpeg status %d body %s", w.Code, body)
 	}
-	for _, want := range []string{"tab-ffmpeg", "H.264 CRF", "Max height", "Hardware acceleration"} {
+	for _, want := range []string{"tab-ffmpeg", "H.264 CRF", "Available heights", "The next playback offers these heights.", "name=\"heights\"", "Hardware acceleration"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q in %s", want, body)
 		}
@@ -358,7 +359,9 @@ func TestSaveFFmpegSettings(t *testing.T) {
 	form := url.Values{}
 	form.Set("ffmpeg_settings", "1")
 	form.Set("crf", "20")
-	form.Set("max_height", "1080")
+	form.Add("heights", "1080")
+	form.Add("heights", "720")
+	form.Set("height_custom", "800")
 	form.Set("segment_seconds", "4")
 	form.Set("cleanup_hours", "12")
 	form.Set("hwaccel", "none")
@@ -373,7 +376,11 @@ func TestSaveFFmpegSettings(t *testing.T) {
 	if loc := w.Header().Get("Location"); loc != "/" {
 		t.Fatalf("location %q", loc)
 	}
-	if s.Cfg.Transcode.CRF != 20 || s.Cfg.Transcode.MaxHeight != 1080 || s.Cfg.Transcode.HWAccel != "none" {
+	if s.Cfg.Transcode.CRF != 20 || s.Cfg.Transcode.HWAccel != "none" {
+		t.Fatalf("transcode %+v", s.Cfg.Transcode)
+	}
+	gotH := s.Cfg.Transcode.Heights
+	if len(gotH) != 3 || gotH[0] != 1080 || gotH[1] != 800 || gotH[2] != 720 {
 		t.Fatalf("transcode %+v", s.Cfg.Transcode)
 	}
 	if !s.Cfg.Scan.OnStartup || s.Cfg.Watchdog.TTLSeconds != 15 {
@@ -386,6 +393,59 @@ func TestSaveFFmpegSettings(t *testing.T) {
 	text := string(b)
 	if !strings.Contains(text, "/keep/media") || strings.Contains(text, "/old/store") {
 		t.Fatalf("overlay:\n%s", text)
+	}
+}
+
+func TestSaveBackupRejectsBadInterval(t *testing.T) {
+	s, u := enginesTestServer(t, nil)
+	s.Cfg.OverlayPath = filepath.Join(t.TempDir(), "overlay.yaml")
+	s.Cfg.Backup.Interval = time.Hour
+	s.Cfg.Backup.Retain = 7
+	s.Cfg.Backup.Enabled = false
+	s.Backup = &backup.Service{Cfg: s.Cfg}
+	form := url.Values{}
+	form.Set("backup_interval", "nope")
+	form.Set("backup_retain", "2")
+	form.Set("backup_enabled", "on")
+	req := httptest.NewRequest(http.MethodPost, "/settings/backup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	s.handleSaveBackup(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if s.Cfg.Backup.Interval != time.Hour || s.Cfg.Backup.Retain != 7 || s.Cfg.Backup.Enabled {
+		t.Fatalf("backup mutated %+v", s.Cfg.Backup)
+	}
+}
+
+func TestSaveFFmpegRejectsBadHeight(t *testing.T) {
+	s, u := enginesTestServer(t, nil)
+	s.Cfg.OverlayPath = filepath.Join(t.TempDir(), "overlay.yaml")
+	before := append([]int(nil), s.Cfg.Transcode.Heights...)
+	form := url.Values{}
+	form.Set("ffmpeg_settings", "1")
+	form.Set("crf", "20")
+	form.Set("height_custom", "nope")
+	form.Set("segment_seconds", "4")
+	form.Set("cleanup_hours", "12")
+	form.Set("hwaccel", "auto")
+	req := httptest.NewRequest(http.MethodPost, "/settings/engines", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = req.WithContext(context.WithValue(req.Context(), userKey, u))
+	w := httptest.NewRecorder()
+	s.handleSaveEngines(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if len(s.Cfg.Transcode.Heights) != len(before) {
+		t.Fatalf("heights changed %#v", s.Cfg.Transcode.Heights)
+	}
+	for i := range before {
+		if s.Cfg.Transcode.Heights[i] != before[i] {
+			t.Fatalf("heights changed %#v", s.Cfg.Transcode.Heights)
+		}
 	}
 }
 
@@ -416,6 +476,9 @@ func TestSaveGeneralSettings(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "scan_on_startup") || !strings.Contains(body, `id="watchdog-ttl"`) || strings.Contains(body, "settings-sidenav") {
 		t.Fatalf("panel %s", body)
+	}
+	if !strings.Contains(body, `class="settings-notice settings-notice-ok" role="status">Saved</p>`) {
+		t.Fatalf("missing saved notice: %s", body)
 	}
 	if !strings.Contains(body, "checked") {
 		t.Fatalf("scan checkbox: %s", body)

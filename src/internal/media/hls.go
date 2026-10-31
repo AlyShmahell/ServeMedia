@@ -64,6 +64,9 @@ type Job struct {
 	OutputDir  string
 	Status     string
 	Pipeline   string
+	CRF        int
+	SegmentSec int
+	HWAccel    string
 	LastAccess time.Time
 	cmd        *exec.Cmd
 	cancel     context.CancelFunc
@@ -530,7 +533,7 @@ func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex
 	m.mu.Lock()
 	if ownerKey != "" {
 		if id, ok := m.activeByKey[ownerKey]; ok {
-			if j := m.jobs[id]; j != nil && jobMatches(j, source, audioIndex, height, startSec) && !skipAV110Reuse(j, force8Bit) {
+			if j := m.jobs[id]; j != nil && jobMatches(j, source, audioIndex, height, startSec, m.Cfg) && !skipAV110Reuse(j, force8Bit) {
 				j.LastAccess = time.Now()
 				m.attachTabLocked(j, ownerKey)
 				m.mu.Unlock()
@@ -542,7 +545,7 @@ func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex
 			m.detachTabLocked(ownerKey)
 		}
 	}
-	if j := m.findActiveLocked(source, audioIndex, height, startSec); j != nil && !skipAV110Reuse(j, force8Bit) {
+	if j := m.findActiveLocked(source, audioIndex, height, startSec, m.Cfg); j != nil && !skipAV110Reuse(j, force8Bit) {
 		j.LastAccess = time.Now()
 		m.attachTabLocked(j, ownerKey)
 		m.mu.Unlock()
@@ -606,17 +609,28 @@ func (m *Manager) StopAll() {
 	}
 }
 
-func jobMatches(j *Job, source string, audioIndex, height, startSec int) bool {
-	return j.Source == source && j.AudioIndex == audioIndex && j.Height == height && j.StartAt == startSec && (j.Status == "running" || j.Status == "ready")
+func jobMatches(j *Job, source string, audioIndex, height, startSec int, cfg config.Config) bool {
+	if j == nil {
+		return false
+	}
+	if j.Source != source || j.AudioIndex != audioIndex || j.Height != height || j.StartAt != startSec {
+		return false
+	}
+	if j.Status != "running" && j.Status != "ready" {
+		return false
+	}
+	return j.CRF == cfg.Transcode.CRF &&
+		j.SegmentSec == cfg.Transcode.SegmentSeconds &&
+		strings.EqualFold(strings.TrimSpace(j.HWAccel), strings.TrimSpace(cfg.Transcode.HWAccel))
 }
 
 func skipAV110Reuse(j *Job, force8Bit bool) bool {
 	return force8Bit && j != nil && j.Pipeline == PipelineVAAPIFullAV110.String()
 }
 
-func (m *Manager) findActiveLocked(source string, audioIndex, height, startSec int) *Job {
+func (m *Manager) findActiveLocked(source string, audioIndex, height, startSec int, cfg config.Config) *Job {
 	for _, j := range m.jobs {
-		if jobMatches(j, source, audioIndex, height, startSec) {
+		if jobMatches(j, source, audioIndex, height, startSec, cfg) {
 			return j
 		}
 	}
@@ -661,15 +675,16 @@ func (m *Manager) detachTabLocked(tabID string) {
 func (m *Manager) startJob(source string, audioIndex, height, startSec int, ownerKey string, pipeline Pipeline) (*Job, error) {
 	m.mu.Lock()
 	for _, j := range m.jobs {
-		if j.Source == source && j.AudioIndex == audioIndex && j.Height == height && j.StartAt == startSec && (j.Status == "running" || j.Status == "ready") {
-			if pipeline != PipelineVAAPIFullAV110 && j.Pipeline == PipelineVAAPIFullAV110.String() {
-				continue
-			}
-			j.LastAccess = time.Now()
-			m.attachTabLocked(j, ownerKey)
-			m.mu.Unlock()
-			return j, nil
+		if !jobMatches(j, source, audioIndex, height, startSec, m.Cfg) {
+			continue
 		}
+		if pipeline != PipelineVAAPIFullAV110 && j.Pipeline == PipelineVAAPIFullAV110.String() {
+			continue
+		}
+		j.LastAccess = time.Now()
+		m.attachTabLocked(j, ownerKey)
+		m.mu.Unlock()
+		return j, nil
 	}
 
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
@@ -682,7 +697,10 @@ func (m *Manager) startJob(source string, audioIndex, height, startSec int, owne
 	j := &Job{
 		ID: id, Source: source, AudioIndex: audioIndex, Height: height, StartAt: startSec, OutputDir: out,
 		Status: "running", Pipeline: pipeline.String(), LastAccess: time.Now(), cancel: cancel,
-		Tabs: map[string]struct{}{},
+		Tabs:       map[string]struct{}{},
+		CRF:        m.Cfg.Transcode.CRF,
+		SegmentSec: m.Cfg.Transcode.SegmentSeconds,
+		HWAccel:    strings.ToLower(strings.TrimSpace(m.Cfg.Transcode.HWAccel)),
 	}
 	m.jobs[id] = j
 	m.attachTabLocked(j, ownerKey)

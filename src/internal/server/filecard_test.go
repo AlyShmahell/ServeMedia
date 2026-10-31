@@ -58,6 +58,21 @@ func TestFileTitleOrder(t *testing.T) {
 	}
 }
 
+func TestFileTitlePreservesNFOExtension(t *testing.T) {
+	dir := t.TempDir()
+	video := filepath.Join(dir, "clip.mkv")
+	if err := os.WriteFile(video, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "clip.nfo"), []byte(`<movie><title>Foo.mkv</title></movie>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	title, _, _, _ := fileCardFields(dir, db.LibraryNode{Name: "clip.mkv", RelPath: "clip.mkv"}, false)
+	if title != "Foo.mkv" {
+		t.Fatalf("nfo title with extension %q", title)
+	}
+}
+
 func TestFolderWatchCountsDescendants(t *testing.T) {
 	files := []db.FileWatch{
 		{Rel: "Show/Season 1/a.mkv", Done: true},

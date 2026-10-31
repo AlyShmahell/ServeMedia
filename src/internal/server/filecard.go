@@ -2,7 +2,6 @@ package server
 
 import (
 	"database/sql"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,14 +15,7 @@ type fileFact struct {
 	Value string
 }
 
-type sideNFO struct {
-	Title   string
-	Plot    string
-	Aired   string
-	Season  int
-	Episode int
-	Runtime int
-}
+type sideNFO = metadata.VideoSidecar
 
 func stripVideoExt(name string) string {
 	name = strings.TrimSpace(name)
@@ -62,7 +54,7 @@ func folderWatch(files []db.FileWatch, rel string) (watched, total, pct int) {
 
 func fileTitle(node db.LibraryNode, side sideNFO) string {
 	if title := strings.TrimSpace(side.Title); title != "" {
-		return stripVideoExt(title)
+		return title
 	}
 	if title := strings.TrimSpace(node.FileTitle.String); title != "" {
 		return stripVideoExt(title)
@@ -90,74 +82,7 @@ func folderDisplayTitle(dir, name string, mmTitle, mmYear sql.NullString, season
 }
 
 func folderNFOTitle(dir string, seasonNum int) string {
-	if strings.TrimSpace(dir) == "" {
-		return ""
-	}
-	if t := showOrMovieNFOTitle(filepath.Join(dir, "tvshow.nfo")); t != "" {
-		return t
-	}
-	if t := showOrMovieNFOTitle(filepath.Join(dir, "movie.nfo")); t != "" {
-		return t
-	}
-	if seasonNum <= 0 {
-		seasonNum = seasonNumberFromName(filepath.Base(dir))
-	}
-	if p := metadata.FindSeasonNFO(dir, seasonNum); p != "" {
-		if n, err := metadata.ReadSeasonNFO(p); err == nil && n != nil {
-			if t := strings.TrimSpace(n.Title); t != "" {
-				return t
-			}
-		}
-	}
-	return ""
-}
-
-func showOrMovieNFOTitle(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil || len(bytesTrim(b)) == 0 {
-		return ""
-	}
-	low := strings.ToLower(string(b))
-	if strings.Contains(low, "<tvshow") {
-		n, err := metadata.ReadTVShowNFO(path)
-		if err != nil || n == nil {
-			return ""
-		}
-		return strings.TrimSpace(n.Title)
-	}
-	if strings.Contains(low, "<movie") {
-		n, err := metadata.ReadMovieNFO(path)
-		if err != nil || n == nil {
-			return ""
-		}
-		return strings.TrimSpace(n.Title)
-	}
-	return ""
-}
-
-func seasonNumberFromName(name string) int {
-	name = strings.ToLower(strings.TrimSpace(name))
-	i := strings.Index(name, "season")
-	if i < 0 {
-		return 0
-	}
-	rest := strings.TrimSpace(name[i+len("season"):])
-	n := 0
-	seen := false
-	for _, r := range rest {
-		if r < '0' || r > '9' {
-			if seen {
-				break
-			}
-			continue
-		}
-		seen = true
-		n = n*10 + int(r-'0')
-	}
-	if !seen {
-		return 0
-	}
-	return n
+	return metadata.FolderTitle(dir, seasonNum)
 }
 
 func isShowKind(kind string) bool {
@@ -206,38 +131,7 @@ func fileCardFields(libPath string, node db.LibraryNode, show bool) (title, plot
 }
 
 func readSideNFO(abs string) sideNFO {
-	dir := filepath.Dir(abs)
-	base := strings.TrimSuffix(filepath.Base(abs), filepath.Ext(abs))
-	for _, p := range []string{
-		filepath.Join(dir, base+".nfo"),
-		filepath.Join(dir, "episode.nfo"),
-		filepath.Join(dir, "movie.nfo"),
-	} {
-		b, err := os.ReadFile(p)
-		if err != nil || len(bytesTrim(b)) == 0 {
-			continue
-		}
-		low := strings.ToLower(string(b))
-		if strings.Contains(low, "<episodedetails") {
-			n, err := metadata.ReadEpisodeNFO(p)
-			if err != nil || n == nil {
-				continue
-			}
-			return sideNFO{Title: n.Title, Plot: n.Plot, Aired: n.Aired, Season: n.Season, Episode: n.Episode, Runtime: n.Runtime}
-		}
-		if strings.Contains(low, "<movie") {
-			n, err := metadata.ReadMovieNFO(p)
-			if err != nil || n == nil {
-				continue
-			}
-			plot := n.Plot
-			if strings.TrimSpace(plot) == "" {
-				plot = n.Outline
-			}
-			return sideNFO{Title: n.Title, Plot: plot, Aired: n.Premiered, Runtime: n.Runtime}
-		}
-	}
-	return sideNFO{}
+	return metadata.ReadVideoSidecar(abs)
 }
 
 func bytesTrim(b []byte) []byte {

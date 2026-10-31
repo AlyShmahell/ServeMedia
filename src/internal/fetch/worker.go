@@ -201,6 +201,7 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 		if jobs[i].ID == "" {
 			jobs[i].ID = matchmedia.StableID(jobs[i].Path)
 		}
+		jobs[i] = w.fillJobSeasonNumbers(jobs[i])
 		if err := w.recordTreeStructure(ctx, lib, jobs[i], opts); err != nil {
 			return err
 		}
@@ -226,6 +227,7 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 		qmu.Unlock()
 	}
 	enqueue := func(j matchmedia.Job, requireFiles bool) {
+		j = w.fillJobSeasonNumbers(j)
 		if j.Status != "matched" || j.Match == nil {
 			return
 		}
@@ -280,6 +282,9 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 			<-errCh
 			return err
 		}
+	}
+	for i := range final {
+		final[i] = w.fillJobSeasonNumbers(final[i])
 	}
 	for _, j := range final {
 		if j.Status != "matched" || j.Match == nil {
@@ -685,7 +690,7 @@ func foldSaveHit(nfo, episode, poster int, seen map[string]saveHit, id string, h
 }
 
 func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, id string, persist bool) error {
-	if item == nil || !item.MatchMediaJobID.Valid || item.MatchMediaJobID.String == "" {
+	if item == nil {
 		return fmt.Errorf("no matchmedia job for this title")
 	}
 	session := ""
@@ -693,7 +698,6 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 		session = strings.TrimSpace(item.MatchMediaSessionID.String)
 	}
 	hint := DecodePickerSnapshot(item.MatchCandidates.String)
-	hint.ID = item.MatchMediaJobID.String
 	if hint.Path == "" {
 		hint.Path = item.Path
 	}
@@ -702,6 +706,21 @@ func (w *Worker) ApplySelect(ctx context.Context, item *db.MediaItem, provider, 
 	}
 	if hint.Kind == "" {
 		hint.Kind = item.Kind
+	}
+	jobID := ""
+	if item.MatchMediaJobID.Valid {
+		jobID = strings.TrimSpace(item.MatchMediaJobID.String)
+	}
+	if jobID != "" {
+		hint.ID = jobID
+	} else {
+		if !JobHasPickerCandidates(hint) {
+			return fmt.Errorf("no matchmedia job for this title")
+		}
+		hint.ID = matchmedia.StableID(hint.Path)
+		if hint.ID == "" {
+			return fmt.Errorf("no matchmedia job for this title")
+		}
 	}
 	j, err := w.Meta.SelectStored(ctx, hint, provider, id)
 	if err != nil {
@@ -1015,6 +1034,11 @@ func uniqueID(n *metadata.NFOUniqueID) (provider, id string) {
 }
 
 func jobTitle(j matchmedia.Job, itemPath string) string {
+	if nfo := titleNFOFile(itemPath); nfo != "" {
+		if t := metadata.NFOTitle(nfo); t != "" {
+			return t
+		}
+	}
 	title := strings.TrimSpace(j.Title)
 	if title == "" && j.Match != nil {
 		title = strings.TrimSpace(j.Match.Title)
@@ -1352,6 +1376,18 @@ func kindFromJob(j matchmedia.Job, files []matchmedia.JobFile) string {
 	return "movie"
 }
 
+func (w *Worker) fillJobSeasonNumbers(j matchmedia.Job) matchmedia.Job {
+	if kindFromJob(j, expandJobFiles(j)) != "show" || cleanMediaPath(j.Path) == "" {
+		return j
+	}
+	files := fillSeasonNumbers(cleanMediaPath(j.Path), j.Files)
+	if filled := countFilledNumbers(j.Files, files); filled > 0 {
+		log.Printf("season numbers derived from paths for %s (%d files)", j.Path, filled)
+	}
+	j.Files = files
+	return j
+}
+
 func jobTouchesItem(j matchmedia.Job, item *db.MediaItem) bool {
 	if item == nil {
 		return true
@@ -1423,6 +1459,17 @@ func (w *Worker) applyJob(ctx context.Context, it *db.MediaItem, j matchmedia.Jo
 }
 
 func (w *Worker) setJobMatch(ctx context.Context, it *db.MediaItem, session, jobID, status, matchErr string, j matchmedia.Job) error {
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		path := strings.TrimSpace(j.Path)
+		if path == "" && it != nil {
+			path = strings.TrimSpace(it.Path)
+		}
+		jobID = matchmedia.StableID(path)
+		if j.ID == "" {
+			j.ID = jobID
+		}
+	}
 	if err := w.DB.SetMatchMediaMatch(ctx, it.ID, session, jobID, status, matchErr); err != nil {
 		return err
 	}
@@ -1488,6 +1535,9 @@ func (w *Worker) applyMovie(ctx context.Context, it *db.MediaItem, j matchmedia.
 	if poster != "" {
 		it.PosterPath = sql.NullString{String: poster, Valid: true}
 	}
+	if err := w.syncLinkedNodeFromMovieNFO(ctx, it, nfo); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1518,7 +1568,24 @@ func (w *Worker) applyShow(ctx context.Context, it *db.MediaItem, j matchmedia.J
 	if poster != "" {
 		it.PosterPath = sql.NullString{String: poster, Valid: true}
 	}
+	if err := w.syncLinkedNodeFromShowNFO(ctx, it, nfo); err != nil {
+		return err
+	}
 	seasons, _ := w.DB.ListSeasons(ctx, it.ID)
+	seasonEps := make(map[int64][]db.Episode, len(seasons))
+	dirSeasons := map[string]map[int]bool{}
+	for _, season := range seasons {
+		eps, _ := w.DB.ListEpisodes(ctx, season.ID)
+		seasonEps[season.ID] = eps
+		for _, ep := range eps {
+			dir := filepath.Clean(filepath.Dir(ep.Path))
+			if dirSeasons[dir] == nil {
+				dirSeasons[dir] = map[int]bool{}
+			}
+			dirSeasons[dir][season.SeasonNumber] = true
+		}
+	}
+	showRoot := cleanMediaPath(it.Path)
 	for _, season := range seasons {
 		cs := cat.FindSeason(season.SeasonNumber)
 		catalogSeasonTitle := ""
@@ -1528,14 +1595,32 @@ func (w *Worker) applyShow(ctx context.Context, it *db.MediaItem, j matchmedia.J
 			plot = cs.Synopsis
 		}
 		stitle := seasonDisplayTitle(season.SeasonNumber, catalogSeasonTitle, title)
-		eps, _ := w.DB.ListEpisodes(ctx, season.ID)
+		eps := seasonEps[season.ID]
 		seasonDir := ""
 		if len(eps) > 0 {
 			seasonDir = filepath.Dir(eps[0].Path)
-			writeSeasonSidecar(seasonDir, stitle, plot)
+		}
+		flat := seasonDir == "" || cleanMediaPath(seasonDir) == showRoot
+		seasonNFOPlot := ""
+		// A season.nfo title and plot stay in place. The catalog fills a blank plot only.
+		if seasonDir != "" {
+			if p := metadata.FindSeasonNFO(seasonDir, season.SeasonNumber); p != "" {
+				if n, err := metadata.ReadSeasonNFO(p); err == nil && n != nil {
+					if t := strings.TrimSpace(n.Title); t != "" {
+						stitle = t
+					}
+					seasonNFOPlot = strings.TrimSpace(n.Plot)
+				}
+			}
+			if seasonNFOPlot != "" {
+				plot = seasonNFOPlot
+			}
+			if !flat {
+				writeSeasonSidecar(seasonDir, stitle, plot)
+			}
 		}
 		seasonPoster := ""
-		if seasonDir != "" && cs != nil {
+		if !flat && cs != nil {
 			seasonPoster = w.writeImage(seasonDir, "poster", strings.TrimSpace(cs.Poster), session)
 		}
 		if seasonPoster == "" && seasonDir != "" {
@@ -1545,6 +1630,9 @@ func (w *Worker) applyShow(ctx context.Context, it *db.MediaItem, j matchmedia.J
 			seasonPoster = strings.TrimSpace(it.PosterPath.String)
 		}
 		_ = w.DB.UpdateSeasonMeta(ctx, season.ID, stitle, plot, seasonPoster, cat.Provider, cat.ID)
+		if !flat && seasonDir != "" && len(dirSeasons[filepath.Clean(seasonDir)]) == 1 {
+			w.stampSeasonNode(ctx, it, seasonDir, stitle, plot, seasonNFOPlot)
+		}
 		for _, ep := range eps {
 			ce := resolveCatalogEpisode(cat, season.SeasonNumber, ep.EpisodeNumber, ep.Path)
 			nfoPath, still := fileSidecars(j, ep.Path)
@@ -1560,6 +1648,40 @@ func (w *Worker) applyShow(ctx context.Context, it *db.MediaItem, j matchmedia.J
 	return nil
 }
 
+func (w *Worker) stampSeasonNode(ctx context.Context, it *db.MediaItem, seasonDir, title, catalogPlot, seasonNFOPlot string) {
+	if w == nil || w.DB == nil || it == nil {
+		return
+	}
+	libPath, err := w.DB.LibraryPath(ctx, it.LibraryID)
+	if err != nil || strings.TrimSpace(libPath) == "" {
+		return
+	}
+	rel, err := relWithin(libPath, seasonDir)
+	if err != nil || rel == "" {
+		return
+	}
+	nodeID, err := w.DB.NodeIDByRel(ctx, it.LibraryID, rel)
+	if err != nil || nodeID == 0 {
+		return
+	}
+	plot := catalogPlot
+	if p := strings.TrimSpace(seasonNFOPlot); p != "" {
+		plot = p
+	}
+	var titlePtr *string
+	if t := strings.TrimSpace(title); t != "" {
+		titlePtr = &t
+	}
+	var plotPtr *string
+	if strings.TrimSpace(plot) != "" {
+		plotPtr = &plot
+	}
+	if titlePtr == nil && plotPtr == nil {
+		return
+	}
+	_ = w.DB.SetNodeDisplay(ctx, nodeID, false, titlePtr, plotPtr)
+}
+
 func writeSeasonSidecar(dir, title, plot string) {
 	dir = strings.TrimSpace(dir)
 	title = strings.TrimSpace(title)
@@ -1571,8 +1693,8 @@ func writeSeasonSidecar(dir, title, plot string) {
 	if prev, err := metadata.ReadSeasonNFO(path); err == nil && prev != nil {
 		nfo = *prev
 		nfo.Title = title
-		if strings.TrimSpace(plot) != "" {
-			nfo.Plot = plot
+		if strings.TrimSpace(nfo.Plot) == "" {
+			nfo.Plot = strings.TrimSpace(plot)
 		}
 	}
 	if err := metadata.WriteSeasonNFO(path, nfo); err != nil {
@@ -1626,25 +1748,34 @@ func (w *Worker) applyEpisode(ctx context.Context, show *db.MediaItem, season *d
 		catalogTitle = strings.TrimSpace(ce.Title)
 	}
 	existing := strings.TrimSpace(ep.Title.String)
-	title := catalogTitle
-	if title == "" || strings.EqualFold(title, filenameTitle) {
-		if existing != "" {
-			title = existing
-		} else if title == "" {
-			title = filenameTitle
+	beside := episodeBesideNFO(ep.Path)
+	var prev *metadata.EpisodeNFO
+	if beside != "" {
+		if n, err := metadata.ReadEpisodeNFO(beside); err == nil {
+			prev = n
+		}
+	}
+	nfoTitle := ""
+	if prev != nil {
+		nfoTitle = strings.TrimSpace(prev.Title)
+	}
+	title := nfoTitle
+	if title == "" {
+		title = catalogTitle
+		if title == "" || strings.EqualFold(title, filenameTitle) {
+			if existing != "" {
+				title = existing
+			} else if title == "" {
+				title = filenameTitle
+			}
 		}
 	}
 	plot := ""
 	if ce != nil {
 		plot = ce.Synopsis
 	}
-	epNFO := episodeNFOFromCatalog(title, season.SeasonNumber, ep.EpisodeNumber, ce, nil)
-	if beside := episodeBesideNFO(ep.Path); beside != "" {
-		var prev *metadata.EpisodeNFO
-		if n, err := metadata.ReadEpisodeNFO(beside); err == nil {
-			prev = n
-		}
-		epNFO = episodeNFOFromCatalog(title, season.SeasonNumber, ep.EpisodeNumber, ce, prev)
+	epNFO := episodeNFOFromCatalog(title, season.SeasonNumber, ep.EpisodeNumber, ce, prev)
+	if beside != "" {
 		if err := metadata.WriteEpisodeNFO(beside, epNFO); err != nil {
 			log.Printf("episode nfo %s: %v", beside, err)
 			if !filepath.IsAbs(nfoPath) {

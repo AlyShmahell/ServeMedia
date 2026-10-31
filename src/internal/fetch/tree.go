@@ -9,6 +9,7 @@ import (
 
 	"github.com/alyshmahell/servemedia/src/internal/db"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
+	"github.com/alyshmahell/servemedia/src/internal/metadata"
 )
 
 func (w *Worker) recordTreeStructure(ctx context.Context, lib *db.Library, j matchmedia.Job, opts Opts) error {
@@ -23,8 +24,12 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 	if w == nil || w.DB == nil || lib == nil || strings.TrimSpace(lib.Path) == "" {
 		return nil
 	}
-	if unchanged, err := w.groupUnchanged(ctx, lib, j, opts); err != nil || unchanged {
+	unchanged, err := w.groupUnchanged(ctx, lib, j, opts)
+	if err != nil {
 		return err
+	}
+	if unchanged {
+		return w.refreshUnchangedTitleFacts(ctx, lib, j)
 	}
 	if _, err := w.DB.EnsureLibraryRoot(ctx, lib.ID); err != nil {
 		return err
@@ -64,6 +69,11 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 			return err
 		}
 		ids[rel] = id
+		if !leaf.file {
+			if err := syncNodeFromTitleNFO(ctx, w.DB, id, leaf.abs); err != nil {
+				return err
+			}
+		}
 	}
 	if !withGroup {
 		return nil
@@ -100,6 +110,14 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 			}); err != nil {
 				return err
 			}
+			// NFO wins over MatchMedia stamp for title/year/premiere/plot/rating.
+			groupAbs := j.Path
+			if st, err := os.Stat(groupAbs); err == nil && !st.IsDir() {
+				groupAbs = filepath.Dir(groupAbs)
+			}
+			if err := syncNodeFromTitleNFO(ctx, w.DB, id, groupAbs); err != nil {
+				return err
+			}
 		}
 	}
 	for _, leaf := range leaves {
@@ -133,6 +151,19 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 				still = raw
 			}
 		}
+		// A sidecar NFO title is authoritative over the catalog title.
+		side := metadata.VideoSidecar{}
+		if p := strings.TrimSpace(leaf.se.NFOPath); p != "" {
+			side = metadata.ReadVideoSidecarAt(p)
+		} else {
+			side = metadata.ReadVideoSidecar(leaf.abs)
+		}
+		if t := strings.TrimSpace(side.Title); t != "" {
+			title = t
+			if p := strings.TrimSpace(side.Plot); p != "" {
+				plot = p
+			}
+		}
 		if err := w.DB.SetNodeFile(ctx, id, groupID, season, episode, title, plot, still); err != nil {
 			return err
 		}
@@ -141,7 +172,14 @@ func (w *Worker) recordTreeMode(ctx context.Context, lib *db.Library, j matchmed
 }
 
 func (w *Worker) stampSavedTree(ctx context.Context, lib *db.Library, it *db.MediaItem) {
-	if w == nil || w.DB == nil || lib == nil || it == nil || it.Kind != "show" {
+	if w == nil || w.DB == nil || lib == nil || it == nil {
+		return
+	}
+	if it.Kind == "movie" {
+		w.stampLeafTitle(ctx, lib, it.Path, it.Title)
+		return
+	}
+	if it.Kind != "show" {
 		return
 	}
 	seasons, err := w.DB.ListSeasons(ctx, it.ID)
@@ -161,6 +199,9 @@ func (w *Worker) stampSavedTree(ctx context.Context, lib *db.Library, it *db.Med
 			}
 		}
 		for _, ep := range eps {
+			if title := strings.TrimSpace(ep.Title.String); title != "" {
+				w.stampLeafTitle(ctx, lib, ep.Path, title)
+			}
 			if !ep.StillPath.Valid || strings.TrimSpace(ep.StillPath.String) == "" {
 				continue
 			}
@@ -175,6 +216,33 @@ func (w *Worker) stampSavedTree(ctx context.Context, lib *db.Library, it *db.Med
 			_ = w.DB.SetNodeStill(ctx, id, ep.StillPath.String)
 		}
 	}
+}
+
+// stampLeafTitle writes a resolved title onto the tree node for path. File
+// leaves get file_title; folder nodes get mm_title.
+func (w *Worker) stampLeafTitle(ctx context.Context, lib *db.Library, path, title string) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return
+	}
+	rel, err := relWithin(lib.Path, path)
+	if err != nil || rel == "" {
+		if d := filepath.Dir(path); d != path {
+			rel, err = relWithin(lib.Path, d)
+		}
+		if err != nil || rel == "" {
+			return
+		}
+	}
+	id, err := w.DB.NodeIDByRel(ctx, lib.ID, rel)
+	if err != nil || id == 0 {
+		return
+	}
+	node, err := w.DB.GetLibraryNode(ctx, id)
+	if err != nil || node == nil {
+		return
+	}
+	_ = w.DB.SetNodeDisplay(ctx, id, node.NodeKind != "dir", &title, nil)
 }
 
 func (w *Worker) stampNodePoster(ctx context.Context, lib *db.Library, it *db.MediaItem, j matchmedia.Job) {
@@ -194,6 +262,30 @@ func (w *Worker) stampNodePoster(ctx context.Context, lib *db.Library, it *db.Me
 		return
 	}
 	_ = w.DB.SetNodePoster(ctx, id, poster)
+}
+
+// refreshUnchangedTitleFacts updates directory NFO facts when a changes scan
+// leaves the file set in place. Premiere and title sort keys stay current.
+func (w *Worker) refreshUnchangedTitleFacts(ctx context.Context, lib *db.Library, j matchmedia.Job) error {
+	if w == nil || w.DB == nil || lib == nil {
+		return nil
+	}
+	groupAbs := cleanMediaPath(j.Path)
+	if groupAbs == "" {
+		return nil
+	}
+	if st, err := os.Stat(groupAbs); err == nil && !st.IsDir() {
+		groupAbs = filepath.Dir(groupAbs)
+	}
+	rel, err := relWithin(lib.Path, groupAbs)
+	if err != nil || rel == "" {
+		return nil
+	}
+	id, err := w.DB.NodeIDByRel(ctx, lib.ID, rel)
+	if err != nil || id == 0 {
+		return err
+	}
+	return syncNodeFromTitleNFO(ctx, w.DB, id, groupAbs)
 }
 
 func (w *Worker) groupUnchanged(ctx context.Context, lib *db.Library, j matchmedia.Job, opts Opts) (bool, error) {

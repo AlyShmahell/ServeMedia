@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -49,7 +50,8 @@ type Config struct {
 	} `yaml:"media"`
 	Transcode struct {
 		Path           string `yaml:"path"`
-		MaxHeight      int    `yaml:"max_height"`
+		Heights        []int  `yaml:"heights,omitempty"`
+		MaxHeight      int    `yaml:"max_height,omitempty"`
 		CRF            int    `yaml:"crf"`
 		SegmentSeconds int    `yaml:"segment_seconds"`
 		CleanupHours   int    `yaml:"cleanup_hours"`
@@ -174,6 +176,7 @@ func Defaults() Config {
 	c.Store.Path = "store"
 	c.Media.Path = "/mnt,/media,$XDG_VIDEOS_DIR,$XDG_MUSIC_DIR"
 	c.Transcode.Path = "transcode"
+	c.Transcode.Heights = StandardHeights()
 	c.Transcode.MaxHeight = 2160
 	c.Transcode.CRF = 23
 	c.Transcode.SegmentSeconds = 6
@@ -186,6 +189,71 @@ func Defaults() Config {
 	c.Scan.OnStartup = false
 	c.Watchdog.TTLSeconds = 60
 	return c
+}
+
+// StandardHeights is the ladder offered as toggles in settings.
+func StandardHeights() []int {
+	return []int{2160, 1440, 1080, 720, 480, 360, 240, 144}
+}
+
+// NormalizeHeights keeps positive unique heights, highest first.
+func NormalizeHeights(in []int) []int {
+	seen := map[int]struct{}{}
+	out := make([]int, 0, len(in))
+	for _, h := range in {
+		if h <= 0 {
+			continue
+		}
+		if _, ok := seen[h]; ok {
+			continue
+		}
+		seen[h] = struct{}{}
+		out = append(out, h)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] > out[j] })
+	return out
+}
+
+// HeightsFromLegacyMax turns a saved max height into the allowlist it used to imply.
+// A value that is not a standard rung is kept as a custom height.
+func HeightsFromLegacyMax(max int) []int {
+	if max <= 0 {
+		return StandardHeights()
+	}
+	var out []int
+	matched := false
+	for _, h := range StandardHeights() {
+		if h == max {
+			matched = true
+		}
+		if h <= max {
+			out = append(out, h)
+		}
+	}
+	if !matched {
+		out = append(out, max)
+	}
+	return NormalizeHeights(out)
+}
+
+func applyOverlayHeights(c *Config, overlay []byte) error {
+	var probe struct {
+		Transcode struct {
+			Heights   *[]int `yaml:"heights"`
+			MaxHeight *int   `yaml:"max_height"`
+		} `yaml:"transcode"`
+	}
+	if err := yaml.Unmarshal(overlay, &probe); err != nil {
+		return fmt.Errorf("parse overlay heights: %w", err)
+	}
+	if probe.Transcode.Heights != nil {
+		c.Transcode.Heights = NormalizeHeights(*probe.Transcode.Heights)
+		return nil
+	}
+	if probe.Transcode.MaxHeight != nil {
+		c.Transcode.Heights = HeightsFromLegacyMax(*probe.Transcode.MaxHeight)
+	}
+	return nil
 }
 
 func (c *Config) EnsureIntegrationDefaults() bool {
@@ -239,6 +307,9 @@ func Load(path string) (Config, error) {
 		c.OverlayPath = overlay
 		c.pinInternalPaths()
 		if err := c.resolvePaths(); err != nil {
+			return c, err
+		}
+		if err := applyOverlayHeights(&c, b); err != nil {
 			return c, err
 		}
 	}
@@ -382,7 +453,7 @@ type settingsOverlay struct {
 		Path string `yaml:"path"`
 	} `yaml:"media,omitempty"`
 	Transcode struct {
-		MaxHeight      int    `yaml:"max_height"`
+		Heights        []int  `yaml:"heights"`
 		CRF            int    `yaml:"crf"`
 		SegmentSeconds int    `yaml:"segment_seconds"`
 		CleanupHours   int    `yaml:"cleanup_hours"`
@@ -409,7 +480,7 @@ func (c Config) settingsDocument(mediaPath string) settingsOverlay {
 			Path string `yaml:"path"`
 		}{Path: mediaPath}
 	}
-	doc.Transcode.MaxHeight = c.Transcode.MaxHeight
+	doc.Transcode.Heights = NormalizeHeights(c.Transcode.Heights)
 	doc.Transcode.CRF = c.Transcode.CRF
 	doc.Transcode.SegmentSeconds = c.Transcode.SegmentSeconds
 	doc.Transcode.CleanupHours = c.Transcode.CleanupHours
