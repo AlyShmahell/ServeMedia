@@ -39,8 +39,9 @@ func TestFFmpegArgsVAAPIFull10Bit(t *testing.T) {
 	if !strings.Contains(args, "-hwaccel vaapi") {
 		t.Fatalf("expected input hwaccel in %q", args)
 	}
-	if !strings.Contains(args, "hwdownload,format=p010le,format=nv12,hwupload") {
-		t.Fatalf("expected 10-bit conversion chain in %q", args)
+	want := "hwdownload,format=p010le," + swscaleCompatTV + ",format=nv12,hwupload"
+	if !strings.Contains(args, want) {
+		t.Fatalf("expected 10-bit conversion chain %q in %q", want, args)
 	}
 }
 
@@ -114,6 +115,24 @@ func TestFFmpegArgsSoftware(t *testing.T) {
 	}
 	if strings.Contains(args, "h264_vaapi") {
 		t.Fatalf("unexpected vaapi in software args: %q", args)
+	}
+	if strings.Contains(args, "setparams=") {
+		t.Fatalf("first software attempt should keep the original graph: %q", args)
+	}
+}
+
+func TestFFmpegArgsSoftwareColorCompat(t *testing.T) {
+	m := &Manager{Cfg: config.Defaults()}
+	plain := strings.Join(ffmpegArgsForPipeline("", "", "/media/x.mkv", PipelineSoftware, 0, 720, 0, m.Cfg, true, "/tmp/out"), " ")
+	if !strings.Contains(plain, swscaleCompatTV+",scale=-2:720") {
+		t.Fatalf("expected setparams before scale in %q", plain)
+	}
+	if strings.Contains(plain, "scale_vaapi") {
+		t.Fatalf("software retry must stay on the CPU: %q", plain)
+	}
+	noScale := strings.Join(ffmpegArgsForPipeline("", "", "/media/x.mkv", PipelineSoftware, 0, 0, 0, m.Cfg, true, "/tmp/out"), " ")
+	if !strings.Contains(noScale, "-vf "+swscaleCompatTV+" ") {
+		t.Fatalf("expected setparams ahead of pix_fmt in %q", noScale)
 	}
 }
 
@@ -213,7 +232,7 @@ func TestStartJobDoesNotReuseWhenEncodeSettingsChange(t *testing.T) {
 	m.jobs["old"] = old
 	m.activeByKey["tab"] = "old"
 
-	got, err := m.startJob("/v.mkv", 0, 720, 0, "tab", PipelineSoftware)
+	got, err := m.startJob("/v.mkv", 0, 720, 0, "tab", PipelineSoftware, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +241,7 @@ func TestStartJobDoesNotReuseWhenEncodeSettingsChange(t *testing.T) {
 	}
 
 	m.Cfg.Transcode.CRF = 18
-	got, err = m.startJob("/v.mkv", 0, 720, 0, "other", PipelineSoftware)
+	got, err = m.startJob("/v.mkv", 0, 720, 0, "other", PipelineSoftware, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +257,7 @@ func TestStartJobDoesNotReuseWhenEncodeSettingsChange(t *testing.T) {
 
 	m.Cfg.Transcode.CRF = 23
 	m.Cfg.Transcode.HWAccel = "none"
-	got, err = m.startJob("/v.mkv", 0, 720, 0, "other", PipelineSoftware)
+	got, err = m.startJob("/v.mkv", 0, 720, 0, "other", PipelineSoftware, false)
 	if err != nil {
 		t.Fatal(err)
 	}

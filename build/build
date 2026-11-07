@@ -200,7 +200,7 @@ compile_ffmpeg() {
   fetch_src lame "$(source_url lame)"
   (
     cd lame
-    ./configure --prefix="$prefix" --disable-shared --enable-static --disable-frontend --disable-gtktest
+    ./configure --prefix="$prefix" --disable-shared --enable-static --disable-frontend --disable-gtktest --disable-decoder
     make -j"$(nproc)"
     make install
   )

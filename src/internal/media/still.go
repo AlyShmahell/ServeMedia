@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // ExtractStillJPEG grabs one JPEG frame from src into dst.
@@ -152,14 +153,29 @@ func stillSeekTimes(dur float64) []float64 {
 }
 
 func grabJPEGFrame(src, dst string, at float64) error {
-	cmd := ffmpegCommand(nil,
+	err := runJPEGFrame(src, dst, at, false)
+	if err != nil && strings.Contains(err.Error(), "Unsupported input") {
+		return runJPEGFrame(src, dst, at, true)
+	}
+	return err
+}
+
+func runJPEGFrame(src, dst string, at float64, colorCompat bool) error {
+	args := []string{
 		"-hide_banner", "-loglevel", "error",
 		"-ss", fmt.Sprintf("%.3f", at),
 		"-i", src,
 		"-frames:v", "1",
 		"-q:v", "2",
-		"-y", dst,
-	)
+	}
+	if colorCompat {
+		args = append(args,
+			"-vf", swscaleCompatPC+",format=yuv420p",
+			"-color_range", "pc",
+		)
+	}
+	args = append(args, "-y", dst)
+	cmd := ffmpegCommand(nil, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		if len(out) > 0 {
 			return fmt.Errorf("ffmpeg still: %w: %s", err, string(out))
