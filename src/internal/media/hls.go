@@ -70,7 +70,15 @@ type Job struct {
 	LastAccess time.Time
 	cmd        *exec.Cmd
 	cancel     context.CancelFunc
+	failLog    string
 }
+
+// swscaleCompatTV tags frames the FFmpeg 9 scaler rejects when primaries or
+// transfer are missing. It relabels; it does not tonemap.
+const swscaleCompatTV = "setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+
+// swscaleCompatPC is the JPEG retry. Full range matches the mjpeg encoder.
+const swscaleCompatPC = "setparams=range=pc:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
 
 func NewManager(cfg config.Config) *Manager {
 	m := &Manager{
@@ -398,7 +406,7 @@ func vaapiRealFileSmoke(dev, source string) error {
 	if pipeline == PipelineSoftware {
 		pipeline = PipelineVAAPIHybrid
 	}
-	args := ffmpegArgsForPipeline(dev, "h264", source, pipeline, -1, 0, 0, config.Defaults())
+	args := ffmpegArgsForPipeline(dev, "h264", source, pipeline, -1, 0, 0, config.Defaults(), false)
 	args = append([]string{"-hide_banner", "-loglevel", "error"}, args...)
 	args = append(args, "-frames:v", "30", "-f", "null", "-")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -497,7 +505,7 @@ func vaapiSmokeTestAV110(dev string) error {
 		"-init_hw_device", "vaapi=va:"+dev,
 		"-filter_hw_device", "va",
 		"-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2",
-		"-vf", "format=p010le,hwupload",
+		"-vf", "format=nv12,hwupload,scale_vaapi=format=p010",
 		"-c:v", "av1_vaapi",
 		"-f", "null", "-",
 	)
@@ -559,13 +567,22 @@ func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex
 	pixFmt = videoPixFmt(source, pixFmt)
 	allowAV110 := m.vaapiAV110 && !force8Bit
 	pipeline := selectInitialPipeline(m.useVAAPI, pixFmt, m.vaapiCodec, allowAV110, m.vaapiFullHW)
+	colorCompat := false
 
 	for {
-		j, err := m.startJob(source, audioIndex, height, startSec, ownerKey, pipeline)
+		j, err := m.startJob(source, audioIndex, height, startSec, ownerKey, pipeline, colorCompat)
 		if err != nil {
 			return nil, err
 		}
 		if err := m.WaitPlaylist(ctx, j, 30*time.Second); err != nil {
+			if pipeline == PipelineSoftware && !colorCompat && swscaleUnsupported(j) {
+				log.Printf("WARN transcode: software color retry for job %s (%v)", j.ID, err)
+				m.mu.Lock()
+				m.removeJobLocked(j.ID)
+				m.mu.Unlock()
+				colorCompat = true
+				continue
+			}
 			next := fallbackPipeline(pipeline, pixFmt)
 			if next == pipeline {
 				return nil, err
@@ -574,11 +591,19 @@ func (m *Manager) Start(ctx context.Context, ownerKey, source string, audioIndex
 			m.mu.Lock()
 			m.removeJobLocked(j.ID)
 			m.mu.Unlock()
+			colorCompat = false
 			pipeline = next
 			continue
 		}
 		return j, nil
 	}
+}
+
+func swscaleUnsupported(j *Job) bool {
+	if j == nil {
+		return false
+	}
+	return strings.Contains(j.failLog, "Unsupported input")
 }
 
 // Cancel drops ownerKey from its job and stops the transcode when no viewers remain.
@@ -672,10 +697,10 @@ func (m *Manager) detachTabLocked(tabID string) {
 	}
 }
 
-func (m *Manager) startJob(source string, audioIndex, height, startSec int, ownerKey string, pipeline Pipeline) (*Job, error) {
+func (m *Manager) startJob(source string, audioIndex, height, startSec int, ownerKey string, pipeline Pipeline, colorCompat bool) (*Job, error) {
 	m.mu.Lock()
 	for _, j := range m.jobs {
-		if !jobMatches(j, source, audioIndex, height, startSec, m.Cfg) {
+		if colorCompat || !jobMatches(j, source, audioIndex, height, startSec, m.Cfg) {
 			continue
 		}
 		if pipeline != PipelineVAAPIFullAV110 && j.Pipeline == PipelineVAAPIFullAV110.String() {
@@ -704,7 +729,7 @@ func (m *Manager) startJob(source string, audioIndex, height, startSec int, owne
 	}
 	m.jobs[id] = j
 	m.attachTabLocked(j, ownerKey)
-	args := m.ffmpegArgs(source, out, pipeline, audioIndex, height, startSec)
+	args := ffmpegArgsForPipeline(m.vaapiDev, m.vaapiCodec, source, pipeline, audioIndex, height, startSec, m.Cfg, colorCompat, out)
 	log.Printf("transcode pipeline=%s job=%s", pipeline, id)
 	log.Printf("ffmpeg %s: %s", id, strings.Join(args, " "))
 	cmd := ffmpegCommand(jobCtx, args...)
@@ -718,8 +743,9 @@ func (m *Manager) startJob(source string, audioIndex, height, startSec int, owne
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if err != nil {
-			j.Status = "error"
 			msg := stderr.String()
+			j.failLog = msg
+			j.Status = "error"
 			if len(msg) > 2000 {
 				msg = msg[len(msg)-2000:]
 			}
@@ -752,10 +778,10 @@ func (m *Manager) removeJobLocked(id string) {
 }
 
 func (m *Manager) ffmpegArgs(source, out string, pipeline Pipeline, audioIndex, height, startSec int) []string {
-	return ffmpegArgsForPipeline(m.vaapiDev, m.vaapiCodec, source, pipeline, audioIndex, height, startSec, m.Cfg, out)
+	return ffmpegArgsForPipeline(m.vaapiDev, m.vaapiCodec, source, pipeline, audioIndex, height, startSec, m.Cfg, false, out)
 }
 
-func ffmpegArgsForPipeline(vaapiDev, vaapiCodec, source string, pipeline Pipeline, audioIndex, height, startSec int, cfg config.Config, out ...string) []string {
+func ffmpegArgsForPipeline(vaapiDev, vaapiCodec, source string, pipeline Pipeline, audioIndex, height, startSec int, cfg config.Config, colorCompat bool, out ...string) []string {
 	seg := cfg.Transcode.SegmentSeconds
 	if seg <= 0 {
 		seg = 6
@@ -842,8 +868,20 @@ func ffmpegArgsForPipeline(vaapiDev, vaapiCodec, source string, pipeline Pipelin
 	args := []string{"-y"}
 	args = append(args, ss...)
 	args = append(args, "-i", source, "-map", "0:v:0", "-map", audioMap)
-	if height > 0 {
-		args = append(args, "-vf", fmt.Sprintf("scale=-2:%d", height))
+	if colorCompat || height > 0 {
+		vf := ""
+		if colorCompat {
+			vf = swscaleCompatTV
+		}
+		if height > 0 {
+			scale := fmt.Sprintf("scale=-2:%d", height)
+			if vf != "" {
+				vf += "," + scale
+			} else {
+				vf = scale
+			}
+		}
+		args = append(args, "-vf", vf)
 	}
 	args = append(args,
 		"-pix_fmt", "yuv420p",
@@ -865,7 +903,7 @@ func vaapiVideoFilter(pipeline Pipeline, height int) string {
 	}
 	switch pipeline {
 	case PipelineVAAPIFull10Bit:
-		return "hwdownload,format=p010le,format=nv12,hwupload," + scale
+		return "hwdownload,format=p010le," + swscaleCompatTV + ",format=nv12,hwupload," + scale
 	case PipelineVAAPIFull, PipelineVAAPIFullAV110:
 		return scale
 	default:

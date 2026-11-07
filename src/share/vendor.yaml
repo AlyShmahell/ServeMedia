@@ -28,25 +28,25 @@ assets:
     notice: true
 sources:
   - name: nv-codec-headers
-    url: "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n13.0.19.0.tar.gz"
+    url: "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n13.0.19.1.tar.gz"
   - name: x264
-    url: "https://github.com/mirror/x264/archive/refs/heads/stable.tar.gz"
+    url: "https://github.com/mirror/x264/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz"
   - name: x265
-    url: "https://github.com/videolan/x265/archive/refs/tags/3.4.tar.gz"
+    url: "https://github.com/Multicorewareinc/x265/releases/download/4.3/x265_4.3.tar.gz"
   - name: opus
-    url: "https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"
+    url: "https://downloads.xiph.org/releases/opus/opus-1.6.1.tar.gz"
   - name: dav1d
-    url: "https://github.com/videolan/dav1d/archive/refs/tags/1.5.1.tar.gz"
+    url: "https://github.com/videolan/dav1d/archive/refs/tags/1.5.4.tar.gz"
   - name: svtav1
-    url: "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v2.3.0/SVT-AV1-v2.3.0.tar.gz"
+    url: "https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v4.3.0/SVT-AV1-v4.3.0.tar.gz"
   - name: libvpx
-    url: "https://github.com/webmproject/libvpx/archive/refs/tags/v1.15.2.tar.gz"
+    url: "https://github.com/webmproject/libvpx/archive/refs/tags/v1.17.0.tar.gz"
   - name: lame
-    url: "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz"
+    url: "https://downloads.sourceforge.net/project/lame/lame/4.0/lame-4.0.tar.gz"
   - name: libvpl
-    url: "https://github.com/intel/libvpl/archive/refs/tags/v2.15.0.tar.gz"
+    url: "https://github.com/intel/libvpl/archive/refs/tags/v2.17.0.tar.gz"
   - name: ffmpeg
-    url: "https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz"
+    url: "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz"
   - name: ffmpeg-license
-    url: "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n7.1.1/COPYING.GPLv3"
+    url: "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n9.0.2/COPYING.GPLv3"
     license: true
