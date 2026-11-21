@@ -539,8 +539,19 @@ func TestLibraryTemplatePosterDialog(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := buf.String()
-	if !strings.Contains(html, `id="poster-edit-dialog"`) || !strings.Contains(html, `id="poster-edit-generate"`) {
-		t.Fatalf("poster dialog: %s", html)
+	for _, want := range []string{
+		`id="edit-modal"`,
+		`data-edit-tab="image"`, `data-edit-tab="text"`,
+		`id="edit-panel-image"`, `id="edit-panel-text"`,
+		`id="edit-image-generate"`, `id="edit-image-save"`, `id="edit-text-save"`,
+		`>Image<`, `>Text<`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("missing %q in edit dialog: %s", want, html)
+		}
+	}
+	if strings.Contains(html, `id="poster-edit-dialog"`) {
+		t.Fatalf("old poster dialog still present")
 	}
 }
 

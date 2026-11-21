@@ -125,14 +125,19 @@ func TestFileRowTemplate(t *testing.T) {
 		"file-card", "Pilot", "A start", "Season", "2020-01-02",
 		"poster-progress-watch", "width:50%", "width:40%", "openEntryScanModal(",
 		`data-media-id="7"`, "Pilot-thumb.jpg",
-		`data-generate-url="/hx/nodes/9/still/generate"`, `data-role="still"`,
+		`data-generate-url="/hx/nodes/9/still/generate"`, `data-role="edit-modal"`,
+		`data-edit-url="/hx/episodes/9/meta"`, `data-edit-title="Pilot"`, `data-edit-plot="A start"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %q in %s", want, html)
 		}
 	}
-	if strings.Contains(html, `card-action-label">Edit`) || strings.Contains(html, `data-role="edit"`) || strings.Contains(html, "data-edit-url=") {
-		t.Fatalf("edit control outside hero: %s", html)
+	root := html
+	if i := strings.Index(html, `class="file-list"`); i >= 0 {
+		root = html[:i]
+	}
+	if strings.Contains(root, `data-role="edit-modal"`) || strings.Contains(root, "data-edit-url=") || strings.Contains(html, `class="editable"`) || strings.Contains(html, `data-edit-field=`) || strings.Contains(html, `data-role="still"`) {
+		t.Fatalf("inline editor or folder-tile edit control: %s", html)
 	}
 	if strings.Contains(html, "watched ") || strings.Contains(html, "openScanModal(") {
 		t.Fatalf("library scan or watch chip on item: %s", html)
@@ -176,8 +181,18 @@ func TestFileRowTemplate(t *testing.T) {
 	if strings.Contains(nested, "data-mid=") {
 		t.Fatalf("nested title should wrap, not ellipsize: %s", nested)
 	}
-	if strings.Contains(nested, `data-edit-field="plot"`) || strings.Contains(nested, `data-role="edit"`) {
-		t.Fatalf("edit control outside hero: %s", nested)
+	seasonEnd := strings.Index(nested, `href="/play/file/9"`)
+	if seasonEnd < 0 {
+		t.Fatalf("episode card: %s", nested)
+	}
+	if strings.Contains(nested[:seasonEnd], `data-role="edit-modal"`) || strings.Contains(nested[:seasonEnd], "data-edit-url=") {
+		t.Fatalf("season tile grew an editor: %s", nested[:seasonEnd])
+	}
+	if !strings.Contains(nested, `data-role="edit-modal"`) || !strings.Contains(nested, `data-edit-url="/hx/episodes/9/meta"`) {
+		t.Fatalf("file still editor: %s", nested)
+	}
+	if strings.Contains(nested, `class="editable"`) || strings.Contains(nested, `data-edit-field=`) {
+		t.Fatalf("inline editor: %s", nested)
 	}
 }
 

@@ -111,7 +111,35 @@ Sandbox reads `/media`, `/mnt`, `/run/media`, `~/Videos`, `~/Music`; other paths
 
 ## HTTP
 
-ServeMedia listens on a TCP address from `--host` and `--port`. Unset `--host` is every interface. Unset `--port` is `7676`. If that bind fails, ServeMedia listens again on port `0` and the kernel chooses the port. An explicit `--port` that cannot bind stops the process. `--webkit` forces `127.0.0.1` and port `0` and opens a window on that loopback URL, using host `libwebkitgtk-6.0` with GTK 4 when that library is installed and otherwise `libwebkit2gtk-4.1` with GTK 3. A successful window does not also open a browser. If the window cannot be created, the error is logged, the system browser opens, and the server keeps running until a signal or the watchdog. A second `--webkit` start that cannot open a window opens the browser and exits, leaving the existing server up. Without `--webkit`, the browser opens `http://127.0.0.1:<port>` when `DISPLAY` or `WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips that open). Other machines use `http://<lan-ip>:<port>`. The chosen port is written to `port` and the loopback URL to `http.url` in `$XDG_RUNTIME_DIR/servemedia`, or under `$XDG_STATE_HOME/servemedia` when `XDG_RUNTIME_DIR` is unset. A second start reads `http.url` and `GET`s `/healthz` on that loopback URL. A live server is opened and this process exits. A missing file or a failed check starts a new server. Shutdown deletes `http.url` and `port`. MatchMedia runs inside that process.
+ServeMedia listens on a TCP address from `--host` and `--port`. Unset `--host` is every interface. Unset `--port` is `7676`. If that bind fails, ServeMedia listens again on port `0` and the kernel chooses the port. An explicit `--port` that cannot bind stops the process. `--webkit` forces `127.0.0.1` and port `0` and opens a window on that loopback URL, using host `libwebkitgtk-6.0` with GTK 4 when that library is installed and otherwise `libwebkit2gtk-4.1` with GTK 3. The window starts fullscreen with the header bar visible. Big picture hides that bar. A navigation that leaves the app origin is opened with the system browser. A successful window does not also open a browser. If the window cannot be created, the error is logged, the system browser opens, and the server keeps running until a signal or the watchdog. A second `--webkit` start that cannot open a window opens the browser and exits, leaving the existing server up. Without `--webkit`, the browser opens `http://127.0.0.1:<port>` when `DISPLAY` or `WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips that open). Other machines use `http://<lan-ip>:<port>`. The chosen port is written to `port` and the loopback URL to `http.url` in `$XDG_RUNTIME_DIR/servemedia`, or under `$XDG_STATE_HOME/servemedia` when `XDG_RUNTIME_DIR` is unset. A second start reads `http.url` and `GET`s `/healthz` on that loopback URL. A live server is opened and this process exits. A missing file or a failed check starts a new server. Shutdown deletes `http.url` and `port`. MatchMedia runs inside that process.
+
+The top bar shows a display-only path trail (library name, each folder, then the playing title). When the trail overflows it is middle-ellipsized, and hovering it slides the full text right to left, pauses, then slides back. Big picture replaces that with a clipped ticker that loops right to left on its own. Reduced motion keeps the middle ellipsis.
+
+```mermaid
+stateDiagram-v2
+  idle: Middle ellipsis
+  clipped: Full text clipped
+  toEnd: Slide toward the end
+  pauseEnd: Pause
+  toStart: Slide toward the start
+  pauseStart: Pause
+  ticker: Clipped loop
+  idle --> clipped: pointerenter when overflowing
+  clipped --> toEnd: short pause
+  toEnd --> pauseEnd: end visible
+  pauseEnd --> toStart
+  toStart --> pauseStart: start visible
+  pauseStart --> toEnd
+  clipped --> idle: pointerleave
+  toEnd --> idle: pointerleave
+  pauseEnd --> idle: pointerleave
+  toStart --> idle: pointerleave
+  pauseStart --> idle: pointerleave
+  idle --> ticker: big picture and overflowing
+  clipped --> ticker: big picture
+  toEnd --> ticker: big picture
+  ticker --> idle: big picture off
+```
 
 | Method | Path | Role |
 |--------|------|------|

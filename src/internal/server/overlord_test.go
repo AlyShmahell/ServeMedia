@@ -32,6 +32,7 @@ func testServer(t *testing.T) *Server {
 }
 
 func TestOverlordSkipsSetupAndHidesLogout(t *testing.T) {
+	SetBigPicture(false)
 	s := testServer(t)
 	s.Overlord = true
 	w := httptest.NewRecorder()
@@ -45,6 +46,19 @@ func TestOverlordSkipsSetupAndHidesLogout(t *testing.T) {
 	}
 	if !strings.Contains(body, "ServeMedia") {
 		t.Fatal("home page missing")
+	}
+	if !strings.Contains(body, `id="topbar-menu"`) {
+		t.Fatal("burger missing")
+	}
+	tag := bigPictureTag(body)
+	if tag == "" || !strings.Contains(tag, " hidden") || !strings.Contains(tag, `data-webkit="1"`) || !strings.Contains(tag, `aria-pressed="false"`) {
+		t.Fatalf("big picture exit row %q", tag)
+	}
+	about := strings.Index(body, `id="about-open"`)
+	big := strings.Index(body, `id="big-picture"`)
+	logo := strings.Index(body, `class="topbar-logo"`)
+	if about < 0 || big < about || logo < big {
+		t.Fatal("big picture exit row is not in the menu before the logo")
 	}
 	users, err := s.DB.ListUsers(context.Background())
 	if err != nil {
@@ -60,6 +74,68 @@ func TestOverlordSkipsSetupAndHidesLogout(t *testing.T) {
 	if len(visible) != 0 {
 		t.Fatalf("accounts table %+v", visible)
 	}
+}
+
+func TestBigPictureButtonInBrowser(t *testing.T) {
+	SetBigPicture(true)
+	t.Cleanup(func() { SetBigPicture(false) })
+	s := testServer(t)
+	u, err := s.DB.CreateUser(context.Background(), "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.DB.CreateSession(context.Background(), u.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	w := httptest.NewRecorder()
+	s.Router().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `id="topbar-menu"`) {
+		t.Fatal("burger missing")
+	}
+	tag := bigPictureTag(body)
+	if tag == "" || !strings.Contains(tag, " hidden") || strings.Contains(tag, `data-webkit=`) || !strings.Contains(tag, `aria-pressed="false"`) {
+		t.Fatalf("browser big picture row %q", tag)
+	}
+}
+
+func TestBigPicturePressedInWebKit(t *testing.T) {
+	SetBigPicture(true)
+	t.Cleanup(func() { SetBigPicture(false) })
+	s := testServer(t)
+	s.Overlord = true
+	w := httptest.NewRecorder()
+	WithLoopback(s.Router()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	tag := bigPictureTag(body)
+	if tag == "" || strings.Contains(tag, " hidden") || !strings.Contains(tag, `data-webkit="1"`) || !strings.Contains(tag, `aria-pressed="true"`) {
+		t.Fatalf("webkit big picture row %q", tag)
+	}
+}
+
+func bigPictureTag(body string) string {
+	i := strings.Index(body, `id="big-picture"`)
+	if i < 0 {
+		return ""
+	}
+	start := strings.LastIndex(body[:i], "<button")
+	if start < 0 {
+		start = i
+	}
+	end := strings.Index(body[i:], ">")
+	if end < 0 {
+		return body[start:]
+	}
+	return body[start : i+end]
 }
 
 func TestNoUsersRedirectsToRegister(t *testing.T) {

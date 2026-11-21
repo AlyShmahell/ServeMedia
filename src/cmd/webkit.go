@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -10,7 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"unsafe"
 
+	"github.com/alyshmahell/servemedia/src/internal/server"
 	"github.com/ebitengine/purego"
 )
 
@@ -43,19 +46,39 @@ var (
 	gtkWindowNew                        func(int32) uintptr
 	gtkWindowSetTitle                   func(uintptr, string)
 	gtkWindowSetDefaultSize             func(uintptr, int32, int32)
+	gtkWindowFullscreen                 func(uintptr)
+	gtkWindowUnfullscreen               func(uintptr)
+	gtkWindowIsFullscreen               func(uintptr) int32
+	gtkWindowMinimize                   func(uintptr)
+	gtkWindowIconify                    func(uintptr)
+	gtkWindowClose                      func(uintptr)
+	gtkWindowSetDecorated               func(uintptr, int32)
+	gtkBoxNew                           func(int32, int32) uintptr
+	gtkBoxPackStart                     func(uintptr, uintptr, int32, int32, uint32)
+	gtkBoxAppend                        func(uintptr, uintptr)
+	gtkWidgetSetVexpand                 func(uintptr, int32)
+	gtkWidgetSetVisible                 func(uintptr, int32)
+	gtkWidgetSetTooltipText             func(uintptr, string)
+	gtk3ButtonNewFromIconName           func(string, int32) uintptr
+	gtk4ButtonNewFromIconName           func(string) uintptr
+	gtkHeaderBarPackEnd                 func(uintptr, uintptr)
 	gtkContainerAdd                     func(uintptr, uintptr)
 	gtkWidgetShowAll                    func(uintptr)
 	gtkMain                             func()
 	gtkMainQuit                         func()
 	webkitWebViewNew                    func() uintptr
 	webkitWebViewLoadURI                func(uintptr, string)
+	webkitWebViewRunJavaScript          func(uintptr, string, uintptr, uintptr, uintptr)
+	webkitWebViewEvaluateJavaScript     func(uintptr, string, int64, uintptr, uintptr, uintptr, uintptr, uintptr)
+	webkitNavigationPolicyGetAction     func(uintptr) uintptr
+	webkitNavigationActionGetRequest    func(uintptr) uintptr
+	webkitURIRequestGetURI              func(uintptr) uintptr
+	webkitPolicyDecisionIgnore          func(uintptr)
 	gSignalConnectData                  func(uintptr, string, uintptr, uintptr, uintptr, int32) uintptr
 	gIdleAdd                            func(uintptr, uintptr) uint32
 	gtkHeaderBarNew                     func() uintptr
 	gtkHeaderBarSetTitle                func(uintptr, string)
 	gtkHeaderBarSetShowCloseButton      func(uintptr, int32)
-	gtkHeaderBarSetDecorationLayout     func(uintptr, string)
-	gtkWindowSetTitlebar                func(uintptr, uintptr)
 	gtkCSSProviderNew                   func() uintptr
 	gtkCSSProviderLoadFromData          func(uintptr, string, int, uintptr) int32
 	gtkStyleContextAddProviderForScreen func(uintptr, uintptr, uint32)
@@ -75,10 +98,28 @@ var (
 	gMainLoopQuit                    func(uintptr)
 	mainLoop                         uintptr
 
-	destroyCB uintptr
-	closeCB   uintptr
-	idleCB    uintptr
-	quitReq   atomic.Bool
+	destroyCB    uintptr
+	closeCB      uintptr
+	idleCB       uintptr
+	decideCB     uintptr
+	minimizeCB   uintptr
+	maximizeCB   uintptr
+	closeClickCB uintptr
+	bigPictureCB uintptr
+	quitReq      atomic.Bool
+
+	// webkitAppURL is the page loaded in the window. The decide-policy
+	// callback reads it on the GTK thread that set it.
+	webkitAppURL     string
+	webkitWindow     uintptr
+	webkitHeader     uintptr
+	webkitView       uintptr
+	webkitFullscreen atomic.Bool
+)
+
+const (
+	webkitPolicyNavigation uintptr = 0
+	webkitPolicyNewWindow  uintptr = 1
 )
 
 func onWindowDestroy(uintptr, uintptr) uintptr {
@@ -408,6 +449,18 @@ func bindGTK3(glib, gobject, webkit uintptr) error {
 		{&gtkWindowNew, gtk, "gtk_window_new"},
 		{&gtkWindowSetTitle, gtk, "gtk_window_set_title"},
 		{&gtkWindowSetDefaultSize, gtk, "gtk_window_set_default_size"},
+		{&gtkWindowFullscreen, gtk, "gtk_window_fullscreen"},
+		{&gtkWindowUnfullscreen, gtk, "gtk_window_unfullscreen"},
+		{&gtkWindowIconify, gtk, "gtk_window_iconify"},
+		{&gtkWindowClose, gtk, "gtk_window_close"},
+		{&gtkWindowSetDecorated, gtk, "gtk_window_set_decorated"},
+		{&gtkBoxNew, gtk, "gtk_box_new"},
+		{&gtkBoxPackStart, gtk, "gtk_box_pack_start"},
+		{&gtkWidgetSetVexpand, gtk, "gtk_widget_set_vexpand"},
+		{&gtkWidgetSetVisible, gtk, "gtk_widget_set_visible"},
+		{&gtkWidgetSetTooltipText, gtk, "gtk_widget_set_tooltip_text"},
+		{&gtk3ButtonNewFromIconName, gtk, "gtk_button_new_from_icon_name"},
+		{&gtkHeaderBarPackEnd, gtk, "gtk_header_bar_pack_end"},
 		{&gtkContainerAdd, gtk, "gtk_container_add"},
 		{&gtkWidgetShowAll, gtk, "gtk_widget_show_all"},
 		{&gtkMain, gtk, "gtk_main"},
@@ -415,20 +468,23 @@ func bindGTK3(glib, gobject, webkit uintptr) error {
 		{&gtkHeaderBarNew, gtk, "gtk_header_bar_new"},
 		{&gtkHeaderBarSetTitle, gtk, "gtk_header_bar_set_title"},
 		{&gtkHeaderBarSetShowCloseButton, gtk, "gtk_header_bar_set_show_close_button"},
-		{&gtkHeaderBarSetDecorationLayout, gtk, "gtk_header_bar_set_decoration_layout"},
-		{&gtkWindowSetTitlebar, gtk, "gtk_window_set_titlebar"},
 		{&gtkCSSProviderNew, gtk, "gtk_css_provider_new"},
 		{&gtkCSSProviderLoadFromData, gtk, "gtk_css_provider_load_from_data"},
 		{&gtkStyleContextAddProviderForScreen, gtk, "gtk_style_context_add_provider_for_screen"},
 		{&gdkScreenGetDefault, gdk, "gdk_screen_get_default"},
 		{&webkitWebViewNew, webkit, "webkit_web_view_new"},
 		{&webkitWebViewLoadURI, webkit, "webkit_web_view_load_uri"},
+		{&webkitNavigationPolicyGetAction, webkit, "webkit_navigation_policy_decision_get_navigation_action"},
+		{&webkitNavigationActionGetRequest, webkit, "webkit_navigation_action_get_request"},
+		{&webkitURIRequestGetURI, webkit, "webkit_uri_request_get_uri"},
+		{&webkitPolicyDecisionIgnore, webkit, "webkit_policy_decision_ignore"},
 	}
 	for _, b := range binds {
 		if err := registerLibFunc(b.fptr, b.handle, b.name); err != nil {
 			return err
 		}
 	}
+	bindWebKitScript(webkit)
 	uiStack = stackGTK3
 	ensureCallbacks()
 	return nil
@@ -453,17 +509,32 @@ func bindGTK4(glib, gobject, webkit uintptr) error {
 		{&gtk4WindowNew, gtk, "gtk_window_new"},
 		{&gtkWindowSetTitle, gtk, "gtk_window_set_title"},
 		{&gtkWindowSetDefaultSize, gtk, "gtk_window_set_default_size"},
+		{&gtkWindowFullscreen, gtk, "gtk_window_fullscreen"},
+		{&gtkWindowUnfullscreen, gtk, "gtk_window_unfullscreen"},
+		{&gtkWindowIsFullscreen, gtk, "gtk_window_is_fullscreen"},
+		{&gtkWindowMinimize, gtk, "gtk_window_minimize"},
+		{&gtkWindowClose, gtk, "gtk_window_close"},
+		{&gtkWindowSetDecorated, gtk, "gtk_window_set_decorated"},
+		{&gtkBoxNew, gtk, "gtk_box_new"},
+		{&gtkBoxAppend, gtk, "gtk_box_append"},
+		{&gtkWidgetSetVexpand, gtk, "gtk_widget_set_vexpand"},
+		{&gtkWidgetSetVisible, gtk, "gtk_widget_set_visible"},
+		{&gtkWidgetSetTooltipText, gtk, "gtk_widget_set_tooltip_text"},
+		{&gtk4ButtonNewFromIconName, gtk, "gtk_button_new_from_icon_name"},
+		{&gtkHeaderBarPackEnd, gtk, "gtk_header_bar_pack_end"},
 		{&gtk4WindowSetChild, gtk, "gtk_window_set_child"},
 		{&gtk4WindowPresent, gtk, "gtk_window_present"},
 		{&gtkHeaderBarNew, gtk, "gtk_header_bar_new"},
 		{&gtk4HeaderBarSetShowTitleButtons, gtk, "gtk_header_bar_set_show_title_buttons"},
-		{&gtkHeaderBarSetDecorationLayout, gtk, "gtk_header_bar_set_decoration_layout"},
-		{&gtkWindowSetTitlebar, gtk, "gtk_window_set_titlebar"},
 		{&gtkCSSProviderNew, gtk, "gtk_css_provider_new"},
 		{&gtk4StyleAddProviderForDisplay, gtk, "gtk_style_context_add_provider_for_display"},
 		{&gdk4DisplayGetDefault, gtk, "gdk_display_get_default"},
 		{&webkitWebViewNew, webkit, "webkit_web_view_new"},
 		{&webkitWebViewLoadURI, webkit, "webkit_web_view_load_uri"},
+		{&webkitNavigationPolicyGetAction, webkit, "webkit_navigation_policy_decision_get_navigation_action"},
+		{&webkitNavigationActionGetRequest, webkit, "webkit_navigation_action_get_request"},
+		{&webkitURIRequestGetURI, webkit, "webkit_uri_request_get_uri"},
+		{&webkitPolicyDecisionIgnore, webkit, "webkit_policy_decision_ignore"},
 	}
 	for _, b := range binds {
 		if err := registerLibFunc(b.fptr, b.handle, b.name); err != nil {
@@ -473,9 +544,23 @@ func bindGTK4(glib, gobject, webkit uintptr) error {
 	if err := bindGTK4CSS(gtk); err != nil {
 		return err
 	}
+	bindWebKitScript(webkit)
 	uiStack = stackGTK4
 	ensureCallbacks()
 	return nil
+}
+
+// bindWebKitScript binds a way to run a script in the open page. GTK 4
+// WebKit dropped webkit_web_view_run_javascript, so the newer evaluate call
+// is the fallback. Neither symbol is required to open the window.
+func bindWebKitScript(webkit uintptr) {
+	if _, err := purego.Dlsym(webkit, "webkit_web_view_run_javascript"); err == nil {
+		purego.RegisterLibFunc(&webkitWebViewRunJavaScript, webkit, "webkit_web_view_run_javascript")
+		return
+	}
+	if _, err := purego.Dlsym(webkit, "webkit_web_view_evaluate_javascript"); err == nil {
+		purego.RegisterLibFunc(&webkitWebViewEvaluateJavaScript, webkit, "webkit_web_view_evaluate_javascript")
+	}
 }
 
 func bindGTK4CSS(gtk uintptr) error {
@@ -500,6 +585,356 @@ func ensureCallbacks() {
 	if idleCB == 0 {
 		idleCB = purego.NewCallback(onIdleQuit)
 	}
+	if decideCB == 0 {
+		decideCB = purego.NewCallback(onDecidePolicy)
+	}
+	if minimizeCB == 0 {
+		minimizeCB = purego.NewCallback(onMinimizeClicked)
+	}
+	if maximizeCB == 0 {
+		maximizeCB = purego.NewCallback(onMaximizeClicked)
+	}
+	if closeClickCB == 0 {
+		closeClickCB = purego.NewCallback(onCloseClicked)
+	}
+	if bigPictureCB == 0 {
+		bigPictureCB = purego.NewCallback(onBigPictureClicked)
+	}
+}
+
+// onDecidePolicy keeps same-origin app navigations in the window. A new
+// window, another origin, or a non-http scheme is ignored here and opened
+// with the system handler. Response decisions stay unhandled so subresources
+// still load.
+func onDecidePolicy(_, decision, kind, _ uintptr) uintptr {
+	if kind != webkitPolicyNavigation && kind != webkitPolicyNewWindow {
+		return 0
+	}
+	if decision == 0 || webkitNavigationPolicyGetAction == nil || webkitPolicyDecisionIgnore == nil {
+		return 0
+	}
+	action := webkitNavigationPolicyGetAction(decision)
+	if action == 0 || webkitNavigationActionGetRequest == nil || webkitURIRequestGetURI == nil {
+		return 0
+	}
+	request := webkitNavigationActionGetRequest(action)
+	if request == 0 {
+		return 0
+	}
+	uri := cString(webkitURIRequestGetURI(request))
+	switch webkitActionFor(webkitAppURL, uri, kind == webkitPolicyNewWindow) {
+	case webkitActBigPicture:
+		webkitPolicyDecisionIgnore(decision)
+		toggleBigPicture()
+		return 1
+	case webkitActIgnore:
+		webkitPolicyDecisionIgnore(decision)
+		return 1
+	case webkitActExternal:
+		webkitPolicyDecisionIgnore(decision)
+		launchDefault(uri)
+		return 1
+	default:
+		return 0
+	}
+}
+
+func cString(ptr uintptr) string {
+	if ptr == 0 {
+		return ""
+	}
+	var n uintptr
+	for n < 65536 && *(*byte)(unsafe.Pointer(ptr + n)) != 0 {
+		n++
+	}
+	return string(unsafe.Slice((*byte)(unsafe.Pointer(ptr)), n))
+}
+
+// webkitHandsOff reports whether uri should leave the WebKit window.
+// Same-origin http(s) stays, including the initial load. about, blob, data,
+// and javascript stay and are never passed to the system handler. A new
+// window, another origin, or another scheme is handed off.
+func webkitHandsOff(appURL, uri string, newWindow bool) bool {
+	target, err := url.Parse(uri)
+	if err != nil || target.Scheme == "" {
+		return false
+	}
+	switch strings.ToLower(target.Scheme) {
+	case "about", "blob", "data", "javascript":
+		return false
+	}
+	if newWindow {
+		return true
+	}
+	if scheme := strings.ToLower(target.Scheme); scheme != "http" && scheme != "https" {
+		return true
+	}
+	app, err := url.Parse(appURL)
+	if err != nil || app.Host == "" {
+		return false
+	}
+	return !sameOrigin(app, target)
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	if !strings.EqualFold(a.Scheme, b.Scheme) {
+		return false
+	}
+	if !strings.EqualFold(a.Hostname(), b.Hostname()) {
+		return false
+	}
+	return originPort(a) == originPort(b)
+}
+
+func originPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
+}
+
+const (
+	webkitActStay webkitAction = iota
+	webkitActExternal
+	webkitActIgnore
+	webkitActBigPicture
+)
+
+type webkitAction int
+
+const webkitBigPictureURL = "servemedia://window/big-picture"
+
+func bigPictureURL(target *url.URL) bool {
+	want, err := url.Parse(webkitBigPictureURL)
+	if err != nil || target == nil {
+		return false
+	}
+	return strings.EqualFold(target.Scheme, want.Scheme) && strings.EqualFold(target.Host, want.Host) && target.Path == want.Path
+}
+
+// webkitActionFor decides what a navigation does. servemedia: stays inside
+// the process: the big-picture URL toggles that mode, and any other URI on
+// that scheme is ignored. Nothing on that scheme is passed to the system handler.
+func webkitActionFor(appURL, uri string, newWindow bool) webkitAction {
+	target, err := url.Parse(uri)
+	if err == nil && strings.EqualFold(target.Scheme, "servemedia") {
+		if bigPictureURL(target) {
+			return webkitActBigPicture
+		}
+		return webkitActIgnore
+	}
+	if webkitHandsOff(appURL, uri, newWindow) {
+		return webkitActExternal
+	}
+	return webkitActStay
+}
+
+func onMinimizeClicked(uintptr, uintptr) uintptr {
+	minimizeWindow()
+	return 0
+}
+
+func onMaximizeClicked(uintptr, uintptr) uintptr {
+	toggleWindowFullscreen()
+	return 0
+}
+
+func onCloseClicked(uintptr, uintptr) uintptr {
+	if webkitWindow != 0 && gtkWindowClose != nil {
+		gtkWindowClose(webkitWindow)
+	}
+	return 0
+}
+
+func onBigPictureClicked(uintptr, uintptr) uintptr {
+	toggleBigPicture()
+	return 0
+}
+
+func minimizeWindow() {
+	if webkitWindow == 0 {
+		return
+	}
+	if gtkWindowMinimize != nil {
+		gtkWindowMinimize(webkitWindow)
+		return
+	}
+	if gtkWindowIconify != nil {
+		gtkWindowIconify(webkitWindow)
+	}
+}
+
+func windowIsFullscreen() bool {
+	if gtkWindowIsFullscreen != nil && webkitWindow != 0 {
+		return gtkWindowIsFullscreen(webkitWindow) != 0
+	}
+	return webkitFullscreen.Load()
+}
+
+func fullscreenWindow(window uintptr) {
+	if window != 0 && gtkWindowFullscreen != nil {
+		gtkWindowFullscreen(window)
+	}
+	webkitFullscreen.Store(true)
+}
+
+func toggleWindowFullscreen() {
+	if webkitWindow == 0 {
+		return
+	}
+	if windowIsFullscreen() {
+		if gtkWindowUnfullscreen != nil {
+			gtkWindowUnfullscreen(webkitWindow)
+		}
+		webkitFullscreen.Store(false)
+		return
+	}
+	fullscreenWindow(webkitWindow)
+}
+
+func setHeaderVisible(on bool) {
+	if webkitHeader == 0 || gtkWidgetSetVisible == nil {
+		return
+	}
+	v := int32(0)
+	if on {
+		v = 1
+	}
+	gtkWidgetSetVisible(webkitHeader, v)
+}
+
+// toggleBigPicture hides the header bar and fills the screen, or shows the
+// bar again without leaving fullscreen. The flag is what later page renders read.
+func toggleBigPicture() {
+	on := !server.BigPicture()
+	server.SetBigPicture(on)
+	if on {
+		fullscreenWindow(webkitWindow)
+		setHeaderVisible(false)
+	} else {
+		setHeaderVisible(true)
+	}
+	syncPageBigPicture()
+}
+
+func syncPageBigPicture() {
+	if webkitView == 0 {
+		return
+	}
+	state := "false"
+	if server.BigPicture() {
+		state = "true"
+	}
+	script := `(function(){var b=document.getElementById("big-picture");if(!b)return;var on=` + state + `;b.hidden=!on;b.setAttribute("aria-pressed",on?"true":"false");})();`
+	if webkitWebViewRunJavaScript != nil {
+		webkitWebViewRunJavaScript(webkitView, script, 0, 0, 0)
+		return
+	}
+	if webkitWebViewEvaluateJavaScript != nil {
+		webkitWebViewEvaluateJavaScript(webkitView, script, -1, 0, 0, 0, 0, 0)
+	}
+}
+
+func mountWindow(window, bar, view uintptr) error {
+	if gtkBoxNew == nil || gtkWidgetSetVexpand == nil {
+		return fmt.Errorf("gtk box missing")
+	}
+	const vertical int32 = 1
+	box := gtkBoxNew(vertical, 0)
+	if box == 0 {
+		return fmt.Errorf("gtk_box_new failed")
+	}
+	gtkWidgetSetVexpand(view, 1)
+	if uiStack == stackGTK4 {
+		if gtkBoxAppend == nil {
+			return fmt.Errorf("gtk_box_append missing")
+		}
+		gtkBoxAppend(box, bar)
+		gtkBoxAppend(box, view)
+		gtk4WindowSetChild(window, box)
+	} else {
+		if gtkBoxPackStart == nil {
+			return fmt.Errorf("gtk_box_pack_start missing")
+		}
+		gtkBoxPackStart(box, bar, 0, 0, 0)
+		gtkBoxPackStart(box, view, 1, 1, 0)
+		gtkContainerAdd(window, box)
+	}
+	if gtkWindowSetDecorated != nil {
+		gtkWindowSetDecorated(window, 0)
+	}
+	webkitWindow = window
+	webkitHeader = bar
+	return nil
+}
+
+func windowButton(icon, tip string, clicked uintptr) (uintptr, error) {
+	if clicked == 0 {
+		return 0, fmt.Errorf("window button callback missing")
+	}
+	var btn uintptr
+	switch uiStack {
+	case stackGTK4:
+		if gtk4ButtonNewFromIconName == nil {
+			return 0, fmt.Errorf("gtk_button_new_from_icon_name missing")
+		}
+		btn = gtk4ButtonNewFromIconName(icon)
+	default:
+		if gtk3ButtonNewFromIconName == nil {
+			return 0, fmt.Errorf("gtk_button_new_from_icon_name missing")
+		}
+		const gtkIconSizeButton int32 = 4
+		btn = gtk3ButtonNewFromIconName(icon, gtkIconSizeButton)
+	}
+	if btn == 0 {
+		return 0, fmt.Errorf("gtk_button_new_from_icon_name failed")
+	}
+	if gtkWidgetSetTooltipText != nil {
+		gtkWidgetSetTooltipText(btn, tip)
+	}
+	gSignalConnectData(btn, "clicked", clicked, 0, 0, 0)
+	return btn, nil
+}
+
+func packWindowButtons(bar uintptr) error {
+	if gtkHeaderBarPackEnd == nil {
+		return fmt.Errorf("gtk_header_bar_pack_end missing")
+	}
+	closeBtn, err := windowButton("window-close-symbolic", "Close", closeClickCB)
+	if err != nil {
+		return err
+	}
+	maxBtn, err := windowButton("window-maximize-symbolic", "Maximize", maximizeCB)
+	if err != nil {
+		return err
+	}
+	minBtn, err := windowButton("window-minimize-symbolic", "Minimize", minimizeCB)
+	if err != nil {
+		return err
+	}
+	// pack_end places the first widget at the trailing edge.
+	gtkHeaderBarPackEnd(bar, closeBtn)
+	gtkHeaderBarPackEnd(bar, maxBtn)
+	gtkHeaderBarPackEnd(bar, minBtn)
+	pictureBtn, err := windowButton("view-fullscreen-symbolic", "Big picture", bigPictureCB)
+	if err != nil {
+		return err
+	}
+	gtkHeaderBarPackEnd(bar, pictureBtn)
+	return nil
+}
+
+func prepareWebView(view uintptr, rawURL string) {
+	webkitView = view
+	webkitAppURL = rawURL
+	gSignalConnectData(view, "decide-policy", decideCB, 0, 0, 0)
 }
 
 // runWebKit opens rawURL and blocks until the window closes.
@@ -533,7 +968,8 @@ func runWebKitGTK3(rawURL string, afterLoad func()) error {
 		return fmt.Errorf("gtk_window_new failed")
 	}
 	gtkWindowSetTitle(window, "ServeMedia")
-	if err := installDarkHeader(window); err != nil {
+	bar, err := installDarkHeader()
+	if err != nil {
 		return err
 	}
 	gtkWindowSetDefaultSize(window, 1280, 800)
@@ -541,9 +977,13 @@ func runWebKitGTK3(rawURL string, afterLoad func()) error {
 	if view == 0 {
 		return fmt.Errorf("webkit_web_view_new failed")
 	}
-	gtkContainerAdd(window, view)
+	if err := mountWindow(window, bar, view); err != nil {
+		return err
+	}
+	prepareWebView(view, rawURL)
 	webkitWebViewLoadURI(view, rawURL)
 	gSignalConnectData(window, "destroy", destroyCB, 0, 0, 0)
+	fullscreenWindow(window)
 	gtkWidgetShowAll(window)
 	if quitReq.Load() {
 		return nil
@@ -567,7 +1007,8 @@ func runWebKitGTK4(rawURL string, afterLoad func()) error {
 		return fmt.Errorf("gtk_window_new failed")
 	}
 	gtkWindowSetTitle(window, "ServeMedia")
-	if err := installDarkHeaderGTK4(window); err != nil {
+	bar, err := installDarkHeaderGTK4()
+	if err != nil {
 		return err
 	}
 	gtkWindowSetDefaultSize(window, 1280, 800)
@@ -575,9 +1016,13 @@ func runWebKitGTK4(rawURL string, afterLoad func()) error {
 	if view == 0 {
 		return fmt.Errorf("webkit_web_view_new failed")
 	}
-	gtk4WindowSetChild(window, view)
+	if err := mountWindow(window, bar, view); err != nil {
+		return err
+	}
+	prepareWebView(view, rawURL)
 	webkitWebViewLoadURI(view, rawURL)
 	gSignalConnectData(window, "close-request", closeCB, 0, 0, 0)
+	fullscreenWindow(window)
 	gtk4WindowPresent(window)
 	if quitReq.Load() {
 		return nil
@@ -601,9 +1046,22 @@ func darkHeaderCSS() string {
   box-shadow: none;
 }
 headerbar .title,
-headerbar .subtitle,
+headerbar .subtitle {
+  color: #ffffff;
+}
 headerbar button,
 headerbar .titlebutton {
+  color: #ffffff;
+  background: none;
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px;
+}
+headerbar button image {
   color: #ffffff;
 }
 headerbar button:hover,
@@ -623,11 +1081,24 @@ func darkHeaderCSSGTK4() string {
   box-shadow: none;
 }
 headerbar .title,
-headerbar .subtitle,
+headerbar .subtitle {
+  color: #ffffff;
+}
 headerbar button,
 headerbar .titlebutton,
 headerbar windowcontrols,
 headerbar windowcontrols button {
+  color: #ffffff;
+  background: none;
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  box-shadow: none;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px;
+}
+headerbar button image {
   color: #ffffff;
 }
 headerbar button:hover,
@@ -639,46 +1110,48 @@ headerbar windowcontrols button:hover {
 `
 }
 
-func installDarkHeader(window uintptr) error {
+func installDarkHeader() (uintptr, error) {
 	bar := gtkHeaderBarNew()
 	if bar == 0 {
-		return fmt.Errorf("gtk_header_bar_new failed")
+		return 0, fmt.Errorf("gtk_header_bar_new failed")
 	}
 	gtkHeaderBarSetTitle(bar, "ServeMedia")
-	gtkHeaderBarSetShowCloseButton(bar, 1)
-	gtkHeaderBarSetDecorationLayout(bar, ":minimize,maximize,close")
-	gtkWindowSetTitlebar(window, bar)
+	gtkHeaderBarSetShowCloseButton(bar, 0)
+	if err := packWindowButtons(bar); err != nil {
+		return 0, err
+	}
 	screen := gdkScreenGetDefault()
 	if screen == 0 {
-		return fmt.Errorf("gdk_screen_get_default failed")
+		return 0, fmt.Errorf("gdk_screen_get_default failed")
 	}
 	provider := gtkCSSProviderNew()
 	if provider == 0 {
-		return fmt.Errorf("gtk_css_provider_new failed")
+		return 0, fmt.Errorf("gtk_css_provider_new failed")
 	}
 	css := darkHeaderCSS()
 	if gtkCSSProviderLoadFromData(provider, css, len(css), 0) == 0 {
-		return fmt.Errorf("gtk_css_provider_load_from_data failed")
+		return 0, fmt.Errorf("gtk_css_provider_load_from_data failed")
 	}
 	gtkStyleContextAddProviderForScreen(screen, provider, gtkStyleProviderPriorityUser)
-	return nil
+	return bar, nil
 }
 
-func installDarkHeaderGTK4(window uintptr) error {
+func installDarkHeaderGTK4() (uintptr, error) {
 	bar := gtkHeaderBarNew()
 	if bar == 0 {
-		return fmt.Errorf("gtk_header_bar_new failed")
+		return 0, fmt.Errorf("gtk_header_bar_new failed")
 	}
-	gtk4HeaderBarSetShowTitleButtons(bar, 1)
-	gtkHeaderBarSetDecorationLayout(bar, ":minimize,maximize,close")
-	gtkWindowSetTitlebar(window, bar)
+	gtk4HeaderBarSetShowTitleButtons(bar, 0)
+	if err := packWindowButtons(bar); err != nil {
+		return 0, err
+	}
 	display := gdk4DisplayGetDefault()
 	if display == 0 {
-		return fmt.Errorf("gdk_display_get_default failed")
+		return 0, fmt.Errorf("gdk_display_get_default failed")
 	}
 	provider := gtkCSSProviderNew()
 	if provider == 0 {
-		return fmt.Errorf("gtk_css_provider_new failed")
+		return 0, fmt.Errorf("gtk_css_provider_new failed")
 	}
 	css := darkHeaderCSSGTK4()
 	switch {
@@ -687,8 +1160,8 @@ func installDarkHeaderGTK4(window uintptr) error {
 	case gtk4CSSLoadFromString != nil:
 		gtk4CSSLoadFromString(provider, css)
 	default:
-		return fmt.Errorf("gtk_css_provider_load_from_data failed")
+		return 0, fmt.Errorf("gtk_css_provider_load_from_data failed")
 	}
 	gtk4StyleAddProviderForDisplay(display, provider, gtkStyleProviderPriorityUser)
-	return nil
+	return bar, nil
 }

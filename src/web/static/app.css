@@ -104,6 +104,71 @@ body.spatial-nav textarea:focus {
   height: 1.45rem;
   flex: 0 0 auto;
 }
+.topbar-icon[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(61, 156, 240, 0.16);
+}
+.topbar-menu { position: relative; flex: 0 0 auto; }
+.topbar-menu-panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 40;
+  box-sizing: border-box;
+  width: 25ch;
+  max-width: calc(100vw - 1rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #151c26;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.topbar-menu-panel[hidden] { display: none; }
+.topbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.65rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.topbar-menu-item svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  flex: 0 0 auto;
+}
+.topbar-menu-item span { min-width: 0; }
+.topbar-menu-item:hover,
+.topbar-menu-item:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+.big-picture-notice {
+  position: fixed;
+  z-index: 80;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  max-width: min(36rem, calc(100vw - 2rem));
+  margin: 0;
+  padding: 0.7rem 0.95rem;
+  border: 1px solid rgba(227, 93, 106, 0.45);
+  border-radius: 10px;
+  background: rgba(227, 93, 106, 0.16);
+  color: var(--danger);
+  font-size: 0.95rem;
+}
 .topbar-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -114,10 +179,20 @@ body.spatial-nav textarea:focus {
   font-size: 1rem;
   font-weight: 600;
   line-height: 1.25;
-  overflow: visible;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  white-space: nowrap;
 }
+.topbar-title-track {
+  display: inline-block;
+  white-space: nowrap;
+  will-change: transform;
+}
+.topbar-title-copy,
+.topbar-title-gap {
+  display: inline-block;
+  vertical-align: top;
+}
+.topbar-title-gap { width: 2.5rem; }
 .topbar-logo {
   display: flex;
   align-items: center;
@@ -199,7 +274,8 @@ body.spatial-nav textarea:focus {
   border-radius: 10px;
   padding: 1rem 1.25rem;
 }
-.settings-modal[open] {
+.settings-modal[open],
+.edit-modal[open] {
   display: flex;
   flex-direction: column;
   width: min(72rem, calc(100vw - 2rem));
@@ -211,14 +287,16 @@ body.spatial-nav textarea:focus {
 }
 #settings-modal-body,
 #about-modal-body,
-.settings-modal-layout {
+.settings-modal-layout,
+.edit-modal-layout {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
 .settings-modal .modal-head,
-.about-modal .modal-head {
+.about-modal .modal-head,
+.edit-modal .modal-head {
   flex: 0 0 auto;
   margin: 0;
   padding: 0.75rem 1rem;
@@ -270,6 +348,40 @@ body.spatial-nav textarea:focus {
   overflow: hidden;
   padding: 0.75rem 1rem;
 }
+.edit-page {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 3fr;
+  overflow: hidden;
+}
+.edit-page .settings-sidenav {
+  width: auto;
+  flex: none;
+  min-width: 0;
+}
+.edit-panel[hidden],
+.edit-panel [hidden] { display: none !important; }
+.edit-text-form {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.edit-panel-body { flex: 1; min-height: 0; overflow: auto; }
+.edit-panel-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.edit-text-form input,
+.edit-text-form textarea { width: 100%; box-sizing: border-box; }
+.edit-text-form textarea { min-height: 10rem; resize: vertical; }
 .settings-notice {
   flex: 0 0 auto;
   margin: 0 0 0.75rem;
@@ -888,6 +1000,28 @@ button.secondary, .btn.secondary { background: var(--panel); color: var(--text);
   font-size: 1.25rem; font-weight: 700;
 }
 .btn-icon.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+.edit-panel-actions .btn-icon {
+  background: transparent;
+  border: 1px solid var(--border);
+}
+.edit-panel-actions .btn-icon svg {
+  width: 1.15rem;
+  height: 1.15rem;
+  display: block;
+}
+.edit-panel-actions .btn-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.edit-panel-actions .btn-icon:hover:not(:disabled) {
+  border-color: currentColor;
+}
+#edit-image-upload { color: var(--accent); }
+#edit-image-generate { color: var(--scan-icon); }
+#edit-image-discard { color: #e6b35a; }
+#edit-image-remove { color: var(--danger); }
+#edit-image-save,
+#edit-text-save { color: var(--success); }
 .home-section-libraries .btn-icon,
 #add-library-open,
 #add-user-open {
@@ -940,7 +1074,6 @@ button.secondary, .btn.secondary { background: var(--panel); color: var(--text);
 .modal-head { margin-bottom: 0.5rem; }
 .modal-head h2 { margin: 0; font-size: 1.15rem; }
 .modal-foot { margin-top: 1rem; }
-.poster-dialog { max-width: min(22rem, calc(100vw - 1rem)); }
 .poster-edit-preview {
   display: flex;
   justify-content: center;
@@ -1234,7 +1367,8 @@ p.editable {
   display: flex;
   align-items: flex-start;
 }
-.editable.is-empty .editable-text { color: var(--muted); font-style: italic; }
+.editable.is-empty .editable-text,
+p.plot.is-empty { color: var(--muted); font-style: italic; }
 .editable-text { min-width: 0; }
 .field-icon {
   display: inline-flex;
@@ -1269,23 +1403,18 @@ p.editable {
   min-width: 12rem;
 }
 textarea.editable-input { min-width: min(100%, 24rem); min-height: 5rem; width: 100%; }
-.field-icon-upload,
-.field-icon-still {
+.field-icon-edit {
   position: absolute;
   bottom: 0.35rem;
   right: 0.35rem;
   z-index: 3;
 }
-.poster-wrap .field-icon-upload,
-.poster-wrap .field-icon-still {
+.poster-wrap .field-icon-edit {
   opacity: 0;
   pointer-events: none;
 }
-.poster-wrap:hover .field-icon-upload,
-.poster-wrap:focus-within .field-icon-upload,
-.poster-wrap:hover .field-icon-still,
-.poster-wrap:focus-within .field-icon-still,
-.media-hero-poster .field-icon-upload {
+.poster-wrap:hover .field-icon-edit,
+.poster-wrap:focus-within .field-icon-edit {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1632,7 +1761,8 @@ textarea.editable-input { min-width: min(100%, 24rem); min-height: 5rem; width: 
   .webhook-header-row { grid-template-columns: 1fr; }
   .editable-input { max-width: 100%; }
   .settings-modal[open],
-  .about-modal[open] {
+  .about-modal[open],
+  .edit-modal[open] {
     width: 100vw;
     max-width: none;
     height: 100dvh;
@@ -1641,6 +1771,7 @@ textarea.editable-input { min-width: min(100%, 24rem); min-height: 5rem; width: 
   }
   .settings-modal .settings-page,
   .about-modal .settings-page { flex-direction: column; }
+  .edit-page { grid-template-columns: 1fr; }
   .settings-sidenav {
     flex: 0 0 auto;
     width: auto;

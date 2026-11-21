@@ -57,6 +57,7 @@ async function loginAs(page, username, password) {
 }
 
 async function openSettings(page) {
+  await page.locator('#topbar-menu').click();
   await page.locator('#settings-open').click();
   await expect(page.locator('#settings-modal')).toHaveAttribute('open', '');
   await expect(page.locator('.settings-sidenav')).toBeVisible({ timeout: 15000 });

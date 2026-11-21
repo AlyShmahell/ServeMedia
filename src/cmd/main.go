@@ -415,6 +415,15 @@ func openBrowser(rawURL string) {
 	if !shouldOpenBrowser() {
 		return
 	}
+	launchDefault(rawURL)
+}
+
+// launchDefault opens rawURL with the system handler. It does not consult
+// SERVEMEDIA_NO_BROWSER; that variable only skips the window's startup open.
+func launchDefault(rawURL string) {
+	if strings.TrimSpace(rawURL) == "" {
+		return
+	}
 	if err := exec.Command("xdg-open", rawURL).Start(); err == nil {
 		return
 	}

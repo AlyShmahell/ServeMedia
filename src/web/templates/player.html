@@ -25,7 +25,6 @@
   let sessionURL = "/play/" + kind + "/" + id + "/session";
   const resume = Number(new URLSearchParams(location.search).get('t') || 0);
   const status = document.getElementById('status');
-  const titleEl = document.querySelector('.topbar-title');
 
   const menuState = {
     qualities: [],
@@ -766,12 +765,10 @@
     player.muted(!!p.muted);
   }
   function applyTitle(cfg) {
-    if (!cfg || !cfg.title) return;
-    if (titleEl) {
-      titleEl.setAttribute('title', cfg.title);
-      titleEl.textContent = cfg.title;
-    }
-    document.title = cfg.title + ' — Play';
+    if (!cfg) return;
+    const trail = cfg.breadcrumb || cfg.title || '';
+    if (trail && window.servemediaSetTopbarTrail) window.servemediaSetTopbarTrail(trail);
+    if (cfg.title) document.title = cfg.title + ' — Play';
   }
   async function applyPlayback(cfg, absoluteOrRelSeek) {
     lastSessionCfg = cfg;

@@ -22,16 +22,38 @@ func navFor(name string, data map[string]any) (title, back string) {
 	case "home.html":
 		return "Home", ""
 	case "library.html":
-		return libraryName(data["Library"]), libraryBack(data)
+		path, _ := data["Path"].(string)
+		return joinTrail(libraryName(data["Library"]), path, ""), libraryBack(data)
 	case "player.html":
 		title, _ = data["Title"].(string)
 		kind, _ := data["Kind"].(string)
 		if kind == "file" {
 			back = libraryFolderBack(int64FromData(data["LibraryID"]), stringFromData(data["Folder"]))
 		}
-		return title, back
+		return joinTrail(stringFromData(data["LibraryName"]), stringFromData(data["Folder"]), title), back
 	}
 	return "", ""
+}
+
+// joinTrail builds a display-only path: library name, each folder, then the current title.
+func joinTrail(libName, folder, title string) string {
+	var parts []string
+	if s := strings.TrimSpace(libName); s != "" {
+		parts = append(parts, s)
+	}
+	folder = strings.Trim(strings.ReplaceAll(folder, "\\", "/"), "/")
+	if folder != "" {
+		for _, seg := range strings.Split(folder, "/") {
+			seg = strings.TrimSpace(seg)
+			if seg != "" {
+				parts = append(parts, seg)
+			}
+		}
+	}
+	if s := strings.TrimSpace(title); s != "" {
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, " / ")
 }
 
 func libraryBack(data map[string]any) string {

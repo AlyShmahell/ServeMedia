@@ -64,6 +64,7 @@ test('top bar primary nav and home sections', async ({ page }) => {
   await expect(topbar).toBeVisible();
   await expect(topbar.locator('.topbar-title')).toHaveText('Home');
   await expect(topbar.locator('.topbar-back')).toHaveCount(0);
+  await topbar.locator('#topbar-menu').click();
   await expect(topbar.getByRole('button', { name: 'Settings' })).toBeVisible();
   await expect(topbar.getByRole('button', { name: 'About' })).toBeVisible();
   await expect(topbar.locator('.topbar-logo')).toHaveAttribute('href', '/');
@@ -287,6 +288,7 @@ test('About opens as a modal and version lives under the logo', async ({ page })
   await page.goto('/about');
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.topbar-title')).toHaveText('Home');
+  await page.locator('#topbar-menu').click();
   await page.locator('#about-open').click();
   await expect(page.locator('#about-modal')).toHaveAttribute('open', '');
   await expect(page).toHaveURL(/\/$/);
@@ -362,14 +364,22 @@ test('TV show season and episode cards', async ({ page }) => {
   }
   await show.click();
   await expect(page).toHaveURL(/\/libraries\/\d+\/tree/);
+  await expect(page.locator('.topbar-title')).toContainText('TV');
+  await expect(page.locator('.topbar-title')).toContainText('Sample Show');
   await expect(page.locator('.topbar-back[href^="/libraries/"]')).toBeVisible();
   await expect(page.locator('.show-hero-card, .folder-hero').first()).toBeVisible();
-  await expect(page.locator('.show-hero-card h1 .field-icon[data-role="edit"], .folder-hero h1 .field-icon[data-role="edit"]').first()).toBeVisible();
-  await page.locator('.media-hero-poster .field-icon[data-role="upload"]').click();
-  await expect(page.locator('#poster-edit-dialog')).toBeVisible();
-  await expect(page.locator('#poster-edit-save')).toBeDisabled();
-  await page.locator('#poster-edit-exit').click();
-  await expect(page.locator('#poster-edit-dialog')).toBeHidden();
+  await expect(page.locator('.folder-hero h1 .field-icon')).toHaveCount(0);
+  const poster = page.locator('.media-hero-poster');
+  await poster.hover();
+  await poster.locator('.field-icon[data-role="edit-modal"]').click();
+  await expect(page.locator('#edit-modal')).toBeVisible();
+  await expect(page.locator('#edit-image-save')).toBeDisabled();
+  await expect(page.locator('#edit-panel-text')).toBeHidden();
+  await page.locator('[data-edit-tab="text"]').click();
+  await expect(page.locator('#edit-panel-text')).toBeVisible();
+  await expect(page.locator('#edit-text-title')).toBeEnabled();
+  await page.locator('#edit-modal-close').click();
+  await expect(page.locator('#edit-modal')).toBeHidden();
 
   const seasonCard = page.locator('#items a.file-card').filter({ hasText: /Season/i }).first();
   await expect(seasonCard).toBeVisible({ timeout: 30000 });
