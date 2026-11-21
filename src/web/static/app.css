@@ -364,6 +364,7 @@ body.spatial-nav textarea:focus {
   margin-top: 1rem;
 }
 .settings-panel .settings-tab-scroll .page-sub-card:first-child { margin-top: 0; }
+.settings-tab-scroll .page-sub-card-grid .page-sub-card { margin-top: 0; }
 .settings-tab-actions {
   flex: 0 0 auto;
   display: flex;

@@ -67,6 +67,29 @@ func TestPresentSkipsWebKitWithoutFlag(t *testing.T) {
 	}
 }
 
+func TestProbeHostAllowsLocalAndRejectsForeign(t *testing.T) {
+	if !probeHostOK("127.0.0.1") || !probeHostOK("::1") {
+		t.Fatal("loopback rejected")
+	}
+	if probeHostOK("192.0.2.1") || probeHostOK("example.com") {
+		t.Fatal("foreign host allowed")
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP == nil || ipnet.IP.IsLoopback() || ipnet.IP.IsUnspecified() {
+			continue
+		}
+		if !probeHostOK(ipnet.IP.String()) {
+			t.Fatalf("local %s rejected", ipnet.IP)
+		}
+		return
+	}
+}
+
 func TestListenAddr(t *testing.T) {
 	got, err := listenAddr("", "")
 	if err != nil || got != ":7676" {

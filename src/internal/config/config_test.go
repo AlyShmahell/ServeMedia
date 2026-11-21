@@ -85,6 +85,37 @@ func TestSaveHeightsOmitsMaxHeight(t *testing.T) {
 	}
 }
 
+func TestSaveKeepsNetworkUntilReset(t *testing.T) {
+	c := config.Defaults()
+	c.Network = &config.NetworkConfig{Host: "127.0.0.1", Port: 8080}
+	path := filepath.Join(t.TempDir(), "overlay.yaml")
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	c.Scan.OnStartup = true
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	text, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(text), "network:") || !strings.Contains(string(text), "8080") || !strings.Contains(string(text), "on_startup: true") {
+		t.Fatalf("overlay:\n%s", text)
+	}
+	c.Network = nil
+	if err := c.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	text, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(text), "network:") {
+		t.Fatalf("network kept:\n%s", text)
+	}
+}
+
 func TestEnsureIntegrationDefaults(t *testing.T) {
 	cfg := config.Defaults()
 	if !cfg.EnsureIntegrationDefaults() {

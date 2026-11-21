@@ -51,11 +51,15 @@ type Server struct {
 	repointOnce sync.Map
 	// Overlord signs every request in as the admin named overlord.
 	Overlord bool
+	netState networkState
 }
 
 type ctxKey int
 
-const userKey ctxKey = 1
+const (
+	userKey     ctxKey = 1
+	loopbackKey ctxKey = 2
+)
 
 func New(cfg *config.Config, database *db.DB, bak *backup.Service, tr *media.Manager, webFS fs.FS, meta matchmedia.Service, reopen func() error) (*Server, error) {
 	tplFS, err := fs.Sub(webFS, "templates")
@@ -263,6 +267,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/settings/engines/restart", s.handleRestartEngines)
 			r.Get("/hx/engines/matchmedia/status", s.handleEnginesStatus)
 			r.Get("/settings/server", s.handleSettingsServer)
+			r.Get("/settings/network", s.handleSettingsNetwork)
+			r.Post("/settings/network", s.handleSaveNetwork)
 			r.Get("/settings/backup", s.handleSettingsBackup)
 			r.Get("/settings/users", s.handleSettingsUsers)
 			r.Post("/hx/backup", s.handleBackupNow)
@@ -285,7 +291,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if s.Overlord {
+		if s.Overlord && loopbackRequest(r) {
 			u, err := s.DB.EnsureOverlord(r.Context())
 			if err != nil || u == nil {
 				http.Error(w, "db error", 500)
@@ -317,6 +323,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			token = c.Value
 		}
 		u, _ := s.DB.UserBySession(r.Context(), token)
+		if u != nil && db.IsOverlord(u.Username) && !loopbackRequest(r) {
+			u = nil
+		}
 		if u != nil {
 			ctx := context.WithValue(r.Context(), userKey, u)
 			r = r.WithContext(ctx)
@@ -348,6 +357,20 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// WithLoopback marks requests accepted by the desktop UI listener.
+// Overlord auto-login requires this mark and ignores client-supplied addresses.
+func WithLoopback(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), loopbackKey, true)
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func loopbackRequest(r *http.Request) bool {
+	ok, _ := r.Context().Value(loopbackKey).(bool)
+	return ok
 }
 
 func userFrom(r *http.Request) *db.User {
@@ -456,7 +479,7 @@ func (s *Server) handleRegisterPost(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	pass := r.FormValue("password")
 	confirm := r.FormValue("confirm")
-	if username == "" || pass == "" || pass != confirm {
+	if db.IsOverlord(username) || username == "" || pass == "" || pass != confirm {
 		s.render(w, r, "register.html", map[string]any{"Error": "Invalid input or passwords do not match"})
 		return
 	}

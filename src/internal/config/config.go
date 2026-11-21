@@ -41,6 +41,14 @@ type IntegrationsConfig struct {
 	Webhooks WebhooksConfig `yaml:"webhooks"`
 }
 
+// NetworkConfig is the saved bind address. A nil Network on Config means
+// "no override": desktop stays loopback-only, and server mode uses all
+// interfaces on port 7676.
+type NetworkConfig struct {
+	Host string `yaml:"host,omitempty"`
+	Port int    `yaml:"port"`
+}
+
 type Config struct {
 	Store struct {
 		Path string `yaml:"path"`
@@ -70,6 +78,7 @@ type Config struct {
 	Watchdog struct {
 		TTLSeconds int `yaml:"ttl_seconds"`
 	} `yaml:"watchdog"`
+	Network      *NetworkConfig     `yaml:"network,omitempty"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
 	Version      string             `yaml:"version"`
 
@@ -470,6 +479,7 @@ type settingsOverlay struct {
 	Watchdog struct {
 		TTLSeconds int `yaml:"ttl_seconds"`
 	} `yaml:"watchdog"`
+	Network      *NetworkConfig     `yaml:"network,omitempty"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
 }
 
@@ -490,6 +500,10 @@ func (c Config) settingsDocument(mediaPath string) settingsOverlay {
 	doc.Backup.Retain = c.Backup.Retain
 	doc.Scan.OnStartup = c.Scan.OnStartup
 	doc.Watchdog.TTLSeconds = c.Watchdog.TTLSeconds
+	if c.Network != nil {
+		n := *c.Network
+		doc.Network = &n
+	}
 	doc.Integrations = c.Integrations
 	return doc
 }

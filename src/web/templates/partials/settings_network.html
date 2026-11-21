@@ -1,0 +1,45 @@
+{{define "partials/settings_network.html"}}
+<div class="settings-tab-card" id="tab-network">
+  <div class="settings-tab-scroll">
+    <div class="page-sub-card-grid">
+      <section class="page-sub-card">
+        <h2>Address</h2>
+        <form method="post" action="/settings/network" id="settings-network-form" hx-post="/settings/network" hx-target="#settings-panel" hx-swap="innerHTML">
+          <label for="network-host">IP address</label>
+          <input id="network-host" name="host" list="network-hosts" value="{{.NetworkHost}}" placeholder="All interfaces">
+          <datalist id="network-hosts">
+            {{range .LocalAddrs}}<option value="{{.}}"></option>{{end}}
+          </datalist>
+          <label for="network-port">Port</label>
+          <input id="network-port" name="port" type="number" min="1" max="65535" value="{{.NetworkPort}}" placeholder="7676">
+          <p class="muted">Blank IP listens on every interface. Save and Reset apply immediately.</p>
+        </form>
+        <form method="post" action="/settings/network" id="settings-network-reset" hx-post="/settings/network" hx-target="#settings-panel" hx-swap="innerHTML">
+          <input type="hidden" name="reset" value="1">
+        </form>
+      </section>
+      <section class="page-sub-card">
+        <h2>In use</h2>
+        {{if .ActualPort}}
+        <p>{{if .ActualAll}}All interfaces{{else}}{{.ActualHost}}{{end}} : {{.ActualPort}}</p>
+        {{if .ActualURL}}<p><a href="{{.ActualURL}}">{{.ActualURL}}</a></p>{{end}}
+        {{if .ActualAll}}<p class="muted">Other devices use this machine's LAN address and port {{.ActualPort}}.</p>{{end}}
+        {{else}}
+        <p class="muted">Not listening.</p>
+        {{end}}
+        {{if .LoopbackURL}}<p class="muted">This window: {{.LoopbackURL}}</p>{{end}}
+        {{if .FlagOverride}}<p class="muted">Started with --host or --port. Saved values apply on a start without those flags.</p>{{end}}
+        {{if .LanHolds}}<p class="muted">This process stays up while the network listener is on.</p>{{end}}
+        {{if .NeedsAccount}}<p class="muted">Create an account in Accounts before other devices can sign in.</p>{{end}}
+      </section>
+    </div>
+  </div>
+  <div class="settings-tab-actions">
+    <button type="submit" form="settings-network-form" class="btn-with-icon">
+      {{template "partials/icon_save.html" .}}
+      Save
+    </button>
+    <button type="submit" form="settings-network-reset">Reset</button>
+  </div>
+</div>
+{{end}}

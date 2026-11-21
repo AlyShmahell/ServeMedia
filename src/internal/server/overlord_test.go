@@ -35,7 +35,7 @@ func TestOverlordSkipsSetupAndHidesLogout(t *testing.T) {
 	s := testServer(t)
 	s.Overlord = true
 	w := httptest.NewRecorder()
-	s.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	WithLoopback(s.Router()).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
@@ -94,5 +94,65 @@ func TestLoginRejectsOverlord(t *testing.T) {
 		if c.Name == sessionCookie && c.Value != "" {
 			t.Fatal("session cookie set")
 		}
+	}
+}
+
+func TestOverlordStaysOffTheNetwork(t *testing.T) {
+	s := testServer(t)
+	s.Overlord = true
+	if _, err := s.DB.EnsureOverlord(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	plain := func(req *http.Request) *httptest.ResponseRecorder {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.Router().ServeHTTP(w, req)
+		return w
+	}
+	w := plain(httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+		t.Fatalf("plain status %d location %q body %s", w.Code, w.Header().Get("Location"), w.Body.String())
+	}
+	fwd := httptest.NewRequest(http.MethodGet, "/", nil)
+	fwd.Header.Set("X-Forwarded-For", "127.0.0.1")
+	w = plain(fwd)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+		t.Fatalf("forwarded status %d location %q", w.Code, w.Header().Get("Location"))
+	}
+	u, err := s.DB.GetUserByUsername(context.Background(), "overlord")
+	if err != nil || u == nil {
+		t.Fatal(err)
+	}
+	token, err := s.DB.CreateSession(context.Background(), u.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := httptest.NewRequest(http.MethodGet, "/", nil)
+	sess.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	w = plain(sess)
+	if w.Code != http.StatusFound || w.Header().Get("Location") != "/login" {
+		t.Fatalf("session status %d location %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
+func TestRegisterRejectsOverlord(t *testing.T) {
+	s := testServer(t)
+	form := url.Values{"username": {"overlord"}, "password": {"secret"}, "confirm": {"secret"}}
+	req := httptest.NewRequest(http.MethodPost, "/register", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Router().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Invalid input") {
+		t.Fatalf("body %s", w.Body.String())
+	}
+	u, err := s.DB.GetUserByUsername(context.Background(), "overlord")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u != nil {
+		t.Fatal("overlord user created")
 	}
 }
