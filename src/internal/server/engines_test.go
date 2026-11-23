@@ -460,6 +460,7 @@ func TestSaveGeneralSettings(t *testing.T) {
 	form := url.Values{}
 	form.Set("scan_on_startup", "on")
 	form.Set("watchdog_ttl", "0")
+	form.Set("window_mode", "big_picture")
 	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("HX-Request", "true")
@@ -470,12 +471,15 @@ func TestSaveGeneralSettings(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
-	if !s.Cfg.Scan.OnStartup || s.Cfg.Watchdog.TTLSeconds != 0 {
-		t.Fatalf("scan %v ttl %d", s.Cfg.Scan.OnStartup, s.Cfg.Watchdog.TTLSeconds)
+	if !s.Cfg.Scan.OnStartup || s.Cfg.Watchdog.TTLSeconds != 0 || s.Cfg.Window.Mode != config.WindowModeBigPicture {
+		t.Fatalf("scan %v ttl %d mode %q", s.Cfg.Scan.OnStartup, s.Cfg.Watchdog.TTLSeconds, s.Cfg.Window.Mode)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "scan_on_startup") || !strings.Contains(body, `id="watchdog-ttl"`) || strings.Contains(body, "settings-sidenav") {
+	if !strings.Contains(body, "scan_on_startup") || !strings.Contains(body, `id="watchdog-ttl"`) || !strings.Contains(body, `id="window-mode"`) || strings.Contains(body, "settings-sidenav") {
 		t.Fatalf("panel %s", body)
+	}
+	if !strings.Contains(body, `value="big_picture" selected`) {
+		t.Fatalf("startup select: %s", body)
 	}
 	if !strings.Contains(body, `class="settings-notice settings-notice-ok" role="status">Saved</p>`) {
 		t.Fatalf("missing saved notice: %s", body)
@@ -488,7 +492,7 @@ func TestSaveGeneralSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(b)
-	if !strings.Contains(text, "/keep/media") || strings.Contains(text, "/old/store") {
+	if !strings.Contains(text, "/keep/media") || strings.Contains(text, "/old/store") || !strings.Contains(text, "mode: big_picture") {
 		t.Fatalf("overlay:\n%s", text)
 	}
 }
@@ -512,7 +516,7 @@ func TestSettingsAndAboutFragments(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, body)
 	}
-	for _, want := range []string{"settings-sidenav", "General", "FFmpeg", "MatchMedia", "Webhooks", "Backup", "Accounts", "scan_on_startup", "aria-current=\"page\""} {
+	for _, want := range []string{"settings-sidenav", "General", "FFmpeg", "MatchMedia", "Webhooks", "Backup", "Accounts", "scan_on_startup", "Watchdog", "Libraries", "Startup", `id="window-mode"`, "aria-current=\"page\""} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q in %s", want, body)
 		}

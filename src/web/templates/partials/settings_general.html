@@ -1,10 +1,26 @@
 {{define "partials/settings_general.html"}}
 <form method="post" action="/settings" id="settings-general-form" class="settings-tab-card" hx-post="/settings" hx-target="#settings-panel" hx-swap="innerHTML">
   <div class="settings-tab-scroll">
-    <label><input type="checkbox" name="scan_on_startup" {{if .Config.Scan.OnStartup}}checked{{end}}> Scan libraries on startup</label>
-    <label>Watchdog TTL seconds</label>
-    <input name="watchdog_ttl" id="watchdog-ttl" type="number" min="0" value="{{.Config.Watchdog.TTLSeconds}}">
-    <p class="muted">0 keeps the process running after every tab closes.</p>
+    <section class="page-sub-card">
+      <h2>Watchdog</h2>
+      <label for="watchdog-ttl">Timeout seconds</label>
+      <input name="watchdog_ttl" id="watchdog-ttl" type="number" min="0" value="{{.Config.Watchdog.TTLSeconds}}">
+      <p class="muted">0 keeps the process running after every tab closes.</p>
+    </section>
+    <section class="page-sub-card">
+      <h2>Libraries</h2>
+      <label><input type="checkbox" name="scan_on_startup" {{if .Config.Scan.OnStartup}}checked{{end}}> Scan libraries on startup</label>
+    </section>
+    <section class="page-sub-card">
+      <h2>Startup</h2>
+      <label for="window-mode">Mode</label>
+      <select name="window_mode" id="window-mode">
+        <option value="unmaximized" {{if eq .Config.Window.Mode "unmaximized"}}selected{{end}}>Unmaximized</option>
+        <option value="maximized" {{if eq .Config.Window.Mode "maximized"}}selected{{end}}>Maximized</option>
+        <option value="big_picture" {{if eq .Config.Window.Mode "big_picture"}}selected{{end}}>Big picture</option>
+      </select>
+      <p class="muted">Applies the next time the window opens.</p>
+    </section>
   </div>
   <div class="settings-tab-actions">
     <button type="submit" class="btn-with-icon">

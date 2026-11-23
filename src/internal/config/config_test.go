@@ -17,6 +17,27 @@ func TestDefaultsBooleansOff(t *testing.T) {
 	if c.Watchdog.TTLSeconds != 60 || c.Transcode.HWAccel != "auto" {
 		t.Fatalf("defaults %+v", c)
 	}
+	if c.Window.Mode != config.WindowModeMaximized {
+		t.Fatalf("window mode %q", c.Window.Mode)
+	}
+}
+
+func TestNormalizeWindowMode(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{in: "", want: config.WindowModeMaximized},
+		{in: "nope", want: config.WindowModeMaximized},
+		{in: " maximized ", want: config.WindowModeMaximized},
+		{in: config.WindowModeUnmaximized, want: config.WindowModeUnmaximized},
+		{in: config.WindowModeMaximized, want: config.WindowModeMaximized},
+		{in: config.WindowModeBigPicture, want: config.WindowModeBigPicture},
+	}
+	for _, tc := range cases {
+		if got := config.NormalizeWindowMode(tc.in); got != tc.want {
+			t.Fatalf("%q -> %q, want %q", tc.in, got, tc.want)
+		}
+	}
 }
 
 func TestHeightsFromLegacyMax(t *testing.T) {
@@ -82,6 +103,40 @@ func TestSaveHeightsOmitsMaxHeight(t *testing.T) {
 	text := string(b)
 	if strings.Contains(text, "max_height") || !strings.Contains(text, "heights:") {
 		t.Fatalf("overlay:\n%s", text)
+	}
+	if !strings.Contains(text, "mode: maximized") {
+		t.Fatalf("overlay:\n%s", text)
+	}
+}
+
+func TestLoadOverlayWindowMode(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SERVEMEDIA_ROOT", root)
+	t.Setenv("SERVEMEDIA_HOME", root)
+	if err := os.MkdirAll(filepath.Join(root, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlay := "window:\n  mode: unmaximized\n"
+	if err := os.WriteFile(filepath.Join(root, "config", "overlay.yaml"), []byte(overlay), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Window.Mode != config.WindowModeUnmaximized {
+		t.Fatalf("mode %q", c.Window.Mode)
+	}
+	c.Window.Mode = "sideways"
+	if err := c.Save(c.OverlayPath); err != nil {
+		t.Fatal(err)
+	}
+	again, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Window.Mode != config.WindowModeMaximized {
+		t.Fatalf("normalized mode %q", again.Window.Mode)
 	}
 }
 

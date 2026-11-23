@@ -779,9 +779,10 @@ func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Librar
 			card.Watched, card.Total, card.WatchPct = folderWatch(files, node.RelPath)
 			dirs = append(dirs, card)
 		}
+		seasonPage := s.orderLibraryCards(ctx, lib, rel, sort, dirs, fileCards)
 		out := map[string]any{
 			"Library": lib, "Tree": true, "Nodes": dirs, "Files": fileCards, "Path": rel,
-			"ItemCount": len(dirs) + len(fileCards), "Sort": sort, "Q": q,
+			"ItemCount": len(dirs) + len(fileCards), "Sort": sort, "Q": q, "Season": seasonPage,
 			"Poll": s.libraryGridPolling(ctx, lib.ID), "SwapCount": swapCount,
 		}
 		if rel != "" {
@@ -2106,6 +2107,7 @@ func (s *Server) handleSaveGeneral(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Cfg.Scan.OnStartup = r.FormValue("scan_on_startup") == "on"
 	s.Cfg.Watchdog.TTLSeconds = ttl
+	s.Cfg.Window.Mode = config.NormalizeWindowMode(r.FormValue("window_mode"))
 	if err := s.Cfg.Save(s.Cfg.OverlaySavePath()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -78,6 +78,9 @@ type Config struct {
 	Watchdog struct {
 		TTLSeconds int `yaml:"ttl_seconds"`
 	} `yaml:"watchdog"`
+	Window struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"window"`
 	Network      *NetworkConfig     `yaml:"network,omitempty"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
 	Version      string             `yaml:"version"`
@@ -197,7 +200,25 @@ func Defaults() Config {
 	c.Backup.Dir = "backups"
 	c.Scan.OnStartup = false
 	c.Watchdog.TTLSeconds = 60
+	c.Window.Mode = WindowModeMaximized
 	return c
+}
+
+const (
+	WindowModeUnmaximized = "unmaximized"
+	WindowModeMaximized   = "maximized"
+	WindowModeBigPicture  = "big_picture"
+)
+
+// NormalizeWindowMode returns a startup mode the window can apply.
+// An empty or unknown value is maximized.
+func NormalizeWindowMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case WindowModeUnmaximized, WindowModeMaximized, WindowModeBigPicture:
+		return strings.TrimSpace(mode)
+	default:
+		return WindowModeMaximized
+	}
 }
 
 // StandardHeights is the ladder offered as toggles in settings.
@@ -329,6 +350,7 @@ func Load(path string) (Config, error) {
 		return c, err
 	}
 	c.EnsureIntegrationDefaults()
+	c.Window.Mode = NormalizeWindowMode(c.Window.Mode)
 	return c, nil
 }
 
@@ -479,6 +501,9 @@ type settingsOverlay struct {
 	Watchdog struct {
 		TTLSeconds int `yaml:"ttl_seconds"`
 	} `yaml:"watchdog"`
+	Window struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"window"`
 	Network      *NetworkConfig     `yaml:"network,omitempty"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
 }
@@ -500,6 +525,7 @@ func (c Config) settingsDocument(mediaPath string) settingsOverlay {
 	doc.Backup.Retain = c.Backup.Retain
 	doc.Scan.OnStartup = c.Scan.OnStartup
 	doc.Watchdog.TTLSeconds = c.Watchdog.TTLSeconds
+	doc.Window.Mode = NormalizeWindowMode(c.Window.Mode)
 	if c.Network != nil {
 		n := *c.Network
 		doc.Network = &n

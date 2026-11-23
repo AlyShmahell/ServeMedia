@@ -121,7 +121,7 @@ Home with libraries and recently added titles.
 Anime library poster grid.
 
 <p align="center">
-  <img src="flatpak/screenshots/02-library-anime.png" alt="Anime library poster grid" width="640">
+  <img src="flatpak/screenshots/02-library.png" alt="Anime library poster grid" width="640">
 </p>
 
 Title page with plot and seasons.
@@ -146,6 +146,12 @@ Settings.
 
 <p align="center">
   <img src="flatpak/screenshots/06-settings.png" alt="Settings" width="640">
+</p>
+
+Home on a narrow window.
+
+<p align="center">
+  <img src="flatpak/screenshots/07-mobile.png" alt="Home on a narrow window" width="640">
 </p>
 
 ## Controls

@@ -206,6 +206,9 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 			return err
 		}
 	}
+	if changesMode(opts) && !opts.ManualSelect {
+		return w.changesPipeline(ctx, lib, jobs, only, opts)
+	}
 	live := &liveProgress{jobID: opts.ScanJobID}
 	q := newJobQueue()
 	errCh := make(chan error, 1)
@@ -276,7 +279,7 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 			w.flushLive(ctx, live)
 		}, func(j matchmedia.Job) {
 			enqueue(j, true)
-		})
+		}, nil)
 		if err != nil {
 			q.close()
 			<-errCh
@@ -325,6 +328,182 @@ func (w *Worker) matchPipeline(ctx context.Context, lib *db.Library, scanPath st
 		}
 	}
 	return w.resolveManualFromChildren(ctx, lib)
+}
+
+func changesMode(opts Opts) bool {
+	switch strings.TrimSpace(opts.ScanMode) {
+	case "changes", "matchmedia-changes":
+		return true
+	default:
+		return false
+	}
+}
+
+// changesPipeline adopts sidecars MatchMedia already finished, then writes the
+// rest through MatchMedia. A folded show is written while other shows are still matching.
+// ServeMedia only stores the paths that come back.
+func (w *Worker) changesPipeline(ctx context.Context, lib *db.Library, jobs []matchmedia.Job, only *db.MediaItem, opts Opts) error {
+	live := &liveProgress{jobID: opts.ScanJobID}
+	var mu sync.Mutex
+	adopted := map[string]bool{}
+	seen := map[string]bool{}
+	var writeN int
+	for _, j := range jobs {
+		if !changesTouches(j, only) {
+			continue
+		}
+		if Next(queueDecision(opts, j)) != ActionAdoptSidecar {
+			continue
+		}
+		id := changesJobID(j)
+		if adopted[id] {
+			continue
+		}
+		adopted[id] = true
+		if err := w.adoptFinishedSidecar(ctx, lib, j); err != nil {
+			return err
+		}
+	}
+	q := newJobQueue()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- w.writeFolded(ctx, lib, opts, live, q, &mu, adopted)
+	}()
+	push := func(j matchmedia.Job) {
+		j = w.fillJobSeasonNumbers(j)
+		id := changesJobID(j)
+		mu.Lock()
+		if seen[id] {
+			mu.Unlock()
+			return
+		}
+		seen[id] = true
+		skip := !changesTouches(j, only) || adopted[id]
+		adopt := !skip && Next(queueDecision(opts, j)) == ActionAdoptSidecar
+		write := !skip && !adopt && j.Status == "matched" && j.Match != nil
+		if write {
+			writeN++
+		}
+		mu.Unlock()
+		if adopt || write {
+			q.push(j)
+		}
+	}
+	final := jobs
+	if jobsNeedMatch(jobs) {
+		var err error
+		final, err = w.Meta.Match(ctx, jobs, func(done, total int, name string) {
+			live.setMatch(name, done, total)
+			w.flushLive(ctx, live)
+		}, nil, push)
+		if err != nil {
+			q.close()
+			<-errCh
+			return err
+		}
+	}
+	for i := range final {
+		final[i] = w.fillJobSeasonNumbers(final[i])
+		push(final[i])
+	}
+	mu.Lock()
+	n := writeN
+	mu.Unlock()
+	live.setFetchTotal(n)
+	w.flushLive(ctx, live)
+	q.close()
+	if err := <-errCh; err != nil {
+		return err
+	}
+	for _, j := range final {
+		if !changesTouches(j, only) {
+			continue
+		}
+		if j.Status == "matched" && j.Match != nil {
+			continue
+		}
+		if j.Status == "pending" || j.Status == "" {
+			continue
+		}
+		if err := w.recordTree(ctx, lib, j, opts); err != nil {
+			return err
+		}
+		if _, err := w.applyFinishedJob(ctx, lib, j, only, opts, ""); err != nil {
+			return err
+		}
+	}
+	return w.resolveManualFromChildren(ctx, lib)
+}
+
+// writeFolded writes one folded show at a time. The fetch total stays unset so the match line remains.
+func (w *Worker) writeFolded(ctx context.Context, lib *db.Library, opts Opts, live *liveProgress, q *jobQueue, mu *sync.Mutex, adopted map[string]bool) error {
+	nfo, episode, poster, done := 0, 0, 0, 0
+	for {
+		j, ok := q.pop()
+		if !ok {
+			return nil
+		}
+		id := changesJobID(j)
+		mu.Lock()
+		already := adopted[id]
+		adopt := !already && Next(queueDecision(opts, j)) == ActionAdoptSidecar
+		if adopt {
+			adopted[id] = true
+		}
+		mu.Unlock()
+		if already {
+			continue
+		}
+		if adopt {
+			if err := w.adoptFinishedSidecar(ctx, lib, j); err != nil {
+				return err
+			}
+			continue
+		}
+		if j.Status != "matched" || j.Match == nil {
+			continue
+		}
+		written, _, err := w.Meta.Write(ctx, "changes", []matchmedia.Job{j}, func(_ int, _ int, job matchmedia.Job, st matchmedia.WriteStats) {
+			nfo += st.TitleNFO
+			episode += st.EpisodeNFO
+			poster += st.Posters
+			done++
+			live.noteFetch(done, nfo, episode, poster, changesJobTitle(job))
+			w.flushLive(ctx, live)
+		})
+		if err != nil {
+			return err
+		}
+		for _, got := range written {
+			if err := w.recordTree(ctx, lib, got, opts); err != nil {
+				return err
+			}
+			if err := w.adoptFinishedSidecar(ctx, lib, got); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func changesTouches(j matchmedia.Job, only *db.MediaItem) bool {
+	if only == nil {
+		return true
+	}
+	return jobTouchesItem(j, only)
+}
+
+func changesJobID(j matchmedia.Job) string {
+	if id := strings.TrimSpace(j.ID); id != "" {
+		return id
+	}
+	return matchmedia.StableID(j.Path)
+}
+
+func changesJobTitle(j matchmedia.Job) string {
+	if j.Match != nil && strings.TrimSpace(j.Match.Title) != "" {
+		return strings.TrimSpace(j.Match.Title)
+	}
+	return strings.TrimSpace(j.Title)
 }
 
 func jobsNeedMatch(jobs []matchmedia.Job) bool {
@@ -928,7 +1107,7 @@ func (w *Worker) storeSidecarIdentity(ctx context.Context, it *db.MediaItem, j m
 		nfo = nfoFile
 	}
 	poster := ""
-	if !it.PosterPath.Valid || strings.TrimSpace(it.PosterPath.String) == "" {
+	if storedPoster(ctx, w, it) == "" {
 		poster = strings.TrimSpace(j.PosterPath)
 		if poster == "" {
 			poster = metadata.FolderPoster(it.Path)
@@ -938,6 +1117,18 @@ func (w *Worker) storeSidecarIdentity(ctx context.Context, it *db.MediaItem, j m
 		return nil
 	}
 	return w.DB.UpdateMediaItemMeta(ctx, it.ID, "", 0, "", poster, "", nfo, 0, provider, id)
+}
+
+// storedPoster is the poster column. GetMediaItem fills an empty one from a season.
+func storedPoster(ctx context.Context, w *Worker, it *db.MediaItem) string {
+	if w == nil || w.DB == nil || it == nil {
+		return ""
+	}
+	var poster sql.NullString
+	if err := w.DB.SQL.QueryRowContext(ctx, `SELECT poster_path FROM media_items WHERE id=?`, it.ID).Scan(&poster); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(poster.String)
 }
 
 func (w *Worker) restoreKeptPosters(ctx context.Context, lib *db.Library, it *db.MediaItem, j matchmedia.Job) {

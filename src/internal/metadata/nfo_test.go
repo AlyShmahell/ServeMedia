@@ -114,12 +114,13 @@ func TestReadSeasonNFO(t *testing.T) {
 <season>
   <title>Season One</title>
   <plot>Intro arcs.</plot>
+  <premiered>2012-06-01</premiered>
 </season>
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	n, err := metadata.ReadSeasonNFO(p)
-	if err != nil || n.Title != "Season One" || n.Plot != "Intro arcs." {
+	if err != nil || n.Title != "Season One" || n.Plot != "Intro arcs." || n.Premiered != "2012-06-01" {
 		t.Fatalf("%+v %v", n, err)
 	}
 	if metadata.FindSeasonNFO(dir, 1) != p {

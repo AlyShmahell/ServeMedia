@@ -8,7 +8,8 @@
   <developer id="eu.alyshmahell">
     <name>Aly Shmahell</name>
   </developer>
-  <url type="homepage">https://alyshmahell.eu</url>
+  <url type="homepage">https://github.com/AlyShmahell/servemedia</url>
+  <url type="donation">https://github.com/sponsors/AlyShmahell</url>
   <url type="bugtracker">https://github.com/AlyShmahell/servemedia/issues</url>
   <url type="vcs-browser">https://github.com/AlyShmahell/servemedia</url>
   <description>
@@ -50,15 +51,21 @@
   <recommends>
     <control>pointing</control>
     <control>keyboard</control>
-    <control>gamepad</control>
   </recommends>
+  <supports>
+    <control>gamepad</control>
+    <control>touch</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
   <screenshots>
     <screenshot type="default">
       <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/01-home.png</image>
       <caption>Home with libraries and recently added titles</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/02-library-anime.png</image>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/02-library.png</image>
       <caption>Anime library poster grid</caption>
     </screenshot>
     <screenshot>
@@ -77,10 +84,21 @@
       <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/06-settings.png</image>
       <caption>Settings</caption>
     </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/AlyShmahell/servemedia/main/flatpak/screenshots/07-mobile.png</image>
+      <caption>Home on a narrow window</caption>
+    </screenshot>
   </screenshots>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.2.4" date="2026-11-07"/>
+    <release version="0.2.5" date="2026-11-23">
+      <description>
+        <ul>
+          <li>TBD</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.2.5" date="2026-11-22"/>
     <release version="0.1.0" date="2026-10-01"/>
   </releases>
 </component>

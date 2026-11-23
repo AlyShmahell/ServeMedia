@@ -181,16 +181,6 @@
   }
 
   function goBack() {
-    var panel = document.getElementById('topbar-menu-panel');
-    if (panel && !panel.hidden) {
-      panel.hidden = true;
-      var burger = document.getElementById('topbar-menu');
-      if (burger) {
-        burger.setAttribute('aria-expanded', 'false');
-        burger.focus();
-      }
-      return;
-    }
     var dlg = document.querySelector('dialog[open]');
     if (dlg && typeof dlg.close === 'function') {
       dlg.close();
@@ -345,20 +335,7 @@
     wakePads();
     if (isPlayer) return;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
-    if (e.key === 'Escape') {
-      if (document.querySelector('dialog[open]')) return;
-      var panel = document.getElementById('topbar-menu-panel');
-      if (panel && !panel.hidden) {
-        e.preventDefault();
-        panel.hidden = true;
-        var burger = document.getElementById('topbar-menu');
-        if (burger) {
-          burger.setAttribute('aria-expanded', 'false');
-          burger.focus();
-        }
-      }
-      return;
-    }
+    if (e.key === 'Escape') return;
     var dir =
       e.key === 'ArrowUp'
         ? 'up'

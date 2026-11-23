@@ -107,7 +107,7 @@ func (e *Engine) Run(ctx context.Context, path, mode string, report func(done, t
 	if err != nil {
 		return nil, "", err
 	}
-	out, err := e.Match(ctx, jobs, report, nil)
+	out, err := e.Match(ctx, jobs, report, nil, nil)
 	if err != nil {
 		return nil, "", err
 	}
@@ -137,8 +137,9 @@ func (e *Engine) Scan(ctx context.Context, path, mode string, report func(done, 
 	return jobs, nil
 }
 
-// Match searches jobs that are still pending or in error. onJob runs for each finished job.
-func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total int, name string), onJob func(Job)) ([]Job, error) {
+// Match searches jobs that are still pending or in error.
+// onJob runs for each raw finished job. onFolded runs for each folded show.
+func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total int, name string), onJob func(Job), onFolded func(Job)) ([]Job, error) {
 	cfg := e.config()
 	if cfg == nil {
 		return nil, fmt.Errorf("metadata service unavailable")
@@ -168,7 +169,11 @@ func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total 
 		msg := matchProgress(done, total, matched, manual, unmatched, errored, sidecar, replay, 0, j.Title)
 		mu.Unlock()
 		report(done, total, msg)
-	}, nil))
+	}, func(_ context.Context, j match.Job) {
+		if onFolded != nil {
+			onFolded(j)
+		}
+	}))
 	if report != nil && lastTotal > 0 {
 		folded := 0
 		if lastTotal > len(out) {
@@ -178,6 +183,30 @@ func (e *Engine) Match(ctx context.Context, jobs []Job, report func(done, total 
 	}
 	e.remember(out)
 	return out, nil
+}
+
+// Write saves sidecars through MatchMedia. Changes mode keeps a finished title
+// sidecar and writes only the episode files that are still missing.
+func (e *Engine) Write(ctx context.Context, mode string, jobs []Job, report func(done, total int, job Job, stats WriteStats)) ([]Job, WriteStats, error) {
+	client := e.fetcher()
+	if client == nil {
+		return nil, WriteStats{}, fmt.Errorf("metadata service unavailable")
+	}
+	out, st, err := sidecar.WriteProgress(ctx, client, mode, jobs, func(done, total int, job match.Job, st sidecar.Stats) {
+		if report == nil {
+			return
+		}
+		report(done, total, job, writeStats(st))
+	})
+	if err != nil {
+		return nil, writeStats(st), err
+	}
+	e.remember(out)
+	return out, writeStats(st), nil
+}
+
+func writeStats(st sidecar.Stats) WriteStats {
+	return WriteStats{TitleNFO: st.TitleNFO, EpisodeNFO: st.EpisodeNFO, Posters: st.Posters}
 }
 
 func tallyMatch(j match.Job, matched, sidecar, replay, manual, unmatched, errored *int) {
@@ -422,7 +451,8 @@ func mapMode(mode string) string {
 }
 
 // SidecarComplete reports a Changes job that already has its title NFO, poster,
-// and, for a show, an NFO beside every episode. Those jobs are not fetched.
+// and, for a show, an NFO beside every episode plus a season NFO and poster in
+// each season directory. Those jobs are not fetched.
 func SidecarComplete(j Job) bool {
 	return sidecar.Complete(j, true)
 }

@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/alyshmahell/servemedia/src/internal/config"
 	"github.com/alyshmahell/servemedia/src/internal/server"
 	"github.com/ebitengine/purego"
 )
@@ -49,6 +50,9 @@ var (
 	gtkWindowFullscreen                 func(uintptr)
 	gtkWindowUnfullscreen               func(uintptr)
 	gtkWindowIsFullscreen               func(uintptr) int32
+	gtkWindowMaximize                   func(uintptr)
+	gtkWindowUnmaximize                 func(uintptr)
+	gtkWindowIsMaximized                func(uintptr) int32
 	gtkWindowMinimize                   func(uintptr)
 	gtkWindowIconify                    func(uintptr)
 	gtkWindowClose                      func(uintptr)
@@ -451,6 +455,9 @@ func bindGTK3(glib, gobject, webkit uintptr) error {
 		{&gtkWindowSetDefaultSize, gtk, "gtk_window_set_default_size"},
 		{&gtkWindowFullscreen, gtk, "gtk_window_fullscreen"},
 		{&gtkWindowUnfullscreen, gtk, "gtk_window_unfullscreen"},
+		{&gtkWindowMaximize, gtk, "gtk_window_maximize"},
+		{&gtkWindowUnmaximize, gtk, "gtk_window_unmaximize"},
+		{&gtkWindowIsMaximized, gtk, "gtk_window_is_maximized"},
 		{&gtkWindowIconify, gtk, "gtk_window_iconify"},
 		{&gtkWindowClose, gtk, "gtk_window_close"},
 		{&gtkWindowSetDecorated, gtk, "gtk_window_set_decorated"},
@@ -512,6 +519,9 @@ func bindGTK4(glib, gobject, webkit uintptr) error {
 		{&gtkWindowFullscreen, gtk, "gtk_window_fullscreen"},
 		{&gtkWindowUnfullscreen, gtk, "gtk_window_unfullscreen"},
 		{&gtkWindowIsFullscreen, gtk, "gtk_window_is_fullscreen"},
+		{&gtkWindowMaximize, gtk, "gtk_window_maximize"},
+		{&gtkWindowUnmaximize, gtk, "gtk_window_unmaximize"},
+		{&gtkWindowIsMaximized, gtk, "gtk_window_is_maximized"},
 		{&gtkWindowMinimize, gtk, "gtk_window_minimize"},
 		{&gtkWindowClose, gtk, "gtk_window_close"},
 		{&gtkWindowSetDecorated, gtk, "gtk_window_set_decorated"},
@@ -742,7 +752,7 @@ func onMinimizeClicked(uintptr, uintptr) uintptr {
 }
 
 func onMaximizeClicked(uintptr, uintptr) uintptr {
-	toggleWindowFullscreen()
+	toggleWindowMaximize()
 	return 0
 }
 
@@ -771,13 +781,6 @@ func minimizeWindow() {
 	}
 }
 
-func windowIsFullscreen() bool {
-	if gtkWindowIsFullscreen != nil && webkitWindow != 0 {
-		return gtkWindowIsFullscreen(webkitWindow) != 0
-	}
-	return webkitFullscreen.Load()
-}
-
 func fullscreenWindow(window uintptr) {
 	if window != 0 && gtkWindowFullscreen != nil {
 		gtkWindowFullscreen(window)
@@ -785,18 +788,59 @@ func fullscreenWindow(window uintptr) {
 	webkitFullscreen.Store(true)
 }
 
-func toggleWindowFullscreen() {
+func unfullscreenWindow() {
+	if webkitWindow != 0 && gtkWindowUnfullscreen != nil {
+		gtkWindowUnfullscreen(webkitWindow)
+	}
+	webkitFullscreen.Store(false)
+}
+
+func windowIsMaximized() bool {
+	if gtkWindowIsMaximized != nil && webkitWindow != 0 {
+		return gtkWindowIsMaximized(webkitWindow) != 0
+	}
+	return false
+}
+
+func maximizeWindow(window uintptr) {
+	if window != 0 && gtkWindowMaximize != nil {
+		gtkWindowMaximize(window)
+	}
+}
+
+// applyStartupChrome sizes the window for a saved startup mode.
+// Call it after the window is shown so a later show-all does not reveal the header.
+func applyStartupChrome(window uintptr, mode string) {
+	switch config.NormalizeWindowMode(mode) {
+	case config.WindowModeUnmaximized:
+		setHeaderVisible(true)
+	case config.WindowModeBigPicture:
+		fullscreenWindow(window)
+		setHeaderVisible(false)
+	default:
+		setHeaderVisible(true)
+		maximizeWindow(window)
+	}
+}
+
+func setUnmaximizedSize(window uintptr) {
+	if window != 0 && gtkWindowSetDefaultSize != nil {
+		gtkWindowSetDefaultSize(window, 700, 1120)
+	}
+}
+
+func toggleWindowMaximize() {
 	if webkitWindow == 0 {
 		return
 	}
-	if windowIsFullscreen() {
-		if gtkWindowUnfullscreen != nil {
-			gtkWindowUnfullscreen(webkitWindow)
+	if windowIsMaximized() {
+		setUnmaximizedSize(webkitWindow)
+		if gtkWindowUnmaximize != nil {
+			gtkWindowUnmaximize(webkitWindow)
 		}
-		webkitFullscreen.Store(false)
 		return
 	}
-	fullscreenWindow(webkitWindow)
+	maximizeWindow(webkitWindow)
 }
 
 func setHeaderVisible(on bool) {
@@ -810,8 +854,9 @@ func setHeaderVisible(on bool) {
 	gtkWidgetSetVisible(webkitHeader, v)
 }
 
-// toggleBigPicture hides the header bar and fills the screen, or shows the
-// bar again without leaving fullscreen. The flag is what later page renders read.
+// toggleBigPicture hides the header bar and fullscreens the window, or shows
+// the bar and leaves fullscreen. GTK restores the maximized or restored size
+// from before fullscreen. The flag is what later page renders read.
 func toggleBigPicture() {
 	on := !server.BigPicture()
 	server.SetBigPicture(on)
@@ -819,6 +864,7 @@ func toggleBigPicture() {
 		fullscreenWindow(webkitWindow)
 		setHeaderVisible(false)
 	} else {
+		unfullscreenWindow()
 		setHeaderVisible(true)
 	}
 	syncPageBigPicture()
@@ -940,19 +986,19 @@ func prepareWebView(view uintptr, rawURL string) {
 // runWebKit opens rawURL and blocks until the window closes.
 // afterLoad runs once the libraries are loaded, before the GTK loop, so a
 // quit signal can reach the loop.
-func runWebKit(rawURL string, afterLoad func()) error {
+func runWebKit(rawURL, windowMode string, afterLoad func()) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	if err := loadWebKit(); err != nil {
 		return err
 	}
 	if uiStack == stackGTK4 {
-		return runWebKitGTK4(rawURL, afterLoad)
+		return runWebKitGTK4(rawURL, windowMode, afterLoad)
 	}
-	return runWebKitGTK3(rawURL, afterLoad)
+	return runWebKitGTK3(rawURL, windowMode, afterLoad)
 }
 
-func runWebKitGTK3(rawURL string, afterLoad func()) error {
+func runWebKitGTK3(rawURL, windowMode string, afterLoad func()) error {
 	if gtkInitCheck(0, 0) == 0 {
 		return fmt.Errorf("gtk_init_check failed")
 	}
@@ -972,7 +1018,7 @@ func runWebKitGTK3(rawURL string, afterLoad func()) error {
 	if err != nil {
 		return err
 	}
-	gtkWindowSetDefaultSize(window, 1280, 800)
+	setUnmaximizedSize(window)
 	view := webkitWebViewNew()
 	if view == 0 {
 		return fmt.Errorf("webkit_web_view_new failed")
@@ -981,10 +1027,11 @@ func runWebKitGTK3(rawURL string, afterLoad func()) error {
 		return err
 	}
 	prepareWebView(view, rawURL)
+	server.SetBigPicture(config.NormalizeWindowMode(windowMode) == config.WindowModeBigPicture)
 	webkitWebViewLoadURI(view, rawURL)
 	gSignalConnectData(window, "destroy", destroyCB, 0, 0, 0)
-	fullscreenWindow(window)
 	gtkWidgetShowAll(window)
+	applyStartupChrome(window, windowMode)
 	if quitReq.Load() {
 		return nil
 	}
@@ -992,7 +1039,7 @@ func runWebKitGTK3(rawURL string, afterLoad func()) error {
 	return nil
 }
 
-func runWebKitGTK4(rawURL string, afterLoad func()) error {
+func runWebKitGTK4(rawURL, windowMode string, afterLoad func()) error {
 	if gtk4InitCheck() == 0 {
 		return fmt.Errorf("gtk_init_check failed")
 	}
@@ -1011,7 +1058,7 @@ func runWebKitGTK4(rawURL string, afterLoad func()) error {
 	if err != nil {
 		return err
 	}
-	gtkWindowSetDefaultSize(window, 1280, 800)
+	setUnmaximizedSize(window)
 	view := webkitWebViewNew()
 	if view == 0 {
 		return fmt.Errorf("webkit_web_view_new failed")
@@ -1020,10 +1067,11 @@ func runWebKitGTK4(rawURL string, afterLoad func()) error {
 		return err
 	}
 	prepareWebView(view, rawURL)
+	server.SetBigPicture(config.NormalizeWindowMode(windowMode) == config.WindowModeBigPicture)
 	webkitWebViewLoadURI(view, rawURL)
 	gSignalConnectData(window, "close-request", closeCB, 0, 0, 0)
-	fullscreenWindow(window)
 	gtk4WindowPresent(window)
+	applyStartupChrome(window, windowMode)
 	if quitReq.Load() {
 		return nil
 	}

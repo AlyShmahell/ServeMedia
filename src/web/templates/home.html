@@ -19,22 +19,20 @@
       </div>
     </div>
   </section>
-  <div class="home-split">
-    <section class="home-section home-section-continue">
-      <h2>Continue watching</h2>
-      <div class="home-section-body" data-scroll-key="home-continue">
-        <div class="strip" id="continue" hx-get="/hx/home/continue" hx-trigger="load, every 30s" hx-swap="innerHTML">
-          {{template "partials/continue.html" .}}
-        </div>
+  <section class="home-section home-section-continue">
+    <h2>Continue watching</h2>
+    <div class="home-section-body" data-scroll-key="home-continue">
+      <div class="strip" id="continue" hx-get="/hx/home/continue" hx-trigger="load, every 30s" hx-swap="innerHTML">
+        {{template "partials/continue.html" .}}
       </div>
-    </section>
-    <section class="home-section home-section-recent">
-      <h2>Recently added</h2>
-      <div class="home-section-body" data-scroll-key="home-recent">
-        {{template "partials/recent.html" .}}
-      </div>
-    </section>
-  </div>
+    </div>
+  </section>
+  <section class="home-section home-section-recent">
+    <h2>Recently added</h2>
+    <div class="home-section-body" data-scroll-key="home-recent">
+      {{template "partials/recent.html" .}}
+    </div>
+  </section>
 </main></div>
 
 {{template "partials/fetch_modal.html" .}}

@@ -581,8 +581,8 @@ import pathlib, re, sys
 path, ver, date = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 meta = path.read_text()
 meta, n = re.subn(
-    r'<release version="[^"]*" date="[^"]*"/>',
-    f'<release version="{ver}" date="{date}"/>',
+    r'(<release version=")[^"]*(" date=")[^"]*(")',
+    rf'\g<1>{ver}\g<2>{date}\g<3>',
     meta,
     count=1,
 )

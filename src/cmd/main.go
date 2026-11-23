@@ -57,7 +57,7 @@ func main() {
 	}
 	if url, ok := probeRunning(rt); ok {
 		if url != "" {
-			if err := present(*webkitFlag, url); err != nil {
+			if err := present(*webkitFlag, url, cfg.Window.Mode); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -282,7 +282,7 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	if openUI(*webkitFlag, uiURL, func(rawURL string) error {
-		return runWebKit(rawURL, func() { go watchQuit(sig, shutdownCh) })
+		return runWebKit(rawURL, cfg.Window.Mode, func() { go watchQuit(sig, shutdownCh) })
 	}, openBrowser) {
 		select {
 		case <-sig:
@@ -365,9 +365,9 @@ func uiUsesWebKit(webkit bool) bool {
 
 // present opens the page. A WebKit window replaces the system browser.
 // If that window cannot be created, the browser opens and this process exits.
-func present(webkit bool, rawURL string) error {
+func present(webkit bool, rawURL, windowMode string) error {
 	openUI(webkit, rawURL, func(rawURL string) error {
-		return runWebKit(rawURL, func() {
+		return runWebKit(rawURL, windowMode, func() {
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 			go func() {

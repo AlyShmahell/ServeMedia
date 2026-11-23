@@ -35,7 +35,7 @@ func (writeStatsMeta) Status() (matchmedia.Status, error) { return matchmedia.St
 func (writeStatsMeta) Scan(context.Context, string, string, func(int, int, string)) ([]matchmedia.Job, error) {
 	return nil, fmt.Errorf("unused")
 }
-func (writeStatsMeta) Match(context.Context, []matchmedia.Job, func(int, int, string), func(matchmedia.Job)) ([]matchmedia.Job, error) {
+func (writeStatsMeta) Match(context.Context, []matchmedia.Job, func(int, int, string), func(matchmedia.Job), func(matchmedia.Job)) ([]matchmedia.Job, error) {
 	return nil, fmt.Errorf("unused")
 }
 func (writeStatsMeta) SelectStored(context.Context, matchmedia.Job, string, string) (matchmedia.Job, error) {
@@ -64,7 +64,10 @@ func (writeStatsMeta) SecretsStatus() (map[string]bool, error) { return map[stri
 func (writeStatsMeta) SetSecrets(map[string]string) error      { return nil }
 func (writeStatsMeta) Config() (map[string]any, error)         { return map[string]any{}, nil }
 func (writeStatsMeta) SetConfig(map[string]any) error          { return nil }
-func (writeStatsMeta) Reload() error                           { return nil }
+func (writeStatsMeta) Write(_ context.Context, _ string, jobs []matchmedia.Job, _ func(int, int, matchmedia.Job, matchmedia.WriteStats)) ([]matchmedia.Job, matchmedia.WriteStats, error) {
+	return jobs, matchmedia.WriteStats{}, nil
+}
+func (writeStatsMeta) Reload() error { return nil }
 
 func TestChangesSkipCountsSavedSidecars(t *testing.T) {
 	ctx := context.Background()

@@ -64,9 +64,11 @@ test('top bar primary nav and home sections', async ({ page }) => {
   await expect(topbar).toBeVisible();
   await expect(topbar.locator('.topbar-title')).toHaveText('Home');
   await expect(topbar.locator('.topbar-back')).toHaveCount(0);
-  await topbar.locator('#topbar-menu').click();
+  await expect(topbar.locator('#topbar-menu')).toHaveCount(0);
   await expect(topbar.getByRole('button', { name: 'Settings' })).toBeVisible();
   await expect(topbar.getByRole('button', { name: 'About' })).toBeVisible();
+  await expect(topbar.locator('#settings-open')).toHaveAttribute('title', 'Settings');
+  await expect(topbar.locator('#about-open')).toHaveAttribute('title', 'About');
   await expect(topbar.locator('.topbar-logo')).toHaveAttribute('href', '/');
   await expect(topbar.locator('.topbar-logo')).toHaveAttribute('title', 'Return to Home Page');
   await expect(topbar.locator('.topbar-logo-name')).toHaveText('ServeMedia');
@@ -76,10 +78,73 @@ test('top bar primary nav and home sections', async ({ page }) => {
   await expect(page.locator('.nav-libraries')).toHaveCount(0);
 
   await expect(page.locator('.home-section')).toHaveCount(3);
-  await expect(page.locator('.home-split')).toBeVisible();
+  await expect(page.locator('.home-split')).toHaveCount(0);
   await expect(page.locator('.home-section-continue')).toBeVisible();
   await expect(page.locator('.home-section-recent')).toBeVisible();
   await expect(page.locator('.home-section-libraries')).toBeVisible();
+
+  const layout = await page.evaluate(() => {
+    const pageEl = document.querySelector('.home-page');
+    const libs = document.querySelector('.home-section-libraries');
+    const cont = document.querySelector('.home-section-continue');
+    const recent = document.querySelector('.home-section-recent');
+    const pr = pageEl.getBoundingClientRect();
+    const pad = parseFloat(getComputedStyle(pageEl).paddingTop);
+    const gap = parseFloat(getComputedStyle(pageEl).rowGap);
+    const innerW = pr.width - pad * 2;
+    const innerH = pr.height - pad * 2;
+    const col1 = (innerW - gap) * 0.6;
+    const col2 = (innerW - gap) * 0.4;
+    const row1 = (innerH - gap) * 0.4;
+    const row2 = (innerH - gap) * 0.6;
+    function box(el) {
+      const r = el.getBoundingClientRect();
+      return {
+        x: r.left - pr.left,
+        y: r.top - pr.top,
+        w: r.width,
+        h: r.height,
+        right: pr.right - r.right,
+        bottom: pr.bottom - r.bottom,
+      };
+    }
+    return {
+      pad,
+      gap,
+      col1,
+      col2,
+      row1,
+      row2,
+      libs: box(libs),
+      cont: box(cont),
+      recent: box(recent),
+    };
+  });
+  const slack = 4;
+  expect(layout.pad).toBeGreaterThanOrEqual(7);
+  expect(layout.pad).toBeLessThanOrEqual(9);
+  expect(layout.gap).toBeGreaterThanOrEqual(7);
+  expect(layout.gap).toBeLessThanOrEqual(9);
+  expect(Math.abs(layout.libs.w - layout.col1)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.libs.h - layout.row1)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.cont.w - layout.col1)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.cont.h - layout.row2)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.recent.w - layout.col2)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.recent.h - (layout.row1 + layout.gap + layout.row2))).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.libs.x - layout.pad)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.libs.y - layout.pad)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.cont.x - layout.pad)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.cont.y - (layout.pad + layout.row1 + layout.gap))).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.recent.x - (layout.pad + layout.col1 + layout.gap))).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.recent.y - layout.pad)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.libs.right - (layout.pad + layout.gap + layout.col2))).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.cont.right - (layout.pad + layout.gap + layout.col2))).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.recent.right - layout.pad)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.libs.bottom - (layout.pad + layout.gap + layout.row2))).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.cont.bottom - layout.pad)).toBeLessThanOrEqual(slack);
+  expect(Math.abs(layout.recent.bottom - layout.pad)).toBeLessThanOrEqual(slack);
+  expect(Math.abs((layout.cont.y - layout.libs.h - layout.libs.y) - layout.gap)).toBeLessThanOrEqual(slack);
+  expect(Math.abs((layout.recent.x - layout.libs.w - layout.libs.x) - layout.gap)).toBeLessThanOrEqual(slack);
 });
 
 function isSpatialCandidate() {
@@ -288,7 +353,6 @@ test('About opens as a modal and version lives under the logo', async ({ page })
   await page.goto('/about');
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.topbar-title')).toHaveText('Home');
-  await page.locator('#topbar-menu').click();
   await page.locator('#about-open').click();
   await expect(page.locator('#about-modal')).toHaveAttribute('open', '');
   await expect(page).toHaveURL(/\/$/);
@@ -332,24 +396,27 @@ test('library cards fit libraries section height', async ({ page }) => {
 
   const metrics = await page.evaluate(() => {
     const section = document.querySelector('.home-section-libraries');
+    const body = section && section.querySelector('.home-section-body');
+    const grid = section && section.querySelector('.library-grid');
     const card = section && section.querySelector('.library-card');
-    if (!section || !card) {
-      return { fullyVisible: false, slackBelow: -1 };
+    if (!section || !body || !grid || !card) {
+      return { ok: false };
     }
-    const s = section.getBoundingClientRect();
+    const b = body.getBoundingClientRect();
     const c = card.getBoundingClientRect();
     return {
-      fullyVisible:
-        c.top >= s.top - 2 &&
-        c.bottom <= s.bottom + 2 &&
-        c.left >= s.left - 2 &&
-        c.right <= s.right + 2,
-      slackBelow: s.bottom - c.bottom,
+      ok: true,
+      cardW: c.width,
+      cardH: c.height,
+      bodyH: b.height,
+      overflowY: getComputedStyle(card).overflowY,
     };
   });
-  expect(metrics.fullyVisible).toBe(true);
-  expect(metrics.slackBelow).toBeGreaterThanOrEqual(8);
-  expect(metrics.slackBelow).toBeLessThanOrEqual(64);
+  expect(metrics.ok).toBe(true);
+  expect(metrics.cardW).toBeGreaterThan(190);
+  expect(metrics.cardW).toBeLessThan(210);
+  expect(Math.abs(metrics.cardH - metrics.bodyH)).toBeLessThanOrEqual(2);
+  expect(metrics.overflowY).toBe('auto');
 });
 
 test('TV show season and episode cards', async ({ page }) => {
@@ -420,6 +487,23 @@ test.describe('phone home layout', () => {
       const card = section && section.querySelector('.library-card');
       const signout = document.querySelector('.topbar-signout');
       const style = page_ && getComputedStyle(page_);
+      const pad = style
+        ? parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+        : 0;
+      const box = page_ ? page_.clientHeight - pad : 0;
+      function band(selector) {
+        const el = document.querySelector(selector);
+        if (!el) return null;
+        const cs = getComputedStyle(el);
+        const length = (value) => (
+          String(value).endsWith('%') ? (parseFloat(value) / 100) * box : parseFloat(value)
+        );
+        return {
+          h: el.getBoundingClientRect().height,
+          min: length(cs.minHeight),
+          max: length(cs.maxHeight),
+        };
+      }
       return {
         overflowY: style ? style.overflowY : '',
         sectionScrollSlack: section ? section.scrollHeight - section.clientHeight : -1,
@@ -427,11 +511,27 @@ test.describe('phone home layout', () => {
         signoutRight: signout ? signout.getBoundingClientRect().right : 0,
         innerWidth: window.innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
+        box,
+        libs: band('.home-section-libraries'),
+        cont: band('.home-section-continue'),
+        recent: band('.home-section-recent'),
       };
     });
 
     expect(metrics.overflowY).toBe('auto');
     expect(Math.abs(metrics.sectionScrollSlack)).toBeLessThanOrEqual(1);
+    const slack = 4;
+    for (const [band, minRatio, maxRatio] of [
+      [metrics.libs, 0.6, 0.9],
+      [metrics.cont, 0.4, 0.8],
+      [metrics.recent, 0.6, 0.9],
+    ]) {
+      expect(band).not.toBeNull();
+      expect(Math.abs(band.min - metrics.box * minRatio)).toBeLessThanOrEqual(slack);
+      expect(Math.abs(band.max - metrics.box * maxRatio)).toBeLessThanOrEqual(slack);
+      expect(band.h).toBeGreaterThanOrEqual(band.min - slack);
+      expect(band.h).toBeLessThanOrEqual(band.max + slack);
+    }
     expect(metrics.cardWidth).toBeGreaterThanOrEqual(300);
     expect(metrics.signoutRight).toBeLessThanOrEqual(metrics.innerWidth + 0.5);
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.innerWidth);

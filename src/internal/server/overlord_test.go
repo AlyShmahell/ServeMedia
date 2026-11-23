@@ -47,18 +47,22 @@ func TestOverlordSkipsSetupAndHidesLogout(t *testing.T) {
 	if !strings.Contains(body, "ServeMedia") {
 		t.Fatal("home page missing")
 	}
-	if !strings.Contains(body, `id="topbar-menu"`) {
-		t.Fatal("burger missing")
+	if strings.Contains(body, `id="topbar-menu"`) {
+		t.Fatal("burger still present")
 	}
 	tag := bigPictureTag(body)
-	if tag == "" || !strings.Contains(tag, " hidden") || !strings.Contains(tag, `data-webkit="1"`) || !strings.Contains(tag, `aria-pressed="false"`) {
-		t.Fatalf("big picture exit row %q", tag)
+	if tag == "" || !strings.Contains(tag, " hidden") || !strings.Contains(tag, `data-webkit="1"`) || !strings.Contains(tag, `aria-pressed="false"`) || !strings.Contains(tag, `title="Big picture"`) {
+		t.Fatalf("big picture button %q", tag)
 	}
+	settings := strings.Index(body, `id="settings-open"`)
 	about := strings.Index(body, `id="about-open"`)
 	big := strings.Index(body, `id="big-picture"`)
 	logo := strings.Index(body, `class="topbar-logo"`)
-	if about < 0 || big < about || logo < big {
-		t.Fatal("big picture exit row is not in the menu before the logo")
+	if settings < 0 || about < settings || big < about || logo < big {
+		t.Fatal("top bar buttons are not before the logo")
+	}
+	if !strings.Contains(body, `id="settings-open" aria-label="Settings" title="Settings"`) || !strings.Contains(body, `id="about-open" aria-label="About" title="About"`) {
+		t.Fatal("settings or about tooltip missing")
 	}
 	users, err := s.DB.ListUsers(context.Background())
 	if err != nil {
@@ -96,12 +100,15 @@ func TestBigPictureButtonInBrowser(t *testing.T) {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, `id="topbar-menu"`) {
-		t.Fatal("burger missing")
+	if strings.Contains(body, `id="topbar-menu"`) {
+		t.Fatal("burger still present")
 	}
 	tag := bigPictureTag(body)
-	if tag == "" || !strings.Contains(tag, " hidden") || strings.Contains(tag, `data-webkit=`) || !strings.Contains(tag, `aria-pressed="false"`) {
-		t.Fatalf("browser big picture row %q", tag)
+	if tag == "" || !strings.Contains(tag, " hidden") || strings.Contains(tag, `data-webkit=`) || !strings.Contains(tag, `aria-pressed="false"`) || !strings.Contains(tag, `title="Big picture"`) {
+		t.Fatalf("browser big picture button %q", tag)
+	}
+	if !strings.Contains(body, `title="Settings"`) || !strings.Contains(body, `title="About"`) {
+		t.Fatal("settings or about tooltip missing")
 	}
 }
 
