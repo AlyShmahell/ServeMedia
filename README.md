@@ -99,7 +99,7 @@ curl -fL https://github.com/AlyShmahell/ServeMedia/releases/latest/download/serv
 ### As a Container
 
 ```bash
-podman run --rm \
+podman run -d --name servemedia --rm \
   --userns=keep-id:uid=1000,gid=1000 \
   --security-opt label=disable \
   -p 7676:7676 \
@@ -116,6 +116,8 @@ podman run --rm \
 - `SERVEMEDIA_PORT`, or `--port` after the image name, sets the listen port. Publish that same port. `--host` sets the bind address.
 - `--device /dev/dri` is for GPU transcoding when that device exists.
 - The image sets the watchdog timeout to 0, so closing the page leaves the server running. `-e SERVEMEDIA_WATCHDOG_TTL` chooses another timeout.
+- `podman logs -f servemedia` follows the server log.
+- `podman stop servemedia` stops it. Run the same `podman run` again to start a new one. If the name is still taken, `podman rm -f servemedia` clears it first.
 
 ##### How to Run
 ```bash
