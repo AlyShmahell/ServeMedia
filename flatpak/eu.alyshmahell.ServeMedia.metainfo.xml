@@ -94,11 +94,20 @@
     <release version="0.2.5" date="2026-11-26">
       <description>
         <ul>
-          <li>TBD</li>
+          <li>Subtitle tracks stay visible on first play. WebVTT conversion is one shared ffmpeg run per file, and the player no longer tears the track down while that request is still in flight. Fixes #3.</li>
+          <li>Recently added titles open the file or its folder. A file that sits in the library root no longer opens <code>/libraries/1</code>.</li>
+          <li>Episode titles keep a trailing parenthesis unless it is a resolution, codec, or bit depth.</li>
+          <li><em>Settings has a Networks tab. Save and Reset rebind the listen address immediately.</em></li>
+          <li>The window remembers unmaximized, maximized, or <em>big picture</em>, and opens that way next time. The title-bar button maximizes at 700×1120. Leaving big picture restores the previous size. Links that leave the app open in the system browser.</li>
+          <li>Title, plot, and poster edits share one dialog. Breadcrumbs scroll as a ticker.</li>
+          <li>Changes scans write sidecars through MatchMedia 0.2.5, one folded show at a time, and keep a partial show NFO. A show is complete only when every season has its NFO and poster. Season NFOs include a premiere date. Seasons and episodes sort by title, premiere, date added, or episode number.</li>
+          <li>Home packs posters into square columns. Scroll position survives navigation. Posters enlarge on hover and open in a lightbox.</li>
+          <li>A container image is published as <code>ghcr.io/alyshmahell/servemedia</code>. It uses the host home, the four default library roots, and a watchdog timeout of 0. The documented run command starts it detached as <code>servemedia</code>.</li>
+          <li>Flatpak metadata lists the GitHub page and the donation link, and declares gamepad, touch, and a 360px minimum display.</li>
         </ul>
       </description>
     </release>
-    <release version="0.2.5" date="2026-11-22"/>
+    <release version="0.2.4" date="2026-11-07"/>
     <release version="0.1.0" date="2026-10-01"/>
   </releases>
 </component>
