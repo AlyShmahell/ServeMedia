@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,6 +19,7 @@ import (
 	"github.com/alyshmahell/servemedia/src/internal/config"
 	"github.com/alyshmahell/servemedia/src/internal/db"
 	"github.com/alyshmahell/servemedia/src/internal/fetch"
+	"github.com/alyshmahell/servemedia/src/internal/listen"
 	"github.com/alyshmahell/servemedia/src/internal/matchmedia"
 	"github.com/alyshmahell/servemedia/src/internal/media"
 	"github.com/alyshmahell/servemedia/src/internal/server"
@@ -31,7 +33,6 @@ func main() {
 	portFlag := flag.String("port", "", "bind port (default 0)")
 	webkitFlag := flag.Bool("webkit", false, "open a WebKit window on 127.0.0.1 and an ephemeral port")
 	flag.Parse()
-	host, port := webkitBind(*webkitFlag, *hostFlag, *portFlag)
 	path := *configPath
 	if path == "" {
 		var err error
@@ -56,7 +57,7 @@ func main() {
 	}
 	if url, ok := probeRunning(rt); ok {
 		if url != "" {
-			if err := present(*webkitFlag, url); err != nil {
+			if err := present(*webkitFlag, url, cfg.Window.Mode); err != nil {
 				log.Fatal(err)
 			}
 		}
@@ -187,35 +188,101 @@ func main() {
 		}()
 	}
 
-	tcpLn, err := listenTCP(host, port)
-	if err != nil {
-		log.Fatal(err)
+	handler := srv.Router()
+	uiSup := listen.NewSupervisor()
+	netSup := listen.NewSupervisor()
+	uiSup.SetHandler(server.WithLoopback(handler))
+	netSup.SetHandler(handler)
+
+	var uiURL string
+	var actual listen.Addr
+	lanUp := false
+	if *webkitFlag {
+		ln, err := listenTCP("127.0.0.1", "0")
+		if err != nil {
+			log.Fatal(err)
+		}
+		uiAddr, err := uiSup.Use(ln)
+		if err != nil {
+			log.Fatal(err)
+		}
+		uiURL = uiAddr.OpenURL()
+		actual = uiAddr
+		if h, p, ok := savedNetwork(cfg); ok {
+			bound, note, err := netSup.Bind(h, p)
+			if err != nil {
+				log.Printf("network: %v", err)
+			} else {
+				lanUp = true
+				actual = bound
+				if note != "" {
+					log.Printf("network: %s", note)
+				}
+				wd.SetHoldShutdown(true)
+				log.Printf("network listening on %s", bound.OpenURL())
+			}
+		}
+	} else {
+		flagHost := strings.TrimSpace(*hostFlag)
+		flagPort := strings.TrimSpace(*portFlag)
+		var err error
+		if flagHost != "" || flagPort != "" {
+			ln, lerr := listenTCP(flagHost, flagPort)
+			if lerr != nil {
+				log.Fatal(lerr)
+			}
+			actual, err = netSup.Use(ln)
+		} else if h, p, ok := savedNetwork(cfg); ok {
+			var note string
+			actual, note, err = netSup.Bind(h, p)
+			if err == nil && note != "" {
+				log.Printf("network: %s", note)
+			}
+		} else {
+			ln, lerr := listenTCP("", "")
+			if lerr != nil {
+				log.Fatal(lerr)
+			}
+			actual, err = netSup.Use(ln)
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		uiURL = actual.OpenURL()
 	}
-	uiURL, port, err := loopbackURL(tcpLn.Addr())
-	if err != nil {
-		log.Fatal(err)
+	if actual.Port == "" || uiURL == "" {
+		log.Fatal("no listen address")
 	}
 	if err := rt.ensure(); err != nil {
 		log.Fatal(err)
 	}
-	if err := rt.write(uiURL, port); err != nil {
+	publishPort := actual.Port
+	if *webkitFlag {
+		if ui, ok := uiSup.Current(); ok {
+			publishPort = ui.Port
+		}
+	}
+	if err := rt.write(uiURL, publishPort); err != nil {
 		log.Fatal(err)
 	}
 	if srv.Webhooks != nil {
 		srv.Webhooks.SetLoopbackURL(uiURL)
 	}
-	handler := srv.Router()
-	tcpSrv := &http.Server{Handler: handler}
-	go func() {
-		log.Printf("servemedia listening on %s", uiURL)
-		if err := tcpSrv.Serve(tcpLn); err != nil && err != http.ErrServerClosed {
-			log.Fatal(err)
-		}
-	}()
+	log.Printf("servemedia listening on %s", uiURL)
+	flagOverride := !*webkitFlag && (strings.TrimSpace(*hostFlag) != "" || strings.TrimSpace(*portFlag) != "")
+	view := server.NetworkBind{Host: actual.Host, Port: actual.Port, URL: actual.OpenURL(), LanUp: lanUp}
+	loopbackShown := ""
+	if *webkitFlag {
+		loopbackShown = uiURL
+	}
+	desktop := *webkitFlag
+	srv.SetNetwork(desktop, loopbackShown, flagOverride, view, func(host string, port int, disable bool) (server.NetworkBind, error) {
+		return applyNetwork(netSup, uiSup, wd, rt, desktop, host, port, disable)
+	})
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	if openUI(*webkitFlag, uiURL, func(rawURL string) error {
-		return runWebKit(rawURL, func() { go watchQuit(sig, shutdownCh) })
+		return runWebKit(rawURL, cfg.Window.Mode, func() { go watchQuit(sig, shutdownCh) })
 	}, openBrowser) {
 		select {
 		case <-sig:
@@ -225,12 +292,62 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = tcpSrv.Shutdown(ctx)
+	_ = uiSup.Shutdown(ctx)
+	_ = netSup.Shutdown(ctx)
 	rt.cleanup()
 	if err := database.FailRunningScanJobs(context.Background(), "Interrupted (server shutting down)"); err != nil {
 		log.Printf("fail running scan jobs: %v", err)
 	}
 	_ = database.Close()
+}
+
+func savedNetwork(cfg config.Config) (host, port string, ok bool) {
+	if cfg.Network == nil || cfg.Network.Port < 1 || cfg.Network.Port > 65535 {
+		return "", "", false
+	}
+	return strings.TrimSpace(cfg.Network.Host), strconv.Itoa(cfg.Network.Port), true
+}
+
+func applyNetwork(netSup, uiSup *listen.Supervisor, wd *watchdog.Watchdog, rt runtimeDir, desktop bool, host string, port int, disable bool) (server.NetworkBind, error) {
+	if desktop {
+		if disable {
+			netSup.Stop()
+			wd.SetHoldShutdown(false)
+			cur, ok := uiSup.Current()
+			if !ok {
+				return server.NetworkBind{}, fmt.Errorf("ui listener is down")
+			}
+			return server.NetworkBind{Host: cur.Host, Port: cur.Port, URL: cur.OpenURL()}, nil
+		}
+		bound, note, err := netSup.Bind(host, strconv.Itoa(port))
+		if err != nil {
+			if cur, ok := netSup.Current(); ok {
+				return server.NetworkBind{Host: cur.Host, Port: cur.Port, URL: cur.OpenURL(), Note: note, LanUp: true}, err
+			}
+			ui, _ := uiSup.Current()
+			return server.NetworkBind{Host: ui.Host, Port: ui.Port, URL: ui.OpenURL()}, err
+		}
+		wd.SetHoldShutdown(true)
+		return server.NetworkBind{Host: bound.Host, Port: bound.Port, URL: bound.OpenURL(), Note: note, LanUp: true}, nil
+	}
+	var bound listen.Addr
+	var note string
+	var err error
+	if disable {
+		bound, note, err = netSup.Bind("", "7676")
+	} else {
+		bound, note, err = netSup.Bind(host, strconv.Itoa(port))
+	}
+	if err != nil {
+		if cur, ok := netSup.Current(); ok {
+			return server.NetworkBind{Host: cur.Host, Port: cur.Port, URL: cur.OpenURL(), Note: note}, err
+		}
+		return server.NetworkBind{}, err
+	}
+	if werr := rt.write(bound.OpenURL(), bound.Port); werr != nil {
+		log.Printf("network url file: %v", werr)
+	}
+	return server.NetworkBind{Host: bound.Host, Port: bound.Port, URL: bound.OpenURL(), Note: note}, nil
 }
 
 // webkitBind forces the window onto loopback and a kernel-chosen port.
@@ -248,9 +365,9 @@ func uiUsesWebKit(webkit bool) bool {
 
 // present opens the page. A WebKit window replaces the system browser.
 // If that window cannot be created, the browser opens and this process exits.
-func present(webkit bool, rawURL string) error {
+func present(webkit bool, rawURL, windowMode string) error {
 	openUI(webkit, rawURL, func(rawURL string) error {
-		return runWebKit(rawURL, func() {
+		return runWebKit(rawURL, windowMode, func() {
 			sig := make(chan os.Signal, 1)
 			signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 			go func() {
@@ -296,6 +413,15 @@ func shouldOpenBrowser() bool {
 
 func openBrowser(rawURL string) {
 	if !shouldOpenBrowser() {
+		return
+	}
+	launchDefault(rawURL)
+}
+
+// launchDefault opens rawURL with the system handler. It does not consult
+// SERVEMEDIA_NO_BROWSER; that variable only skips the window's startup open.
+func launchDefault(rawURL string) {
+	if strings.TrimSpace(rawURL) == "" {
 		return
 	}
 	if err := exec.Command("xdg-open", rawURL).Start(); err == nil {

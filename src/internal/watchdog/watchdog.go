@@ -32,6 +32,7 @@ type Watchdog struct {
 	shutdown     func()
 	everSeen     bool
 	stopped      bool
+	holdShutdown bool
 	shutdownOnce sync.Once
 }
 
@@ -62,6 +63,17 @@ func (w *Watchdog) SetTTL(ttl time.Duration) {
 	}
 	w.mu.Lock()
 	w.ttl = ttl
+	w.mu.Unlock()
+}
+
+// SetHoldShutdown keeps idle-tab transcode release and blocks process exit.
+// Desktop mode uses this while a LAN listener is up.
+func (w *Watchdog) SetHoldShutdown(hold bool) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.holdShutdown = hold
 	w.mu.Unlock()
 }
 
@@ -110,7 +122,7 @@ func (w *Watchdog) Tick() bool {
 			release = append(release, tab.TabID)
 		}
 	}
-	doStop := w.ttl > 0 && !newest.IsZero() && now.Sub(newest) >= w.ttl
+	doStop := !w.holdShutdown && w.ttl > 0 && !newest.IsZero() && now.Sub(newest) >= w.ttl
 	if doStop {
 		w.stopped = true
 	}

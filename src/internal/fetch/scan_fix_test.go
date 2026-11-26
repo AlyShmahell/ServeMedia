@@ -509,6 +509,40 @@ func TestRecordTreeMovieDropsEpisode(t *testing.T) {
 	}
 }
 
+func TestLinkItemNodeSkipsLibraryRoot(t *testing.T) {
+	ctx, d, lib, _, media := scanFixLib(t)
+	film := filepath.Join(media, "Film.mkv")
+	if err := os.WriteFile(film, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.EnsureLibraryRoot(ctx, lib.ID); err != nil {
+		t.Fatal(err)
+	}
+	filmNode, err := d.UpsertNodeChain(ctx, lib.ID, "Film.mkv", "file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := d.UpsertMediaItem(ctx, db.MediaItem{
+		LibraryID: lib.ID, Kind: "movie", Title: "Film", Path: film, Mtime: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	it, err := d.GetMediaItem(ctx, id)
+	if err != nil || it == nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: d}
+	w.linkItemNode(ctx, lib, it, matchmedia.Job{Kind: "movie", Path: film, Title: "Film"})
+	got, err := d.MediaItemNodeID(ctx, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filmNode {
+		t.Fatalf("node %d want file %d", got, filmNode)
+	}
+}
+
 func boolJSON(v bool) string {
 	if v {
 		return "true"

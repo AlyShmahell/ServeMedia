@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +42,14 @@ type IntegrationsConfig struct {
 	Webhooks WebhooksConfig `yaml:"webhooks"`
 }
 
+// NetworkConfig is the saved bind address. A nil Network on Config means
+// "no override": desktop stays loopback-only, and server mode uses all
+// interfaces on port 7676.
+type NetworkConfig struct {
+	Host string `yaml:"host,omitempty"`
+	Port int    `yaml:"port"`
+}
+
 type Config struct {
 	Store struct {
 		Path string `yaml:"path"`
@@ -70,6 +79,10 @@ type Config struct {
 	Watchdog struct {
 		TTLSeconds int `yaml:"ttl_seconds"`
 	} `yaml:"watchdog"`
+	Window struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"window"`
+	Network      *NetworkConfig     `yaml:"network,omitempty"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
 	Version      string             `yaml:"version"`
 
@@ -188,7 +201,25 @@ func Defaults() Config {
 	c.Backup.Dir = "backups"
 	c.Scan.OnStartup = false
 	c.Watchdog.TTLSeconds = 60
+	c.Window.Mode = WindowModeMaximized
 	return c
+}
+
+const (
+	WindowModeUnmaximized = "unmaximized"
+	WindowModeMaximized   = "maximized"
+	WindowModeBigPicture  = "big_picture"
+)
+
+// NormalizeWindowMode returns a startup mode the window can apply.
+// An empty or unknown value is maximized.
+func NormalizeWindowMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case WindowModeUnmaximized, WindowModeMaximized, WindowModeBigPicture:
+		return strings.TrimSpace(mode)
+	default:
+		return WindowModeMaximized
+	}
 }
 
 // StandardHeights is the ladder offered as toggles in settings.
@@ -320,6 +351,7 @@ func Load(path string) (Config, error) {
 		return c, err
 	}
 	c.EnsureIntegrationDefaults()
+	c.Window.Mode = NormalizeWindowMode(c.Window.Mode)
 	return c, nil
 }
 
@@ -470,6 +502,10 @@ type settingsOverlay struct {
 	Watchdog struct {
 		TTLSeconds int `yaml:"ttl_seconds"`
 	} `yaml:"watchdog"`
+	Window struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"window"`
+	Network      *NetworkConfig     `yaml:"network,omitempty"`
 	Integrations IntegrationsConfig `yaml:"integrations"`
 }
 
@@ -490,6 +526,11 @@ func (c Config) settingsDocument(mediaPath string) settingsOverlay {
 	doc.Backup.Retain = c.Backup.Retain
 	doc.Scan.OnStartup = c.Scan.OnStartup
 	doc.Watchdog.TTLSeconds = c.Watchdog.TTLSeconds
+	doc.Window.Mode = NormalizeWindowMode(c.Window.Mode)
+	if c.Network != nil {
+		n := *c.Network
+		doc.Network = &n
+	}
 	doc.Integrations = c.Integrations
 	return doc
 }
@@ -537,6 +578,11 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("SERVEMEDIA_FFMPEG"); v != "" {
 		c.Transcode.FFmpeg = v
+	}
+	if v, ok := os.LookupEnv("SERVEMEDIA_WATCHDOG_TTL"); ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			c.Watchdog.TTLSeconds = n
+		}
 	}
 }
 

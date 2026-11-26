@@ -31,9 +31,9 @@
 {{end}}
 {{range .Files}}
 <a class="file-card" href="{{.Href}}">
-  <div class="poster-wrap file-card-still"{{if .UploadURL}} data-upload-url="{{.UploadURL}}"{{if .GenerateURL}} data-generate-url="{{.GenerateURL}}"{{end}}{{end}}>
+  <div class="poster-wrap file-card-still"{{if .UploadURL}} data-upload-url="{{.UploadURL}}"{{if .GenerateURL}} data-generate-url="{{.GenerateURL}}"{{end}}{{end}}{{if .EditURL}} data-edit-url="{{.EditURL}}" data-edit-title="{{.Title}}" data-edit-plot="{{.Plot}}"{{end}}>
     <img class="poster" src="{{posterURL .Still .Node.MetaID.String}}" alt="">
-    {{if .UploadURL}}<button type="button" class="field-icon field-icon-still" data-role="still" title="Choose still" aria-label="Choose still">{{template "partials/icon_image.html"}}</button>{{end}}
+    {{if or .UploadURL .EditURL}}<button type="button" class="field-icon field-icon-edit" data-role="edit-modal" title="Edit" aria-label="Edit">{{template "partials/icon_edit.html"}}</button>{{end}}
     {{template "partials/node_scan.html" .}}
     <div class="poster-progress" aria-hidden="true"><span style="width:{{.ProgressPct}}%"></span></div>
   </div>

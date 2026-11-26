@@ -23,17 +23,17 @@ func TestApplyNav(t *testing.T) {
 	}
 	nested := map[string]any{"Library": &db.Library{ID: 4, Name: "TV"}, "Path": "Cool Show/Season 1"}
 	applyNav("library.html", nested)
-	if nested["NavBack"] != "/libraries/4/tree?path=Cool%20Show" {
+	if nested["NavTitle"] != "TV / Cool Show / Season 1" || nested["NavBack"] != "/libraries/4/tree?path=Cool%20Show" {
 		t.Fatalf("nested %#v", nested)
 	}
 	rootChild := map[string]any{"Library": &db.Library{ID: 4, Name: "TV"}, "Path": "Cool Show"}
 	applyNav("library.html", rootChild)
-	if rootChild["NavBack"] != "/libraries/4" {
+	if rootChild["NavTitle"] != "TV / Cool Show" || rootChild["NavBack"] != "/libraries/4" {
 		t.Fatalf("root child %#v", rootChild)
 	}
-	playFile := map[string]any{"Kind": "file", "Title": "Pilot", "LibraryID": int64(4), "Folder": "Cool Show"}
+	playFile := map[string]any{"Kind": "file", "Title": "Pilot", "LibraryID": int64(4), "LibraryName": "TV", "Folder": "Cool Show"}
 	applyNav("player.html", playFile)
-	if playFile["NavBack"] != "/libraries/4/tree?path=Cool%20Show" {
+	if playFile["NavTitle"] != "TV / Cool Show / Pilot" || playFile["NavBack"] != "/libraries/4/tree?path=Cool%20Show" {
 		t.Fatalf("file player %#v", playFile)
 	}
 
@@ -41,6 +41,13 @@ func TestApplyNav(t *testing.T) {
 	applyNav("player.html", play)
 	if play["NavTitle"] != "Pilot" || play["NavBack"] != "/libraries/4/tree?path=Show" {
 		t.Fatalf("player %#v", play)
+	}
+
+	if joinTrail("TV", "Cool Show/Season 1", "") != "TV / Cool Show / Season 1" {
+		t.Fatalf("folder trail %q", joinTrail("TV", "Cool Show/Season 1", ""))
+	}
+	if joinTrail("", "", "Pilot") != "Pilot" {
+		t.Fatalf("title trail %q", joinTrail("", "", "Pilot"))
 	}
 
 	preset := map[string]any{"NavTitle": "Keep", "NavBack": "/custom"}

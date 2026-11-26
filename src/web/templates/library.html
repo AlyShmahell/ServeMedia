@@ -5,8 +5,8 @@
 <body><div class="shell">{{template "nav" .}}
 <main class="content library-page">
   <div id="library-scan-host"></div>
-  <p id="library-count" class="library-page-type muted">{{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
   <form class="row library-toolbar" data-page-state="library-toolbar" hx-get="/hx/libraries/{{.Library.ID}}/items" hx-target="#items-live" hx-swap="outerHTML" hx-trigger="input changed delay:200ms, change, submit" hx-include="this">
+    <p id="library-count" class="library-page-type muted">{{.ItemCount}} title{{if ne .ItemCount 1}}s{{end}}</p>
     <div class="library-search">
       <input type="search" name="q" value="{{.Q}}" placeholder="Search" autocomplete="off">
       <button type="button" class="library-search-clear" aria-label="Clear search"{{if not .Q}} hidden{{end}}>×</button>
@@ -16,6 +16,7 @@
       <option value="name" {{if eq .Sort "name"}}selected{{end}}>Title</option>
       <option value="year" {{if or (eq .Sort "year") (eq .Sort "released")}}selected{{end}}>Released On</option>
       <option value="date_added" {{if or (eq .Sort "date_added") (eq .Sort "added")}}selected{{end}}>Added On</option>
+      {{if .Season}}<option value="episode" {{if eq .Sort "episode"}}selected{{end}}>Episode number</option>{{end}}
     </select>
   </form>
   <div class="library-main-card">

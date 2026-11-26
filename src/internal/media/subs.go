@@ -1,10 +1,10 @@
 package media
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -17,30 +17,21 @@ func SubtitleVTTPath(cacheRoot, source string, streamIndex int) string {
 }
 
 // EnsureSubtitleVTT extracts streamIndex from source to WebVTT at outPath if missing.
-func EnsureSubtitleVTT(source string, streamIndex int, outPath string) error {
-	if st, err := os.Stat(outPath); err == nil && st.Size() > 0 {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
-		return err
-	}
-	tmp := outPath + ".tmp"
-	_ = os.Remove(tmp)
-	cmd := ffmpegCommand(nil, "-y", "-i", source,
-		"-map", fmt.Sprintf("0:%d", streamIndex),
-		"-f", "webvtt", tmp)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		_ = os.Remove(tmp)
-		msg := strings.TrimSpace(string(out))
-		if len(msg) > 500 {
-			msg = msg[len(msg)-500:]
+// Concurrent callers for the same outPath share one extraction. Cancelling ctx
+// drops this caller; ffmpeg is cancelled only when nothing else is waiting.
+func EnsureSubtitleVTT(ctx context.Context, source string, streamIndex int, outPath string) error {
+	return ensureVTTFile(ctx, outPath, func(ctx context.Context, tmp string) error {
+		cmd := ffmpegCommand(ctx, "-y", "-i", source,
+			"-map", fmt.Sprintf("0:%d", streamIndex),
+			"-f", "webvtt", tmp)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			msg := strings.TrimSpace(string(out))
+			if len(msg) > 500 {
+				msg = msg[len(msg)-500:]
+			}
+			return fmt.Errorf("ffmpeg subtitle extract: %w: %s", err, msg)
 		}
-		return fmt.Errorf("ffmpeg subtitle extract: %w: %s", err, msg)
-	}
-	if err := os.Rename(tmp, outPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+		return nil
+	})
 }

@@ -19,6 +19,13 @@ type (
 	Episode   = mmfetch.Episode
 )
 
+// WriteStats is the file count from MatchMedia's sidecar writer.
+type WriteStats struct {
+	TitleNFO   int
+	EpisodeNFO int
+	Posters    int
+}
+
 type Status struct {
 	Ready          bool
 	Version        string

@@ -137,6 +137,56 @@ func TestSetFlatpakProgramName(t *testing.T) {
 	}
 }
 
+func TestWebKitHandsOff(t *testing.T) {
+	const app = "http://127.0.0.1:7676"
+	cases := []struct {
+		name      string
+		uri       string
+		newWindow bool
+		handOff   bool
+	}{
+		{name: "same origin path", uri: "http://127.0.0.1:7676/library", handOff: false},
+		{name: "initial load", uri: app, handOff: false},
+		{name: "github new window", uri: "https://github.com/AlyShmahell/ServeMedia", newWindow: true, handOff: true},
+		{name: "kofi new window", uri: "https://ko-fi.com/alyshmahell", newWindow: true, handOff: true},
+		{name: "mailto", uri: "mailto:ada@example.com", handOff: true},
+		{name: "about blank", uri: "about:blank", handOff: false},
+		{name: "about blank new window", uri: "about:blank", newWindow: true, handOff: false},
+		{name: "other origin", uri: "https://example.com/watch", handOff: true},
+		{name: "javascript", uri: "javascript:void(0)", handOff: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := webkitHandsOff(app, tc.uri, tc.newWindow); got != tc.handOff {
+				t.Fatalf("webkitHandsOff(%q, %q, %v) = %v, want %v", app, tc.uri, tc.newWindow, got, tc.handOff)
+			}
+		})
+	}
+}
+
+func TestWebKitActionFor(t *testing.T) {
+	const app = "http://127.0.0.1:7676"
+	cases := []struct {
+		name      string
+		uri       string
+		newWindow bool
+		want      webkitAction
+	}{
+		{name: "same origin", uri: app + "/library", want: webkitActStay},
+		{name: "mailto", uri: "mailto:ada@example.com", want: webkitActExternal},
+		{name: "big picture", uri: webkitBigPictureURL, want: webkitActBigPicture},
+		{name: "other servemedia", uri: "servemedia://window/other", want: webkitActIgnore},
+		{name: "github window", uri: "https://github.com/AlyShmahell/ServeMedia", newWindow: true, want: webkitActExternal},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := webkitActionFor(app, tc.uri, tc.newWindow); got != tc.want {
+				t.Fatalf("webkitActionFor(%q) = %v, want %v", tc.uri, got, tc.want)
+			}
+		})
+	}
+}
+
 func goString(ptr uintptr) string {
 	if ptr == 0 {
 		return ""

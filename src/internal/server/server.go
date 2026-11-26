@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -18,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alyshmahell/servemedia/src/internal/backup"
@@ -51,11 +53,25 @@ type Server struct {
 	repointOnce sync.Map
 	// Overlord signs every request in as the admin named overlord.
 	Overlord bool
+	netState networkState
 }
+
+// bigPicture is the chrome-free fullscreen mode of the WebKit window.
+// The GTK thread writes it. Page renders read it.
+var bigPicture atomic.Bool
+
+// SetBigPicture records whether the WebKit window is in big picture mode.
+func SetBigPicture(on bool) { bigPicture.Store(on) }
+
+// BigPicture reports the current big picture mode.
+func BigPicture() bool { return bigPicture.Load() }
 
 type ctxKey int
 
-const userKey ctxKey = 1
+const (
+	userKey     ctxKey = 1
+	loopbackKey ctxKey = 2
+)
 
 func New(cfg *config.Config, database *db.DB, bak *backup.Service, tr *media.Manager, webFS fs.FS, meta matchmedia.Service, reopen func() error) (*Server, error) {
 	tplFS, err := fs.Sub(webFS, "templates")
@@ -263,6 +279,8 @@ func (s *Server) Router() http.Handler {
 			r.Post("/settings/engines/restart", s.handleRestartEngines)
 			r.Get("/hx/engines/matchmedia/status", s.handleEnginesStatus)
 			r.Get("/settings/server", s.handleSettingsServer)
+			r.Get("/settings/network", s.handleSettingsNetwork)
+			r.Post("/settings/network", s.handleSaveNetwork)
 			r.Get("/settings/backup", s.handleSettingsBackup)
 			r.Get("/settings/users", s.handleSettingsUsers)
 			r.Post("/hx/backup", s.handleBackupNow)
@@ -285,7 +303,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if s.Overlord {
+		if s.Overlord && loopbackRequest(r) {
 			u, err := s.DB.EnsureOverlord(r.Context())
 			if err != nil || u == nil {
 				http.Error(w, "db error", 500)
@@ -317,6 +335,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			token = c.Value
 		}
 		u, _ := s.DB.UserBySession(r.Context(), token)
+		if u != nil && db.IsOverlord(u.Username) && !loopbackRequest(r) {
+			u = nil
+		}
 		if u != nil {
 			ctx := context.WithValue(r.Context(), userKey, u)
 			r = r.WithContext(ctx)
@@ -348,6 +369,20 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// WithLoopback marks requests accepted by the desktop UI listener.
+// Overlord auto-login requires this mark and ignores client-supplied addresses.
+func WithLoopback(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), loopbackKey, true)
+		h.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func loopbackRequest(r *http.Request) bool {
+	ok, _ := r.Context().Value(loopbackKey).(bool)
+	return ok
 }
 
 func userFrom(r *http.Request) *db.User {
@@ -404,6 +439,8 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	u := userFrom(r)
 	data["User"] = u
 	data["Overlord"] = s.Overlord || (u != nil && db.IsOverlord(u.Username))
+	data["WebKit"] = s.Overlord
+	data["BigPicture"] = s.Overlord && BigPicture()
 	if _, ok := data["Version"]; !ok {
 		ver := ""
 		if s.Cfg != nil {
@@ -456,7 +493,7 @@ func (s *Server) handleRegisterPost(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	pass := r.FormValue("password")
 	confirm := r.FormValue("confirm")
-	if username == "" || pass == "" || pass != confirm {
+	if db.IsOverlord(username) || username == "" || pass == "" || pass != confirm {
 		s.render(w, r, "register.html", map[string]any{"Error": "Invalid input or passwords do not match"})
 		return
 	}
@@ -743,9 +780,10 @@ func (s *Server) libraryPageData(ctx context.Context, u *db.User, lib *db.Librar
 			card.Watched, card.Total, card.WatchPct = folderWatch(files, node.RelPath)
 			dirs = append(dirs, card)
 		}
+		seasonPage := s.orderLibraryCards(ctx, lib, rel, sort, dirs, fileCards)
 		out := map[string]any{
 			"Library": lib, "Tree": true, "Nodes": dirs, "Files": fileCards, "Path": rel,
-			"ItemCount": len(dirs) + len(fileCards), "Sort": sort, "Q": q,
+			"ItemCount": len(dirs) + len(fileCards), "Sort": sort, "Q": q, "Season": seasonPage,
 			"Poll": s.libraryGridPolling(ctx, lib.ID), "SwapCount": swapCount,
 		}
 		if rel != "" {
@@ -975,24 +1013,137 @@ func (s *Server) nodeHref(_ context.Context, lib *db.Library, node db.LibraryNod
 	return "/play/file/" + strconv.FormatInt(node.ID, 10)
 }
 
+func mediaPlayTitle(stored, nfo, fallback string) string {
+	if t := metadata.NFOTitle(nfo); t != "" {
+		return t
+	}
+	if strings.TrimSpace(stored) != "" {
+		return stored
+	}
+	return fallback
+}
+
+func (s *Server) trailFolder(ctx context.Context, u *db.User, libraryID int64, filePath string) (name, folder string) {
+	if u == nil || libraryID <= 0 {
+		return "", ""
+	}
+	lib, err := s.DB.GetLibrary(ctx, u.ID, libraryID)
+	if err != nil || lib == nil {
+		return "", ""
+	}
+	name = lib.Name
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return name, ""
+	}
+	rel, err := filepath.Rel(lib.Path, filePath)
+	if err != nil {
+		return name, ""
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+		return name, ""
+	}
+	return name, parentRel(rel)
+}
+
+func (s *Server) playbackBreadcrumb(r *http.Request, kind string, id int64, title string) string {
+	u := userFrom(r)
+	switch kind {
+	case "movie":
+		it := s.ownedMediaItem(r, id)
+		if it == nil {
+			return title
+		}
+		name, folder := s.trailFolder(r.Context(), u, it.LibraryID, it.Path)
+		return joinTrail(name, folder, title)
+	case "episode":
+		ep := s.ownedEpisode(r, id)
+		if ep == nil {
+			return title
+		}
+		var libID int64
+		if ep.ShowID > 0 {
+			if show, err := s.DB.GetMediaItem(r.Context(), ep.ShowID); err == nil && show != nil {
+				libID = show.LibraryID
+			}
+		}
+		name, folder := s.trailFolder(r.Context(), u, libID, ep.Path)
+		return joinTrail(name, folder, title)
+	case "file":
+		n, lib := s.ownedLibraryNode(r, id)
+		if n == nil || lib == nil {
+			return title
+		}
+		return joinTrail(lib.Name, parentRel(n.RelPath), title)
+	default:
+		return title
+	}
+}
+
 func (s *Server) showFolderBack(ctx context.Context, it *db.MediaItem) string {
 	if it == nil {
 		return ""
 	}
 	fallback := fmt.Sprintf("/libraries/%d", it.LibraryID)
-	nodeID, err := s.DB.MediaItemNodeID(ctx, it.ID)
-	if err != nil || nodeID == 0 {
-		return fallback
+	var n *db.LibraryNode
+	if nodeID, err := s.DB.MediaItemNodeID(ctx, it.ID); err == nil && nodeID != 0 {
+		n, _ = s.DB.GetLibraryNode(ctx, nodeID)
 	}
-	n, err := s.DB.GetLibraryNode(ctx, nodeID)
-	if err != nil || n == nil {
-		return fallback
+	if n != nil && strings.Trim(n.RelPath, "/") != "" {
+		return folderOrFileHref(it.LibraryID, n)
 	}
+	return s.hrefFromMediaPath(ctx, it, fallback)
+}
+
+func folderOrFileHref(libraryID int64, n *db.LibraryNode) string {
 	rel := n.RelPath
 	if n.NodeKind == "file" {
-		rel = parentRel(rel)
+		parent := parentRel(rel)
+		if parent == "" {
+			return "/play/file/" + strconv.FormatInt(n.ID, 10)
+		}
+		rel = parent
 	}
-	return libraryFolderBack(it.LibraryID, rel)
+	return libraryFolderBack(libraryID, rel)
+}
+
+func (s *Server) hrefFromMediaPath(ctx context.Context, it *db.MediaItem, fallback string) string {
+	root, err := s.DB.LibraryPath(ctx, it.LibraryID)
+	if err != nil || strings.TrimSpace(root) == "" || strings.TrimSpace(it.Path) == "" {
+		return movieOrLibrary(it, fallback)
+	}
+	rel, err := filepath.Rel(root, it.Path)
+	if err != nil {
+		return movieOrLibrary(it, fallback)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") || rel == "." {
+		return movieOrLibrary(it, fallback)
+	}
+	file := metadata.IsVideo(rel)
+	if st, err := os.Stat(it.Path); err == nil {
+		file = !st.IsDir()
+	}
+	if !file {
+		return libraryFolderBack(it.LibraryID, rel)
+	}
+	if parent := parentRel(rel); parent != "" {
+		return libraryFolderBack(it.LibraryID, parent)
+	}
+	if id, err := s.DB.NodeIDByRel(ctx, it.LibraryID, rel); err == nil && id != 0 {
+		if n, err := s.DB.GetLibraryNode(ctx, id); err == nil && n != nil && n.NodeKind == "file" {
+			return "/play/file/" + strconv.FormatInt(n.ID, 10)
+		}
+	}
+	return movieOrLibrary(it, fallback)
+}
+
+func movieOrLibrary(it *db.MediaItem, fallback string) string {
+	if it != nil && it.Kind == "movie" && it.ID != 0 {
+		return "/play/movie/" + strconv.FormatInt(it.ID, 10)
+	}
+	return fallback
 }
 
 func urlQueryEscape(s string) string {
@@ -1169,12 +1320,11 @@ func (s *Server) handlePlayMovie(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	title := it.Title
-	if t := metadata.NFOTitle(it.NFOPath.String); t != "" {
-		title = t
-	}
+	title := mediaPlayTitle(it.Title, it.NFOPath.String, "")
+	libName, folder := s.trailFolder(r.Context(), userFrom(r), it.LibraryID, it.Path)
 	s.render(w, r, "player.html", map[string]any{
 		"Kind": "movie", "ID": id, "Title": title,
+		"LibraryName": libName, "Folder": folder,
 		"NavBack":    s.showFolderBack(r.Context(), it),
 		"SessionURL": fmt.Sprintf("/play/movie/%d/session", id),
 	})
@@ -1190,15 +1340,19 @@ func (s *Server) handlePlayFile(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = stripVideoExt(filepath.Base(path))
 	}
-	n, _ := s.DB.GetLibraryNode(r.Context(), id)
+	n, lib := s.ownedLibraryNode(r, id)
 	var libID int64
+	libName := ""
 	folder := ""
 	if n != nil {
 		libID = n.LibraryID
 		folder = parentRel(n.RelPath)
 	}
+	if lib != nil {
+		libName = lib.Name
+	}
 	s.render(w, r, "player.html", map[string]any{
-		"Kind": "file", "ID": id, "Title": title, "LibraryID": libID, "Folder": folder,
+		"Kind": "file", "ID": id, "Title": title, "LibraryID": libID, "LibraryName": libName, "Folder": folder,
 		"SessionURL": fmt.Sprintf("/play/file/%d/session", id),
 	})
 }
@@ -1232,16 +1386,19 @@ func (s *Server) handlePlayEpisode(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	title := ep.Title.String
-	if t := metadata.NFOTitle(ep.NFOPath.String); t != "" {
-		title = t
-	}
+	title := mediaPlayTitle(ep.Title.String, ep.NFOPath.String, fmt.Sprintf("Episode %d", ep.EpisodeNumber))
 	var show *db.MediaItem
 	if ep.ShowID > 0 {
 		show, _ = s.DB.GetMediaItem(r.Context(), ep.ShowID)
 	}
+	libID := int64(0)
+	if show != nil {
+		libID = show.LibraryID
+	}
+	libName, folder := s.trailFolder(r.Context(), userFrom(r), libID, ep.Path)
 	s.render(w, r, "player.html", map[string]any{
 		"Kind": "episode", "ID": id, "Title": title, "ShowID": ep.ShowID,
+		"LibraryName": libName, "Folder": folder,
 		"NavBack":    s.showFolderBack(r.Context(), show),
 		"SessionURL": fmt.Sprintf("/play/episode/%d/session", id),
 	})
@@ -1392,16 +1549,18 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	switch kind {
 	case "movie":
 		if it := s.ownedMediaItem(r, id); it != nil {
-			title = it.Title
+			title = mediaPlayTitle(it.Title, it.NFOPath.String, "")
 		}
 	case "episode":
 		if ep := s.ownedEpisode(r, id); ep != nil {
-			title = ep.Title.String
-			if title == "" {
-				title = fmt.Sprintf("Episode %d", ep.EpisodeNumber)
-			}
+			title = mediaPlayTitle(ep.Title.String, ep.NFOPath.String, fmt.Sprintf("Episode %d", ep.EpisodeNumber))
+		}
+	case "file":
+		if _, t, ok := s.fileNodePath(r, id); ok {
+			title = t
 		}
 	}
+	breadcrumb := s.playbackBreadcrumb(r, kind, id, title)
 
 	type prefsJSON struct {
 		Volume       float64 `json:"volume"`
@@ -1432,6 +1591,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 		URL            string                `json:"url"`
 		Mime           string                `json:"mime,omitempty"`
 		Title          string                `json:"title,omitempty"`
+		Breadcrumb     string                `json:"breadcrumb,omitempty"`
 		Duration       float64               `json:"duration,omitempty"`
 		Audio          int                   `json:"audio"`
 		Height         int                   `json:"height"`
@@ -1447,6 +1607,7 @@ func (s *Server) handlePlaySession(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := playResp{
 		Title:          title,
+		Breadcrumb:     breadcrumb,
 		Audio:          audioIndex,
 		Height:         encodeHeight,
 		Qualities:      media.QualityOptions(sourceHeight, heights),
@@ -1531,7 +1692,10 @@ func (s *Server) handleSubtitleVTT(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out := media.SidecarVTTPath(s.Cfg.Transcode.Path, sc.Path)
-		if err := media.EnsureSidecarVTT(sc.Path, out); err != nil {
+		if err := media.EnsureSidecarVTT(r.Context(), sc.Path, out); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
 			log.Printf("sidecar vtt %s: %v", sc.Path, err)
 			http.Error(w, "subtitle convert failed", http.StatusInternalServerError)
 			return
@@ -1550,7 +1714,10 @@ func (s *Server) handleSubtitleVTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := media.SubtitleVTTPath(s.Cfg.Transcode.Path, path, idx)
-	if err := media.EnsureSubtitleVTT(path, idx, out); err != nil {
+	if err := media.EnsureSubtitleVTT(r.Context(), path, idx, out); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Printf("subtitle vtt %s #%d: %v", path, idx, err)
 		http.Error(w, "subtitle extract failed", http.StatusInternalServerError)
 		return
@@ -1992,6 +2159,7 @@ func (s *Server) handleSaveGeneral(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Cfg.Scan.OnStartup = r.FormValue("scan_on_startup") == "on"
 	s.Cfg.Watchdog.TTLSeconds = ttl
+	s.Cfg.Window.Mode = config.NormalizeWindowMode(r.FormValue("window_mode"))
 	if err := s.Cfg.Save(s.Cfg.OverlaySavePath()); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

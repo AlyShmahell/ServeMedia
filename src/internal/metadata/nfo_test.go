@@ -62,6 +62,28 @@ func TestCleanEpisodeTitle(t *testing.T) {
 	if !strings.Contains(got, "Show S01E01") || strings.Contains(got, "Group") || strings.Contains(got, "1080p") {
 		t.Fatalf("got %q", got)
 	}
+	for _, name := range []string{
+		"Show (1080p BluRay x265).mkv",
+		"Show (x264).mkv",
+		"Show (10-bit).mkv",
+		"Show (1920x1080).mkv",
+	} {
+		got = metadata.CleanEpisodeTitle(name)
+		if got != "Show" {
+			t.Fatalf("%s: got %q", name, got)
+		}
+	}
+	for _, name := range []string{
+		"Film (1994).mkv",
+		"Episode (Part 2).mkv",
+		"Episode (Director's Cut).mkv",
+		"Episode (HEVC).mkv",
+	} {
+		got = metadata.CleanEpisodeTitle(name)
+		if !strings.Contains(got, "(") {
+			t.Fatalf("%s: parenthesis removed, got %q", name, got)
+		}
+	}
 }
 
 func TestNestTokens_keepsShortDisambiguators(t *testing.T) {
@@ -114,12 +136,13 @@ func TestReadSeasonNFO(t *testing.T) {
 <season>
   <title>Season One</title>
   <plot>Intro arcs.</plot>
+  <premiered>2012-06-01</premiered>
 </season>
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	n, err := metadata.ReadSeasonNFO(p)
-	if err != nil || n.Title != "Season One" || n.Plot != "Intro arcs." {
+	if err != nil || n.Title != "Season One" || n.Plot != "Intro arcs." || n.Premiered != "2012-06-01" {
 		t.Fatalf("%+v %v", n, err)
 	}
 	if metadata.FindSeasonNFO(dir, 1) != p {

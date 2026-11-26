@@ -342,7 +342,7 @@ func (w *Worker) linkItemNode(ctx context.Context, lib *db.Library, it *db.Media
 	}
 	for _, p := range linkPaths(it, j) {
 		rel, err := relWithin(lib.Path, p)
-		if err != nil {
+		if err != nil || strings.Trim(rel, "/") == "" {
 			continue
 		}
 		id, err := w.DB.NodeIDByRel(ctx, lib.ID, rel)

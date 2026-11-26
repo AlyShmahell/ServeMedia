@@ -1,6 +1,6 @@
 # Architecture
 
-ServeMedia is the self-hosted media server for Linux (scan, metadata, playback). A Podman **builder** writes `build/dist/` as an XDG tree; runtime is the **host binary** (`./build/run`), not a container. Metadata lookup is first-party [MatchMedia](https://github.com/AlyShmahell/MatchMedia), linked into the `servemedia` binary. Third-party assets live under `{payload}/vendor/`. Payload is `SERVEMEDIA_ROOT` or `$XDG_DATA_HOME/servemedia`.
+ServeMedia is the self-hosted media server for Linux (scan, metadata, playback). A Podman **builder** writes `build/dist/` as an XDG tree. The default runtime is the **host binary** (`./build/run`). An optional Alpine image runs the same server with the host home mounted as the container home. Metadata lookup is first-party [MatchMedia](https://github.com/AlyShmahell/MatchMedia), linked into the `servemedia` binary. Third-party assets live under `{payload}/vendor/`. Payload is `SERVEMEDIA_ROOT` or `$XDG_DATA_HOME/servemedia`.
 
 Go module: `github.com/alyshmahell/servemedia/src`.
 
@@ -80,6 +80,11 @@ ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; 
 | **run** | copy `build/dist/.local` → `build/cache/xdg`, exec with `HOME` there (fails if `.local/bin/servemedia` missing) |
 | **(re)build & run** | rebuild dist, then run |
 | **(re)build & package** | glibc and musl tarballs + AppImages (not Flatpak); refuses a dist tree missing vendor files |
+| **run (container)** | run `localhost/servemedia:alpine` (fails if the image is missing) |
+| **(re)build & run (container)** | build the Alpine image, then run it |
+| **push (github packages)** | tag `ghcr.io/alyshmahell/servemedia` with the `version` from `default.yaml` and `latest`, then push (builds the image first if it is missing) |
+
+[`build/Containerfile.alpine`](../build/Containerfile.alpine) is the optional runtime image: a musl binary, vendor assets, and the cached musl ffmpeg pair on `alpine:3.22`. The final stage keeps `ca-certificates`, `tzdata`, `libva`, `libdrm`, and `mesa-va-gallium`. User `servemedia` (uid 1000) has home `/home/servemedia`. `SERVEMEDIA_ROOT` and `SERVEMEDIA_HOME` stay unset, so data is `$HOME/.local/share/servemedia` and the transcode cache is `$HOME/.cache/servemedia`. The menu bind-mounts the host home at `/home/servemedia`, so those writes land in the host home. Podman adds `--userns=keep-id:uid=1000,gid=1000`. The entrypoint copies `config/default.yaml`, `public/`, and `vendor/` into that home and leaves `store/`, `backups/`, `matchmedia/`, and `config/overlay.yaml` in place. `--port` and `SERVEMEDIA_PORT` choose the listen port; with neither set, ServeMedia uses the address saved in Settings, otherwise 7676. Media paths under the host home are already in the mount. A path outside the home is bind-mounted at the same path. `/dev/dri` is passed through when it exists. The entrypoint sets `SERVEMEDIA_WATCHDOG_TTL` to 0 when that variable is unset, so closing the page leaves the server running. An explicit value replaces that 0.
 
 ## Packages
 
@@ -111,7 +116,35 @@ Sandbox reads `/media`, `/mnt`, `/run/media`, `~/Videos`, `~/Music`; other paths
 
 ## HTTP
 
-ServeMedia listens on a TCP address from `--host` and `--port`. Unset `--host` is every interface. Unset `--port` is `7676`. If that bind fails, ServeMedia listens again on port `0` and the kernel chooses the port. An explicit `--port` that cannot bind stops the process. `--webkit` forces `127.0.0.1` and port `0` and opens a window on that loopback URL, using host `libwebkitgtk-6.0` with GTK 4 when that library is installed and otherwise `libwebkit2gtk-4.1` with GTK 3. A successful window does not also open a browser. If the window cannot be created, the error is logged, the system browser opens, and the server keeps running until a signal or the watchdog. A second `--webkit` start that cannot open a window opens the browser and exits, leaving the existing server up. Without `--webkit`, the browser opens `http://127.0.0.1:<port>` when `DISPLAY` or `WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips that open). Other machines use `http://<lan-ip>:<port>`. The chosen port is written to `port` and the loopback URL to `http.url` in `$XDG_RUNTIME_DIR/servemedia`, or under `$XDG_STATE_HOME/servemedia` when `XDG_RUNTIME_DIR` is unset. A second start reads `http.url` and `GET`s `/healthz` on that loopback URL. A live server is opened and this process exits. A missing file or a failed check starts a new server. Shutdown deletes `http.url` and `port`. MatchMedia runs inside that process.
+ServeMedia listens on a TCP address from `--host` and `--port`. Unset `--host` is every interface. Unset `--port` is `7676`. If that bind fails, ServeMedia listens again on port `0` and the kernel chooses the port. An explicit `--port` that cannot bind stops the process. `--webkit` forces `127.0.0.1` and port `0` and opens a window on that loopback URL, using host `libwebkitgtk-6.0` with GTK 4 when that library is installed and otherwise `libwebkit2gtk-4.1` with GTK 3. The window starts in the mode saved under General settings, which defaults to maximized with the header bar visible. Unmaximized keeps that bar and the default size. Big picture fullscreens the window and hides that bar. Saving the mode leaves the current window unchanged until the next open. A navigation that leaves the app origin is opened with the system browser. A successful window does not also open a browser. If the window cannot be created, the error is logged, the system browser opens, and the server keeps running until a signal or the watchdog. A second `--webkit` start that cannot open a window opens the browser and exits, leaving the existing server up. Without `--webkit`, the browser opens `http://127.0.0.1:<port>` when `DISPLAY` or `WAYLAND_DISPLAY` is set (`SERVEMEDIA_NO_BROWSER=1` skips that open). Other machines use `http://<lan-ip>:<port>`. The chosen port is written to `port` and the loopback URL to `http.url` in `$XDG_RUNTIME_DIR/servemedia`, or under `$XDG_STATE_HOME/servemedia` when `XDG_RUNTIME_DIR` is unset. A second start reads `http.url` and `GET`s `/healthz` on that loopback URL. A live server is opened and this process exits. A missing file or a failed check starts a new server. Shutdown deletes `http.url` and `port`. MatchMedia runs inside that process.
+
+The top bar shows a display-only path trail (library name, each folder, then the playing title). When the trail overflows it is middle-ellipsized, and hovering it slides the full text right to left, pauses, then slides back. Big picture replaces that with a clipped ticker that loops right to left on its own. Reduced motion keeps the middle ellipsis.
+
+```mermaid
+stateDiagram-v2
+  idle: Middle ellipsis
+  clipped: Full text clipped
+  toEnd: Slide toward the end
+  pauseEnd: Pause
+  toStart: Slide toward the start
+  pauseStart: Pause
+  ticker: Clipped loop
+  idle --> clipped: pointerenter when overflowing
+  clipped --> toEnd: short pause
+  toEnd --> pauseEnd: end visible
+  pauseEnd --> toStart
+  toStart --> pauseStart: start visible
+  pauseStart --> toEnd
+  clipped --> idle: pointerleave
+  toEnd --> idle: pointerleave
+  pauseEnd --> idle: pointerleave
+  toStart --> idle: pointerleave
+  pauseStart --> idle: pointerleave
+  idle --> ticker: big picture and overflowing
+  clipped --> ticker: big picture
+  toEnd --> ticker: big picture
+  ticker --> idle: big picture off
+```
 
 | Method | Path | Role |
 |--------|------|------|
@@ -134,7 +167,7 @@ Idle HLS jobs are cancelled a few minutes after last segment access. The process
 | Item | Where |
 |------|--------|
 | Writable data | `$XDG_DATA_HOME/servemedia` (`SERVEMEDIA_HOME` override) |
-| Overlay | `config/overlay.yaml` stores settings (backup, webhooks, transcode knobs, startup scan, watchdog). Internal paths in that file are ignored. `media.path` there still overrides the seed. |
+| Overlay | `config/overlay.yaml` stores settings (backup, webhooks, transcode knobs, startup scan, watchdog, window startup mode). Internal paths in that file are ignored. `media.path` there still overrides the seed. |
 | Transcode cache | `$XDG_CACHE_HOME/servemedia/transcode` |
 | Media root | `SERVEMEDIA_MEDIA_PATH` / overlay `media.path` (comma-separated paths jailed separately, one picker tree; `$HOME`, `$XDG_VIDEOS_DIR`, `$XDG_MUSIC_DIR` expand) |
 | ffmpeg/ffprobe | `{payload}/vendor/ffmpeg/` pair shipped with that archive. A tree that also has `musl/` uses it when host `libva` needs `libc.musl` (`SERVEMEDIA_FFMPEG` override). Flatpak: `ffmpeg` on `PATH` when that tree is absent |

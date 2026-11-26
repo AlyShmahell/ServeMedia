@@ -184,4 +184,30 @@ func TestFolderHeroRendersChips(t *testing.T) {
 	if strings.Contains(html, "data-mid=") || strings.Contains(buf.String(), "data-mid=") {
 		t.Fatalf("hero title should stay whole")
 	}
+	if strings.Contains(html, "editable") || strings.Contains(html, `data-role="edit"`) {
+		t.Fatalf("inline editor: %s", html)
+	}
+	buf.Reset()
+	if err := tpl.ExecuteTemplate(&buf, "partials/folder_hero.html", nodeCard{
+		Title: "Show", Plot: "",
+		EditURL: "/hx/media/7/meta", UploadURL: "/hx/media/7/poster",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hero := buf.String()
+	for _, want := range []string{
+		`data-role="edit-modal"`,
+		`data-upload-url="/hx/media/7/poster"`,
+		`data-edit-url="/hx/media/7/meta"`,
+		`data-edit-title="Show"`,
+		`class="plot is-empty"`,
+		"No synopsis",
+	} {
+		if !strings.Contains(hero, want) {
+			t.Fatalf("missing %q in %s", want, hero)
+		}
+	}
+	if strings.Contains(hero, "editable") || strings.Contains(hero, `data-edit-field=`) || strings.Contains(hero, `data-role="upload"`) {
+		t.Fatalf("inline editor: %s", hero)
+	}
 }

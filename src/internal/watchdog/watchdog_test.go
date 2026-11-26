@@ -106,6 +106,35 @@ func TestTTLZeroNeverShutsDown(t *testing.T) {
 	}
 }
 
+func TestHoldShutdownBlocksProcessExit(t *testing.T) {
+	k := &fakeKiller{}
+	var shut int
+	w := New(60*time.Second, k, func() { shut++ })
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
+	w.now = func() time.Time { return now }
+	w.SetHoldShutdown(true)
+	w.Pulse(1, "tab-a", "/", "Home")
+	now = now.Add(60 * time.Second)
+	if w.Tick() {
+		t.Fatal("held shutdown")
+	}
+	k.mu.Lock()
+	released := len(k.released)
+	k.mu.Unlock()
+	if released != 1 || shut != 0 {
+		t.Fatalf("released %d shut %d", released, shut)
+	}
+	w.SetHoldShutdown(false)
+	if !w.Tick() {
+		t.Fatal("expected shutdown after hold")
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.stops != 1 || shut != 1 {
+		t.Fatalf("stops %d shut %d", k.stops, shut)
+	}
+}
+
 func TestNoTabsYetDoesNotShutDown(t *testing.T) {
 	k := &fakeKiller{}
 	var shut int

@@ -335,6 +335,7 @@
     wakePads();
     if (isPlayer) return;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'Escape') return;
     var dir =
       e.key === 'ArrowUp'
         ? 'up'

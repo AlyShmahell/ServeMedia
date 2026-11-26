@@ -356,8 +356,13 @@ func (c *Client) Scan(ctx context.Context, path, mode string, report func(done, 
 }
 
 // Match returns the jobs Scan already finished. Stub servers do not match again.
-func (c *Client) Match(ctx context.Context, jobs []Job, report func(done, total int, name string), onJob func(Job)) ([]Job, error) {
+func (c *Client) Match(ctx context.Context, jobs []Job, report func(done, total int, name string), onJob func(Job), onFolded func(Job)) ([]Job, error) {
 	return jobs, nil
+}
+
+// Write is in-process. A remote stub has no sidecar writer, so the jobs are returned unchanged.
+func (c *Client) Write(_ context.Context, _ string, jobs []Job, _ func(int, int, Job, WriteStats)) ([]Job, WriteStats, error) {
+	return jobs, WriteStats{}, nil
 }
 
 // SelectStored posts the last scan session. Engine ignores that session.

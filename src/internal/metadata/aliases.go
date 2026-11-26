@@ -58,11 +58,13 @@ func StripMovieTitleSuffix(title string) string {
 var (
 	leadingReleaseGroupRe = regexp.MustCompile(`^\[[^\]]+\]\s*`)
 	trailingBracketTagRe  = regexp.MustCompile(`\s*\[[^\]]*\]\s*$`)
-	trailingParenTagRe    = regexp.MustCompile(`(?i)\s*\((?:(?:\d{3,4}p)|(?:[xh]\.?26[45])|hevc|avc|aac|flac|opus|bluray|blu-ray|web-?dl|webrip|hdtv|dvdrip|remux|10.?bit)[^)]*\)\s*$`)
+	trailingParenTagRe    = regexp.MustCompile(`(?i)\s*\([^)]*(?:\d{3,4}p|\d{3,4}x\d{3,4}|[xh]\.?26[45]|\d+[.\-]?bit)[^)]*\)\s*$`)
 )
 
 // CleanEpisodeTitle strips fansub group prefixes and trailing quality/hash
-// brackets from a video filename for display (extension optional).
+// brackets from a video filename for display (extension optional). A trailing
+// parenthetical is removed only when it contains a resolution, codec-family,
+// or bit-depth shape.
 func CleanEpisodeTitle(name string) string {
 	t := strings.TrimSpace(name)
 	if ext := filepath.Ext(t); ext != "" && IsVideo(t) {

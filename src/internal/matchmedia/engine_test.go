@@ -1,12 +1,15 @@
 package matchmedia
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	mmconfig "github.com/alyshmahell/matchmedia/src/mod/config"
+	mmfetch "github.com/alyshmahell/matchmedia/src/mod/fetch"
 	"github.com/alyshmahell/matchmedia/src/mod/match"
 )
 
@@ -95,8 +98,17 @@ func TestSidecarComplete(t *testing.T) {
 	if err := os.WriteFile(strings.TrimSuffix(ep, filepath.Ext(ep))+".nfo", []byte("<episodedetails><title>Ep</title></episodedetails>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if SidecarComplete(job) {
+		t.Fatal("show missing season files was treated as complete")
+	}
+	if err := os.WriteFile(filepath.Join(show, "Season 1", "season.nfo"), []byte("<season><title>Season 1</title></season>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(show, "Season 1", "poster.jpg"), []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if !SidecarComplete(job) {
-		t.Fatal("show with episode nfo was not complete")
+		t.Fatal("show with season files was not complete")
 	}
 	movie := filepath.Join(dir, "Movie")
 	vid := filepath.Join(movie, "movie.mkv")
@@ -114,5 +126,55 @@ func TestSidecarComplete(t *testing.T) {
 	}
 	if !SidecarComplete(Job{Path: movie, Kind: "movie", Files: []JobFile{{Path: vid}}}) {
 		t.Fatal("movie with nfo and poster was not complete")
+	}
+}
+
+func TestEngineWriteKeepsPartialShowNFO(t *testing.T) {
+	cfg, err := mmconfig.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	show := filepath.Join(dir, "Show")
+	ep := filepath.Join(show, "Season 1", "S01E01.mkv")
+	if err := os.MkdirAll(filepath.Dir(ep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ep, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nfoPath := filepath.Join(show, "tvshow.nfo")
+	nfoBody := []byte("<tvshow><title>Show</title><plot>keep-me</plot></tvshow>")
+	if err := os.WriteFile(nfoPath, nfoBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(show, "poster.jpg"), []byte("p"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := &Engine{fetch: mmfetch.New(cfg), jobs: map[string]Job{}}
+	job := Job{
+		Path: show, Kind: "show", Status: "matched", Title: "Show",
+		Files: []JobFile{{Path: ep, Season: "1", Episode: "1"}},
+		Match: &Candidate{Provider: "tvmaze", ID: "1", Title: "Show"},
+	}
+	reported := 0
+	out, st, err := e.Write(context.Background(), "changes", []Job{job}, func(done, total int, _ Job, stats WriteStats) {
+		reported++
+		if done != 1 || total != 1 || stats.TitleNFO != 0 || stats.EpisodeNFO != 0 || stats.Posters != 0 {
+			t.Fatalf("progress %d/%d stats %+v", done, total, stats)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reported != 1 || st.TitleNFO != 0 || st.EpisodeNFO != 0 || st.Posters != 0 || len(out) != 1 {
+		t.Fatalf("reported %d stats %+v jobs %d", reported, st, len(out))
+	}
+	got, err := os.ReadFile(nfoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(nfoBody) {
+		t.Fatalf("nfo rewritten: %s", got)
 	}
 }

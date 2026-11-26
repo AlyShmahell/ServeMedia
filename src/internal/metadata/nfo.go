@@ -85,10 +85,11 @@ type TVShowNFO struct {
 }
 
 type SeasonNFO struct {
-	XMLName xml.Name `xml:"season"`
-	Title   string   `xml:"title"`
-	Plot    string   `xml:"plot"`
-	Outline string   `xml:"outline"`
+	XMLName   xml.Name `xml:"season"`
+	Title     string   `xml:"title"`
+	Plot      string   `xml:"plot"`
+	Outline   string   `xml:"outline"`
+	Premiered string   `xml:"premiered,omitempty"`
 }
 
 type EpisodeNFO struct {

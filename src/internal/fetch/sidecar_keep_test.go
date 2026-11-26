@@ -56,6 +56,12 @@ func TestChangesSkipsFetchForFinishedSidecar(t *testing.T) {
 	if err := os.WriteFile(posterPath, []byte("jpeg"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(showDir, "Season 1", "season.nfo"), []byte("<season><title>Season 1</title></season>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(showDir, "Season 1", "poster.jpg"), []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	meta := &finishedSidecarMeta{nfo: nfoPath, poster: posterPath, showDir: showDir, ep: ep}
 	w := &Worker{DB: d, Store: store, Meta: meta}
 	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: false, ScanMode: "changes"}); err != nil {
@@ -66,6 +72,9 @@ func TestChangesSkipsFetchForFinishedSidecar(t *testing.T) {
 	}
 	if meta.writes.Load() != 0 {
 		t.Fatalf("write calls %d", meta.writes.Load())
+	}
+	if meta.writeJobs != 0 || meta.writeMode != "" {
+		t.Fatalf("sidecar write mode %q jobs %d", meta.writeMode, meta.writeJobs)
 	}
 	got, err := os.ReadFile(nfoPath)
 	if err != nil {
@@ -87,6 +96,69 @@ func TestChangesSkipsFetchForFinishedSidecar(t *testing.T) {
 	}
 	if len(eps) != 1 || eps[0].Path != ep {
 		t.Fatalf("episodes %#v", eps)
+	}
+}
+
+func TestChangesWritesPartialSidecarThroughMatchMedia(t *testing.T) {
+	ctx := context.Background()
+	store := t.TempDir()
+	media := t.TempDir()
+	d, err := db.Open(filepath.Join(store, "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	u, err := d.CreateUser(ctx, "admin", "x", db.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := d.CreateLibrary(ctx, u.ID, "Lib", media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	showDir := filepath.Join(media, "Known Show")
+	ep := filepath.Join(showDir, "Season 1", "S01E01.mkv")
+	if err := os.MkdirAll(filepath.Dir(ep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ep, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nfoPath := filepath.Join(showDir, "tvshow.nfo")
+	posterPath := filepath.Join(showDir, "poster.jpg")
+	nfoBody := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<tvshow><title>Known Show</title><plot>keep-me</plot></tvshow>
+`)
+	if err := os.WriteFile(nfoPath, nfoBody, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(posterPath, []byte("jpeg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	meta := &finishedSidecarMeta{nfo: nfoPath, poster: posterPath, showDir: showDir, ep: ep, matchID: "4242"}
+	w := &Worker{DB: d, Store: store, Meta: meta}
+	if err := w.MatchLibrary(ctx, lib, Opts{Persist: false, Overwrite: false, ScanMode: "changes"}); err != nil {
+		t.Fatal(err)
+	}
+	if meta.writeMode != "changes" || meta.writeJobs != 1 {
+		t.Fatalf("write mode %q jobs %d", meta.writeMode, meta.writeJobs)
+	}
+	if meta.catalog.Load() != 0 {
+		t.Fatalf("catalog hits %d", meta.catalog.Load())
+	}
+	got, err := os.ReadFile(nfoPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(nfoBody) {
+		t.Fatalf("nfo rewritten: %s", got)
+	}
+	it, err := d.GetMediaItemByPath(ctx, lib.ID, showDir)
+	if err != nil || it == nil {
+		t.Fatal(err)
+	}
+	if it.MetaProvider.String != "tvmaze" || it.MetaID.String != "4242" {
+		t.Fatalf("identity %s %s", it.MetaProvider.String, it.MetaID.String)
 	}
 }
 
@@ -461,6 +533,8 @@ type finishedSidecarMeta struct {
 	matchID                  string
 	catalog                  atomic.Int32
 	writes                   atomic.Int32
+	writeMode                string
+	writeJobs                int
 }
 
 func (m *finishedSidecarMeta) Status() (matchmedia.Status, error) {
@@ -483,12 +557,13 @@ func (m *finishedSidecarMeta) Scan(ctx context.Context, path, mode string, repor
 	}}, nil
 }
 
-func (m *finishedSidecarMeta) Write(context.Context, string, []matchmedia.Job) ([]matchmedia.Job, error) {
-	m.writes.Add(1)
-	return nil, nil
+func (m *finishedSidecarMeta) Write(_ context.Context, mode string, jobs []matchmedia.Job, _ func(int, int, matchmedia.Job, matchmedia.WriteStats)) ([]matchmedia.Job, matchmedia.WriteStats, error) {
+	m.writeMode = mode
+	m.writeJobs = len(jobs)
+	return jobs, matchmedia.WriteStats{}, nil
 }
 
-func (m *finishedSidecarMeta) Match(context.Context, []matchmedia.Job, func(int, int, string), func(matchmedia.Job)) ([]matchmedia.Job, error) {
+func (m *finishedSidecarMeta) Match(context.Context, []matchmedia.Job, func(int, int, string), func(matchmedia.Job), func(matchmedia.Job)) ([]matchmedia.Job, error) {
 	return nil, errMatchNotExpected
 }
 

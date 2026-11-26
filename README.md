@@ -34,13 +34,17 @@
 #### Required
 
 > [!NOTE]
-> Package names below are for the Tier 1 **Server and AppImage**. 
+> Package names below are for **the Server Tarball and the AppImage**.  
 > **Flatpak** brings its own copies of these libraries.
 
 - to perform ffprobe, extract stills, and ffmpeg transcode
   - `libva libdrm`
 
 #### Recommended
+
+> [!TIP]
+> Package names below are recommended for **the Server Tarball and the AppImage, and Flatpak**, if you have a recent-ish supported GPU/iGPU.  
+
 - for GPU/iGPU encode
   - on AMD: 
     - on glibc: `mesa-dri-drivers mesa-va-drivers-freeworld`
@@ -49,7 +53,7 @@
 
 #### Optional
 > [!NOTE]
-> Package names below are for the Tier 1 **Server and AppImage**. 
+> Package names below are for **the Server Tarball and the AppImage**.  
 > **Flatpak** brings its own copies of these libraries.
 - For a **Desktop Window (with `--webkit`)**
   - using WebKitGTK 6.0: `glib2 gtk4 webkitgtk6.0`
@@ -62,7 +66,7 @@
 ### As a Desktop Application
 
 It can be installed in one of two ways: 
-- **Flatpak**
+- **Flatpak** 
   <a href='https://flathub.org/apps/eu.alyshmahell.ServeMedia'>
       <img width='240' alt='Get it on Flathub' src='https://flathub.org/api/badge?locale=en'/>
   </a>
@@ -96,11 +100,37 @@ curl -fL https://github.com/AlyShmahell/ServeMedia/releases/latest/download/serv
 ```bash
 servemedia --host <address> --port <number> 
 ```
-- `--host` sets the bind address. Unset listens on every interface.
-- `--port` sets the port. Unset uses `7676` and picks another port only if that default is busy. An explicit `--port` exits if it cannot bind.
+- `--host` sets the bind address for this start. Unset listens on every interface.
+- `--port` sets the port for this start. Unset uses `7676` and picks another port only if that default is busy. An explicit `--port` exits if it cannot bind.
+- When both flags are omitted, a saved Networks address is used instead of the default. Settings → Networks stores that address and applies it immediately. If the port is busy, the previous port is tried, then an ephemeral port. If the IP cannot be assigned, the previous IP is tried. Reset clears the saved address: a server returns to every interface on `7676`, and `--webkit` stops the extra LAN listener.
+- `--webkit` keeps the window on `127.0.0.1` and an ephemeral port. That window is the only place signed in as overlord. The LAN listener stays off until Networks sets one, and overlord cannot sign in there.
 - Other machines on the LAN use `http://<lan-ip>:<port>`. The firewall has to allow that port from the LAN.
-- With a display, the browser opens. A second start checks `/healthz` and exits. After a tab has connected, closing it shuts the server down about 60 seconds later.
+- With a display, the browser opens. A second start checks `/healthz` and exits. After a tab has connected, closing it shuts the server down about 60 seconds later. A desktop session with the LAN listener on stays up after the window closes.
 - Without `--webkit`, the first visit is `/register` and creates the **admin**; after that `/register` is gone. The installed desktop entry passes `--webkit` and skips this.
+
+### As a Container
+
+```bash
+podman run -d --name servemedia --rm \
+  --userns=keep-id:uid=1000,gid=1000 \
+  --security-opt label=disable \
+  -p 7676:7676 \
+  -e HOME=/home/servemedia \
+  -v "$HOME:/home/servemedia" \
+  -v /mnt:/mnt \
+  -v /media:/media \
+  -e SERVEMEDIA_MEDIA_PATH=/mnt,/media,/home/servemedia/Videos,/home/servemedia/Music \
+  --device /dev/dri \
+  ghcr.io/alyshmahell/servemedia:latest
+```
+- The host home is the container home. The database and settings stay in `$HOME/.local/share/servemedia`.
+- The default media library roots are `/mnt`, `/media`, Videos, and Music. Videos and Music are already in the home mount. `/mnt` and `/media` are mounted at the same path. All four are listed in `SERVEMEDIA_MEDIA_PATH`. 
+- `SERVEMEDIA_PORT`, or `--port` after the image name, sets the listen port. Publish that same port. `--host` sets the bind address.
+- `--device /dev/dri` is for GPU transcoding when that device exists.
+- The image sets the watchdog timeout to 0, so closing the page leaves the server running. `-e SERVEMEDIA_WATCHDOG_TTL` chooses another timeout.
+- `podman logs -f servemedia` follows the server log.
+- `podman stop servemedia` stops it. Run the same `podman run` again to start a new one. If the name is still taken, `podman rm -f servemedia` clears it first.
+
 
 ## How to Use
 
@@ -115,7 +145,7 @@ Home with libraries and recently added titles.
 Anime library poster grid.
 
 <p align="center">
-  <img src="flatpak/screenshots/02-library-anime.png" alt="Anime library poster grid" width="640">
+  <img src="flatpak/screenshots/02-library.png" alt="Anime library poster grid" width="640">
 </p>
 
 Title page with plot and seasons.
@@ -140,6 +170,12 @@ Settings.
 
 <p align="center">
   <img src="flatpak/screenshots/06-settings.png" alt="Settings" width="640">
+</p>
+
+Home on a narrow window.
+
+<p align="center">
+  <img src="flatpak/screenshots/07-mobile.png" alt="Home on a narrow window" width="640">
 </p>
 
 ## Controls

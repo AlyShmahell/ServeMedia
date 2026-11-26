@@ -101,11 +101,23 @@ func listenTCP(host, port string) (net.Listener, error) {
 }
 
 func loopbackURL(addr net.Addr) (url, port string, err error) {
-	_, port, err = net.SplitHostPort(addr.String())
+	host, port, err := net.SplitHostPort(addr.String())
 	if err != nil || port == "" {
 		return "", "", fmt.Errorf("listen address %v", addr)
 	}
-	return "http://127.0.0.1:" + port, port, nil
+	if isWildcard(host) || loopbackHost(host) {
+		return "http://127.0.0.1:" + port, port, nil
+	}
+	return "http://" + net.JoinHostPort(host, port), port, nil
+}
+
+func isWildcard(host string) bool {
+	switch strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]") {
+	case "", "0.0.0.0", "::":
+		return true
+	default:
+		return false
+	}
 }
 
 func probeRunning(r runtimeDir) (string, bool) {
@@ -118,7 +130,7 @@ func probeRunning(r runtimeDir) (string, bool) {
 	if err != nil || page.Host == "" || (page.Scheme != "http" && page.Scheme != "https") {
 		return "", false
 	}
-	if !loopbackHost(page.Hostname()) {
+	if !probeHostOK(page.Hostname()) {
 		return "", false
 	}
 	health := *page
@@ -136,6 +148,30 @@ func probeRunning(r runtimeDir) (string, bool) {
 		return "", false
 	}
 	return raw, true
+}
+
+func probeHostOK(host string) bool {
+	if loopbackHost(host) {
+		return true
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		return false
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range addrs {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok || ipnet.IP == nil {
+			continue
+		}
+		if ipnet.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func loopbackHost(host string) bool {
