@@ -96,6 +96,18 @@ curl -fL https://github.com/AlyShmahell/ServeMedia/releases/latest/download/serv
   | tar -xz -C "$HOME" --strip-components=1 servemedia/.local
 ```
 
+##### How to Run
+```bash
+servemedia --host <address> --port <number> 
+```
+- `--host` sets the bind address for this start. Unset listens on every interface.
+- `--port` sets the port for this start. Unset uses `7676` and picks another port only if that default is busy. An explicit `--port` exits if it cannot bind.
+- When both flags are omitted, a saved Networks address is used instead of the default. Settings → Networks stores that address and applies it immediately. If the port is busy, the previous port is tried, then an ephemeral port. If the IP cannot be assigned, the previous IP is tried. Reset clears the saved address: a server returns to every interface on `7676`, and `--webkit` stops the extra LAN listener.
+- `--webkit` keeps the window on `127.0.0.1` and an ephemeral port. That window is the only place signed in as overlord. The LAN listener stays off until Networks sets one, and overlord cannot sign in there.
+- Other machines on the LAN use `http://<lan-ip>:<port>`. The firewall has to allow that port from the LAN.
+- With a display, the browser opens. A second start checks `/healthz` and exits. After a tab has connected, closing it shuts the server down about 60 seconds later. A desktop session with the LAN listener on stays up after the window closes.
+- Without `--webkit`, the first visit is `/register` and creates the **admin**; after that `/register` is gone. The installed desktop entry passes `--webkit` and skips this.
+
 ### As a Container
 
 ```bash
@@ -119,17 +131,6 @@ podman run -d --name servemedia --rm \
 - `podman logs -f servemedia` follows the server log.
 - `podman stop servemedia` stops it. Run the same `podman run` again to start a new one. If the name is still taken, `podman rm -f servemedia` clears it first.
 
-##### How to Run
-```bash
-servemedia --host <address> --port <number> 
-```
-- `--host` sets the bind address for this start. Unset listens on every interface.
-- `--port` sets the port for this start. Unset uses `7676` and picks another port only if that default is busy. An explicit `--port` exits if it cannot bind.
-- When both flags are omitted, a saved Networks address is used instead of the default. Settings → Networks stores that address and applies it immediately. If the port is busy, the previous port is tried, then an ephemeral port. If the IP cannot be assigned, the previous IP is tried. Reset clears the saved address: a server returns to every interface on `7676`, and `--webkit` stops the extra LAN listener.
-- `--webkit` keeps the window on `127.0.0.1` and an ephemeral port. That window is the only place signed in as overlord. The LAN listener stays off until Networks sets one, and overlord cannot sign in there.
-- Other machines on the LAN use `http://<lan-ip>:<port>`. The firewall has to allow that port from the LAN.
-- With a display, the browser opens. A second start checks `/healthz` and exits. After a tab has connected, closing it shuts the server down about 60 seconds later. A desktop session with the LAN listener on stays up after the window closes.
-- Without `--webkit`, the first visit is `/register` and creates the **admin**; after that `/register` is gone. The installed desktop entry passes `--webkit` and skips this.
 
 ## How to Use
 
