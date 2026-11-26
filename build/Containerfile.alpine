@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1
+# Minimal Alpine runtime. Build context is the slim tree assembled by build/run.
+
+FROM docker.io/library/golang:1.26-alpine AS go
+RUN apk add --no-cache gcc musl-dev
+WORKDIR /src
+COPY src/go.mod src/go.sum ./
+ENV CGO_ENABLED=1 GOOS=linux GOARCH=amd64 GOFLAGS=-buildvcs=false
+RUN go mod download
+COPY src/ ./
+RUN go build -ldflags="-s -w" -o /out/servemedia ./cmd
+
+FROM docker.io/library/alpine:3.22 AS assets
+RUN apk add --no-cache bash curl python3 ca-certificates
+WORKDIR /build
+COPY build/build /build/build
+COPY src/share/vendor.yaml /build/vendor.yaml
+COPY src/share/config /out/config
+COPY src/web/static/app.css src/web/static/app.js src/web/static/controls.js src/web/static/kpa.js src/web/static/logo.svg src/web/static/placeholder.svg src/web/static/favicon.png src/web/static/kofi.png /out/public/
+COPY LICENSE /out/LICENSE
+ENV SHARE=/out
+RUN chmod +x /build/build && /build/build vendor
+
+FROM docker.io/library/alpine:3.22
+ARG VERSION=0.0.0
+RUN apk add --no-cache \
+    ca-certificates tzdata \
+    libva libdrm mesa-va-gallium \
+    su-exec \
+  && adduser -D -u 1000 -h /home/servemedia servemedia
+COPY --from=go /out/servemedia /usr/local/bin/servemedia
+COPY --from=assets /out/ /usr/share/servemedia/
+COPY build/cache/ffmpeg-musl/ffmpeg build/cache/ffmpeg-musl/ffprobe build/cache/ffmpeg-musl/LICENSE build/cache/ffmpeg-musl/LICENSE.NOTICE /usr/share/servemedia/vendor/ffmpeg/
+COPY build/alpine-entrypoint /usr/local/bin/servemedia-entrypoint
+RUN chmod a+x /usr/local/bin/servemedia /usr/local/bin/servemedia-entrypoint \
+    /usr/share/servemedia/vendor/ffmpeg/ffmpeg /usr/share/servemedia/vendor/ffmpeg/ffprobe
+ENV HOME=/home/servemedia \
+    SERVEMEDIA_NO_BROWSER=1
+EXPOSE 7676
+VOLUME ["/home/servemedia"]
+LABEL org.opencontainers.image.source="https://github.com/AlyShmahell/servemedia" \
+      org.opencontainers.image.title="ServeMedia" \
+      org.opencontainers.image.authors="Aly Shmahell" \
+      org.opencontainers.image.licenses="BSD-3-Clause" \
+      org.opencontainers.image.version="${VERSION}"
+USER servemedia
+ENTRYPOINT ["/usr/local/bin/servemedia-entrypoint"]

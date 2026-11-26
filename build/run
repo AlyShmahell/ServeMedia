@@ -305,6 +305,257 @@ start() {
   exec "$xdg/.local/bin/servemedia" "$@"
 }
 
+ALPINE_IMAGE="localhost/servemedia:alpine"
+ALPINE_REMOTE="ghcr.io/alyshmahell/servemedia"
+
+engine() {
+  if command -v podman >/dev/null 2>&1; then
+    podman "$@"
+  elif command -v docker >/dev/null 2>&1; then
+    docker "$@"
+  else
+    echo "error: need podman or docker" >&2
+    exit 1
+  fi
+}
+
+engine_name() {
+  if command -v podman >/dev/null 2>&1; then
+    echo podman
+  elif command -v docker >/dev/null 2>&1; then
+    echo docker
+  else
+    echo "error: need podman or docker" >&2
+    exit 1
+  fi
+}
+
+app_version() {
+  awk '
+    $1 == "version:" {
+      sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "")
+      gsub(/^"/, "")
+      gsub(/"[[:space:]]*$/, "")
+      print
+      exit
+    }
+  ' "$DIR/../src/share/config/default.yaml"
+}
+
+alpine_image_present() {
+  engine image inspect "$ALPINE_IMAGE" >/dev/null 2>&1
+}
+
+alpine_context() {
+  local dest
+  dest="$(mktemp -d "${TMPDIR:-/tmp}/servemedia-alpine.XXXXXX")"
+  mkdir -p "$dest/build/cache/ffmpeg-musl"
+  tar -C "$DIR/.." -cf - \
+    src \
+    build/build \
+    LICENSE \
+    | tar -C "$dest" -xf -
+  cp -a "$DIR/alpine-entrypoint" "$dest/build/alpine-entrypoint"
+  cp -a \
+    "$DIR/cache/ffmpeg-musl/ffmpeg" \
+    "$DIR/cache/ffmpeg-musl/ffprobe" \
+    "$DIR/cache/ffmpeg-musl/LICENSE" \
+    "$DIR/cache/ffmpeg-musl/LICENSE.NOTICE" \
+    "$dest/build/cache/ffmpeg-musl/"
+  printf '%s\n' "$dest"
+}
+
+alpine_build() {
+  local ctx ver
+  prepare_compose
+  ensure_musl_ffmpeg
+  for f in ffmpeg ffprobe LICENSE LICENSE.NOTICE; do
+    if [[ ! -f "$DIR/cache/ffmpeg-musl/$f" ]]; then
+      echo "error: missing $DIR/cache/ffmpeg-musl/$f" >&2
+      exit 1
+    fi
+  done
+  ctx="$(alpine_context)"
+  ver="$(app_version)"
+  ver="${ver:-0.0.0}"
+  if ! engine build \
+    -f "$DIR/Containerfile.alpine" \
+    --build-arg "VERSION=$ver" \
+    -t "$ALPINE_IMAGE" \
+    "$ctx"
+  then
+    rm -rf "$ctx"
+    exit 1
+  fi
+  rm -rf "$ctx"
+}
+
+# container_path HOST_PATH HOST_HOME
+# A path under the host home is that path inside /home/servemedia.
+container_path() {
+  local p="$1" home="$2"
+  if [[ "$p" == "$home" ]]; then
+    printf '/home/servemedia\n'
+  elif [[ "$p" == "$home"/* ]]; then
+    printf '/home/servemedia%s\n' "${p#"$home"}"
+  else
+    printf '%s\n' "$p"
+  fi
+}
+
+outside_home() {
+  local p="$1" home="$2"
+  [[ "$p" == "$home" || "$p" == "$home"/* ]] && return 1
+  return 0
+}
+
+xdg_user_dir() {
+  local name="$1" fallback="$2" dir
+  if command -v xdg-user-dir >/dev/null 2>&1; then
+    dir="$(xdg-user-dir "$name" 2>/dev/null || true)"
+    if [[ -n "$dir" && "$dir" != "$HOME" && -d "$dir" ]]; then
+      printf '%s\n' "$dir"
+      return 0
+    fi
+  fi
+  if [[ -d "$HOME/$fallback" ]]; then
+    printf '%s\n' "$HOME/$fallback"
+  fi
+}
+
+# consider_media PATH HOST_HOME — mount paths outside $HOME and record the container path.
+consider_media() {
+  local p="$1" home="$2" cpath
+  p="${p#"${p%%[![:space:]]*}"}"
+  p="${p%"${p##*[![:space:]]}"}"
+  [[ -n "$p" && -d "$p" ]] || return 0
+  case ",${ALPINE_SEEN}," in
+    *",$p,"*) return 0 ;;
+  esac
+  ALPINE_SEEN="${ALPINE_SEEN:+$ALPINE_SEEN,}$p"
+  cpath="$(container_path "$p" "$home")"
+  if outside_home "$p" "$home"; then
+    ALPINE_MOUNTS+=(-v "$p:$p")
+  fi
+  ALPINE_MEDIA="${ALPINE_MEDIA:+$ALPINE_MEDIA,}$cpath"
+}
+
+alpine_media_args() {
+  local home="$1" part candidate
+  local -a parts
+  ALPINE_MOUNTS=()
+  ALPINE_MEDIA=""
+  ALPINE_SEEN=""
+  if [[ -n "${SERVEMEDIA_MEDIA_PATH:-}" ]]; then
+    IFS=',' read -r -a parts <<<"$SERVEMEDIA_MEDIA_PATH"
+    for part in "${parts[@]}"; do
+      consider_media "$part" "$home"
+    done
+    return 0
+  fi
+  for candidate in /mnt /media; do
+    consider_media "$candidate" "$home"
+  done
+  candidate="$(xdg_user_dir VIDEOS Videos || true)"
+  consider_media "$candidate" "$home"
+  candidate="$(xdg_user_dir MUSIC Music || true)"
+  consider_media "$candidate" "$home"
+}
+
+alpine_run() {
+  if ! alpine_image_present; then
+    echo "error: $ALPINE_IMAGE not found; pick a rebuild option" >&2
+    exit 1
+  fi
+  local home publish name
+  home="$HOME"
+  publish="${SERVEMEDIA_PORT:-7676}"
+  name="$(engine_name)"
+  alpine_media_args "$home"
+  local -a args
+  args=(run --rm --name servemedia)
+  if [[ -t 0 && -t 1 ]]; then
+    args+=(-it)
+  fi
+  args+=(-p "${publish}:${publish}" -e HOME=/home/servemedia -v "$home:/home/servemedia")
+  if [[ -n "${SERVEMEDIA_PORT:-}" ]]; then
+    args+=(-e "SERVEMEDIA_PORT=${SERVEMEDIA_PORT}")
+  fi
+  if [[ -n "$ALPINE_MEDIA" ]]; then
+    args+=(-e "SERVEMEDIA_MEDIA_PATH=${ALPINE_MEDIA}")
+  fi
+  if [[ ${#ALPINE_MOUNTS[@]} -gt 0 ]]; then
+    args+=("${ALPINE_MOUNTS[@]}")
+  fi
+  if [[ -d /dev/dri ]]; then
+    args+=(--device /dev/dri)
+  fi
+  if [[ "$name" == podman ]]; then
+    args+=(--userns=keep-id:uid=1000,gid=1000 --security-opt label=disable)
+  fi
+  engine rm -f servemedia >/dev/null 2>&1 || true
+  exec "$(engine_name)" "${args[@]}" "$ALPINE_IMAGE"
+}
+
+registry_logged_in() {
+  local name="$1"
+  if [[ "$name" == podman ]]; then
+    podman login --get-login ghcr.io >/dev/null 2>&1 || return 1
+    return 0
+  fi
+  python3 - "$HOME/.docker/config.json" <<'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+except (OSError, json.JSONDecodeError):
+    sys.exit(1)
+auths = data.get("auths") or {}
+sys.exit(0 if "ghcr.io" in auths or "https://ghcr.io" in auths else 1)
+PY
+}
+
+ghcr_login() {
+  local name token user
+  name="$(engine_name)"
+  if registry_logged_in "$name"; then
+    return 0
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "error: gh auth login is required; the token needs write:packages" >&2
+    exit 1
+  fi
+  if ! token="$(gh auth token)"; then
+    echo "error: gh auth login is required; the token needs write:packages" >&2
+    exit 1
+  fi
+  if ! user="$(gh api user -q .login)"; then
+    echo "error: gh auth login is required; the token needs write:packages" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$token" | engine login ghcr.io -u "$user" --password-stdin; then
+    echo "error: ghcr.io login failed; the token needs write:packages" >&2
+    exit 1
+  fi
+}
+
+alpine_push() {
+  local ver
+  if ! alpine_image_present; then
+    alpine_build
+  fi
+  ver="$(app_version)"
+  ver="${ver:-0.0.0}"
+  ghcr_login
+  engine tag "$ALPINE_IMAGE" "$ALPINE_REMOTE:$ver"
+  engine tag "$ALPINE_IMAGE" "$ALPINE_REMOTE:latest"
+  if ! engine push "$ALPINE_REMOTE:$ver" || ! engine push "$ALPINE_REMOTE:latest"; then
+    echo "error: push to $ALPINE_REMOTE failed; the token needs write:packages" >&2
+    exit 1
+  fi
+}
+
 menu() {
   if [[ ! -t 0 || ! -t 1 ]]; then
     echo "error: stdin/stdout must be a TTY" >&2
@@ -362,7 +613,8 @@ menu() {
 }
 
 CHOICE=
-menu "run" "run (webkit)" "(re)build & run" "(re)build & run (webkit)" "(re)build & package"
+menu "run" "run (webkit)" "(re)build & run" "(re)build & run (webkit)" "(re)build & package" \
+  "run (container)" "(re)build & run (container)" "push (github packages)"
 case "$CHOICE" in
   0)
     start
@@ -381,5 +633,15 @@ case "$CHOICE" in
   4)
     rebuild
     package
+    ;;
+  5)
+    alpine_run
+    ;;
+  6)
+    alpine_build
+    alpine_run
+    ;;
+  7)
+    alpine_push
     ;;
 esac

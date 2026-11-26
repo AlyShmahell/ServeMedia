@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -577,6 +578,11 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("SERVEMEDIA_FFMPEG"); v != "" {
 		c.Transcode.FFmpeg = v
+	}
+	if v, ok := os.LookupEnv("SERVEMEDIA_WATCHDOG_TTL"); ok {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			c.Watchdog.TTLSeconds = n
+		}
 	}
 }
 

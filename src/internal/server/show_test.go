@@ -135,8 +135,25 @@ func TestNodeHrefAndShowFolderBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s.showFolderBack(ctx, film); got != fmt.Sprintf("/libraries/%d", lib.ID) {
+	if got := s.showFolderBack(ctx, film); got != fmt.Sprintf("/play/file/%d", filmNode) {
 		t.Fatalf("film folder %s", got)
+	}
+	rootID, err := d.EnsureLibraryRoot(ctx, lib.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMediaItemNode(ctx, filmID, rootID); err != nil {
+		t.Fatal(err)
+	}
+	film, err = d.GetMediaItem(ctx, filmID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.showFolderBack(ctx, film); got != fmt.Sprintf("/play/file/%d", filmNode) {
+		t.Fatalf("film linked at library root %s", got)
+	}
+	if err := d.SetMediaItemNode(ctx, filmID, filmNode); err != nil {
+		t.Fatal(err)
 	}
 	pack, err := d.GetMediaItem(ctx, packID)
 	if err != nil {

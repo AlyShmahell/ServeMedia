@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -1085,19 +1086,64 @@ func (s *Server) showFolderBack(ctx context.Context, it *db.MediaItem) string {
 		return ""
 	}
 	fallback := fmt.Sprintf("/libraries/%d", it.LibraryID)
-	nodeID, err := s.DB.MediaItemNodeID(ctx, it.ID)
-	if err != nil || nodeID == 0 {
-		return fallback
+	var n *db.LibraryNode
+	if nodeID, err := s.DB.MediaItemNodeID(ctx, it.ID); err == nil && nodeID != 0 {
+		n, _ = s.DB.GetLibraryNode(ctx, nodeID)
 	}
-	n, err := s.DB.GetLibraryNode(ctx, nodeID)
-	if err != nil || n == nil {
-		return fallback
+	if n != nil && strings.Trim(n.RelPath, "/") != "" {
+		return folderOrFileHref(it.LibraryID, n)
 	}
+	return s.hrefFromMediaPath(ctx, it, fallback)
+}
+
+func folderOrFileHref(libraryID int64, n *db.LibraryNode) string {
 	rel := n.RelPath
 	if n.NodeKind == "file" {
-		rel = parentRel(rel)
+		parent := parentRel(rel)
+		if parent == "" {
+			return "/play/file/" + strconv.FormatInt(n.ID, 10)
+		}
+		rel = parent
 	}
-	return libraryFolderBack(it.LibraryID, rel)
+	return libraryFolderBack(libraryID, rel)
+}
+
+func (s *Server) hrefFromMediaPath(ctx context.Context, it *db.MediaItem, fallback string) string {
+	root, err := s.DB.LibraryPath(ctx, it.LibraryID)
+	if err != nil || strings.TrimSpace(root) == "" || strings.TrimSpace(it.Path) == "" {
+		return movieOrLibrary(it, fallback)
+	}
+	rel, err := filepath.Rel(root, it.Path)
+	if err != nil {
+		return movieOrLibrary(it, fallback)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") || rel == "." {
+		return movieOrLibrary(it, fallback)
+	}
+	file := metadata.IsVideo(rel)
+	if st, err := os.Stat(it.Path); err == nil {
+		file = !st.IsDir()
+	}
+	if !file {
+		return libraryFolderBack(it.LibraryID, rel)
+	}
+	if parent := parentRel(rel); parent != "" {
+		return libraryFolderBack(it.LibraryID, parent)
+	}
+	if id, err := s.DB.NodeIDByRel(ctx, it.LibraryID, rel); err == nil && id != 0 {
+		if n, err := s.DB.GetLibraryNode(ctx, id); err == nil && n != nil && n.NodeKind == "file" {
+			return "/play/file/" + strconv.FormatInt(n.ID, 10)
+		}
+	}
+	return movieOrLibrary(it, fallback)
+}
+
+func movieOrLibrary(it *db.MediaItem, fallback string) string {
+	if it != nil && it.Kind == "movie" && it.ID != 0 {
+		return "/play/movie/" + strconv.FormatInt(it.ID, 10)
+	}
+	return fallback
 }
 
 func urlQueryEscape(s string) string {
@@ -1646,7 +1692,10 @@ func (s *Server) handleSubtitleVTT(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out := media.SidecarVTTPath(s.Cfg.Transcode.Path, sc.Path)
-		if err := media.EnsureSidecarVTT(sc.Path, out); err != nil {
+		if err := media.EnsureSidecarVTT(r.Context(), sc.Path, out); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
 			log.Printf("sidecar vtt %s: %v", sc.Path, err)
 			http.Error(w, "subtitle convert failed", http.StatusInternalServerError)
 			return
@@ -1665,7 +1714,10 @@ func (s *Server) handleSubtitleVTT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := media.SubtitleVTTPath(s.Cfg.Transcode.Path, path, idx)
-	if err := media.EnsureSubtitleVTT(path, idx, out); err != nil {
+	if err := media.EnsureSubtitleVTT(r.Context(), path, idx, out); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		log.Printf("subtitle vtt %s #%d: %v", path, idx, err)
 		http.Error(w, "subtitle extract failed", http.StatusInternalServerError)
 		return

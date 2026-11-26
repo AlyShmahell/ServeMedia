@@ -215,3 +215,24 @@ func TestMediaRoots(t *testing.T) {
 		t.Fatalf("primary %q", c.PrimaryMediaRoot())
 	}
 }
+
+func TestWatchdogTTLEnvOverridesOverlay(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SERVEMEDIA_ROOT", root)
+	t.Setenv("SERVEMEDIA_HOME", root)
+	t.Setenv("SERVEMEDIA_WATCHDOG_TTL", "0")
+	if err := os.MkdirAll(filepath.Join(root, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	overlay := "watchdog:\n  ttl_seconds: 60\n"
+	if err := os.WriteFile(filepath.Join(root, "config", "overlay.yaml"), []byte(overlay), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := config.Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Watchdog.TTLSeconds != 0 {
+		t.Fatalf("ttl %d", c.Watchdog.TTLSeconds)
+	}
+}

@@ -1,6 +1,6 @@
 # Architecture
 
-ServeMedia is the self-hosted media server for Linux (scan, metadata, playback). A Podman **builder** writes `build/dist/` as an XDG tree; runtime is the **host binary** (`./build/run`), not a container. Metadata lookup is first-party [MatchMedia](https://github.com/AlyShmahell/MatchMedia), linked into the `servemedia` binary. Third-party assets live under `{payload}/vendor/`. Payload is `SERVEMEDIA_ROOT` or `$XDG_DATA_HOME/servemedia`.
+ServeMedia is the self-hosted media server for Linux (scan, metadata, playback). A Podman **builder** writes `build/dist/` as an XDG tree. The default runtime is the **host binary** (`./build/run`). An optional Alpine image runs the same server with the host home mounted as the container home. Metadata lookup is first-party [MatchMedia](https://github.com/AlyShmahell/MatchMedia), linked into the `servemedia` binary. Third-party assets live under `{payload}/vendor/`. Payload is `SERVEMEDIA_ROOT` or `$XDG_DATA_HOME/servemedia`.
 
 Go module: `github.com/alyshmahell/servemedia/src`.
 
@@ -80,6 +80,11 @@ ffmpeg: codecs (x264, x265, Opus, dav1d, SVT-AV1, libvpx, LAME, libvpl) static; 
 | **run** | copy `build/dist/.local` → `build/cache/xdg`, exec with `HOME` there (fails if `.local/bin/servemedia` missing) |
 | **(re)build & run** | rebuild dist, then run |
 | **(re)build & package** | glibc and musl tarballs + AppImages (not Flatpak); refuses a dist tree missing vendor files |
+| **run (container)** | run `localhost/servemedia:alpine` (fails if the image is missing) |
+| **(re)build & run (container)** | build the Alpine image, then run it |
+| **push (github packages)** | tag `ghcr.io/alyshmahell/servemedia` with the `version` from `default.yaml` and `latest`, then push (builds the image first if it is missing) |
+
+[`build/Containerfile.alpine`](../build/Containerfile.alpine) is the optional runtime image: a musl binary, vendor assets, and the cached musl ffmpeg pair on `alpine:3.22`. The final stage keeps `ca-certificates`, `tzdata`, `libva`, `libdrm`, and `mesa-va-gallium`. User `servemedia` (uid 1000) has home `/home/servemedia`. `SERVEMEDIA_ROOT` and `SERVEMEDIA_HOME` stay unset, so data is `$HOME/.local/share/servemedia` and the transcode cache is `$HOME/.cache/servemedia`. The menu bind-mounts the host home at `/home/servemedia`, so those writes land in the host home. Podman adds `--userns=keep-id:uid=1000,gid=1000`. The entrypoint copies `config/default.yaml`, `public/`, and `vendor/` into that home and leaves `store/`, `backups/`, `matchmedia/`, and `config/overlay.yaml` in place. `--port` and `SERVEMEDIA_PORT` choose the listen port; with neither set, ServeMedia uses the address saved in Settings, otherwise 7676. Media paths under the host home are already in the mount. A path outside the home is bind-mounted at the same path. `/dev/dri` is passed through when it exists. The entrypoint sets `SERVEMEDIA_WATCHDOG_TTL` to 0 when that variable is unset, so closing the page leaves the server running. An explicit value replaces that 0.
 
 ## Packages
 

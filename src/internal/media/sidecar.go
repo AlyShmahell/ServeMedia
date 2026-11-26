@@ -1,6 +1,7 @@
 package media
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -108,33 +109,24 @@ func SidecarVTTPath(cacheRoot, sourcePath string) string {
 }
 
 // EnsureSidecarVTT converts an external subtitle file to WebVTT at outPath.
-func EnsureSidecarVTT(sourceSub, outPath string) error {
-	if st, err := os.Stat(outPath); err == nil && st.Size() > 0 {
-		return nil
-	}
-	if strings.EqualFold(filepath.Ext(sourceSub), ".vtt") {
-		return CopyFileSimple(sourceSub, outPath)
-	}
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
-		return err
-	}
-	tmp := outPath + ".tmp"
-	_ = os.Remove(tmp)
-	cmd := ffmpegCommand(nil, "-y", "-i", sourceSub, "-f", "webvtt", tmp)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		_ = os.Remove(tmp)
-		msg := strings.TrimSpace(string(out))
-		if len(msg) > 500 {
-			msg = msg[len(msg)-500:]
+// Concurrent callers for the same outPath share one conversion. Cancelling ctx
+// drops this caller; ffmpeg is cancelled only when nothing else is waiting.
+func EnsureSidecarVTT(ctx context.Context, sourceSub, outPath string) error {
+	return ensureVTTFile(ctx, outPath, func(ctx context.Context, tmp string) error {
+		if strings.EqualFold(filepath.Ext(sourceSub), ".vtt") {
+			return CopyFileSimple(sourceSub, tmp)
 		}
-		return fmt.Errorf("ffmpeg sidecar vtt: %w: %s", err, msg)
-	}
-	if err := os.Rename(tmp, outPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+		cmd := ffmpegCommand(ctx, "-y", "-i", sourceSub, "-f", "webvtt", tmp)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			msg := strings.TrimSpace(string(out))
+			if len(msg) > 500 {
+				msg = msg[len(msg)-500:]
+			}
+			return fmt.Errorf("ffmpeg sidecar vtt: %w: %s", err, msg)
+		}
+		return nil
+	})
 }
 
 // CopyFileSimple copies src to dst creating parent dirs.

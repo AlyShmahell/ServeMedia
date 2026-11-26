@@ -1,0 +1,43 @@
+#!/bin/sh
+# Seed the XDG payload into $HOME, then exec servemedia.
+# Store, backups, MatchMedia, and config/overlay.yaml are left in place.
+set -eu
+
+if [ "$(id -u)" -eq 0 ]; then
+  exec su-exec servemedia:servemedia "$0" "$@"
+fi
+
+home="${HOME:-/home/servemedia}"
+share="$home/.local/share/servemedia"
+seed=/usr/share/servemedia
+
+mkdir -p "$share/config" "$home/.cache/servemedia" "$home/.local/state" "$home/.config"
+cp -a "$seed/config/default.yaml" "$share/config/default.yaml"
+rm -rf "$share/public" "$share/vendor"
+cp -a "$seed/public" "$share/public"
+cp -a "$seed/vendor" "$share/vendor"
+if [ -f "$seed/LICENSE" ]; then
+  cp -a "$seed/LICENSE" "$share/LICENSE"
+fi
+chmod a+x "$share/vendor/ffmpeg/ffmpeg" "$share/vendor/ffmpeg/ffprobe"
+
+if [ -z "${SERVEMEDIA_WATCHDOG_TTL+x}" ]; then
+  export SERVEMEDIA_WATCHDOG_TTL=0
+fi
+
+has_port=0
+prev=
+for arg in "$@"; do
+  case "$prev" in
+    --port|-port) has_port=1 ;;
+  esac
+  case "$arg" in
+    --port=*|-port=*) has_port=1 ;;
+  esac
+  prev=$arg
+done
+if [ "$has_port" -eq 0 ] && [ -n "${SERVEMEDIA_PORT:-}" ]; then
+  set -- --port "$SERVEMEDIA_PORT" "$@"
+fi
+
+exec /usr/local/bin/servemedia "$@"

@@ -96,6 +96,27 @@ curl -fL https://github.com/AlyShmahell/ServeMedia/releases/latest/download/serv
   | tar -xz -C "$HOME" --strip-components=1 servemedia/.local
 ```
 
+### As a Container
+
+```bash
+podman run --rm \
+  --userns=keep-id:uid=1000,gid=1000 \
+  --security-opt label=disable \
+  -p 7676:7676 \
+  -e HOME=/home/servemedia \
+  -v "$HOME:/home/servemedia" \
+  -v /mnt:/mnt \
+  -v /media:/media \
+  -e SERVEMEDIA_MEDIA_PATH=/mnt,/media,/home/servemedia/Videos,/home/servemedia/Music \
+  --device /dev/dri \
+  ghcr.io/alyshmahell/servemedia:latest
+```
+- The host home is the container home. The database and settings stay in `$HOME/.local/share/servemedia`.
+- The default media library roots are `/mnt`, `/media`, Videos, and Music. Videos and Music are already in the home mount. `/mnt` and `/media` are mounted at the same path. All four are listed in `SERVEMEDIA_MEDIA_PATH`. 
+- `SERVEMEDIA_PORT`, or `--port` after the image name, sets the listen port. Publish that same port. `--host` sets the bind address.
+- `--device /dev/dri` is for GPU transcoding when that device exists.
+- The image sets the watchdog timeout to 0, so closing the page leaves the server running. `-e SERVEMEDIA_WATCHDOG_TTL` chooses another timeout.
+
 ##### How to Run
 ```bash
 servemedia --host <address> --port <number> 

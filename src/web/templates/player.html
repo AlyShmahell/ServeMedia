@@ -477,11 +477,13 @@
     if (t.codec) parts.push(t.codec);
     return parts.length ? parts.join(' — ') : fallback;
   }
+  let mountedSubtitleShift = null;
   function clearSubtitleTracks() {
     const tracks = player.remoteTextTracks();
     for (let i = tracks.length - 1; i >= 0; i--) {
       player.removeRemoteTextTrack(tracks[i]);
     }
+    mountedSubtitleShift = null;
   }
   function subTrackKey(t) {
     if (t && t.id) return String(t.id);
@@ -521,24 +523,66 @@
       t.mode = (want && trackKey(t) === want) ? 'showing' : 'disabled';
     }
   }
+  function mountedSubtitleKeys() {
+    const keys = [];
+    const tracks = player.textTracks();
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      if (t.kind !== 'subtitles' && t.kind !== 'captions') continue;
+      const key = trackKey(t);
+      if (key) keys.push(key);
+    }
+    return keys;
+  }
+  function showingSubtitleKey() {
+    const tracks = player.textTracks();
+    for (let i = 0; i < tracks.length; i++) {
+      const t = tracks[i];
+      if ((t.kind !== 'subtitles' && t.kind !== 'captions') || t.mode !== 'showing') continue;
+      const key = trackKey(t);
+      if (key) return key;
+    }
+    return '';
+  }
+  function sameSubtitleSet(want, have) {
+    if (want.length !== have.length) return false;
+    const seen = Object.create(null);
+    for (let i = 0; i < have.length; i++) seen[have[i]] = (seen[have[i]] || 0) + 1;
+    for (let i = 0; i < want.length; i++) {
+      if (!seen[want[i]]) return false;
+      seen[want[i]] -= 1;
+    }
+    return true;
+  }
+  function subtitleShiftNow() {
+    return timelineOffset > 0 ? timelineOffset : 0;
+  }
   function applyTextTrackSnapshot() {
-    ignoreSubChange = true;
-    clearSubtitleTracks();
     const list = textTrackSnapshot.tracks || [];
-    list.forEach((t) => {
-      let src = '/play/' + kind + '/' + id + '/sub/' + encodeURIComponent(subTrackKey(t)) + '.vtt';
-      if (timelineOffset > 0) src += '?shift=' + encodeURIComponent(String(timelineOffset));
-      player.addRemoteTextTrack({
-        kind: 'subtitles',
-        id: 'sub-' + subTrackKey(t),
-        label: trackLabel(t, 'Subtitle'),
-        srclang: t.lang || 'und',
-        language: t.lang || 'und',
-        src: src,
-        default: false
-      }, false);
-    });
-    setSubtitleModes(textTrackSnapshot.key);
+    const shift = subtitleShiftNow();
+    const showing = showingSubtitleKey();
+    const sameMount = sameSubtitleSet(list.map(subTrackKey), mountedSubtitleKeys()) && mountedSubtitleShift === shift;
+    ignoreSubChange = true;
+    if (sameMount) {
+      if ((textTrackSnapshot.key || '') !== showing) setSubtitleModes(textTrackSnapshot.key);
+    } else {
+      clearSubtitleTracks();
+      list.forEach((t) => {
+        let src = '/play/' + kind + '/' + id + '/sub/' + encodeURIComponent(subTrackKey(t)) + '.vtt';
+        if (timelineOffset > 0) src += '?shift=' + encodeURIComponent(String(timelineOffset));
+        player.addRemoteTextTrack({
+          kind: 'subtitles',
+          id: 'sub-' + subTrackKey(t),
+          label: trackLabel(t, 'Subtitle'),
+          srclang: t.lang || 'und',
+          language: t.lang || 'und',
+          src: src,
+          default: false
+        }, false);
+      });
+      setSubtitleModes(textTrackSnapshot.key);
+      mountedSubtitleShift = shift;
+    }
     ignoreSubChange = false;
     if (subsBtn) {
       if (list.length) subsBtn.show();
